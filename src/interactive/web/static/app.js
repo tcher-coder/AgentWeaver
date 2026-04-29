@@ -383,7 +383,7 @@
         type: "form",
         formId: vm.form.formId,
         title: vm.form.title || definition.title,
-        content: definition.description || vm.form.content,
+        description: definition.description || "",
         footer: vm.form.footer,
         error: vm.form.error,
         submitLabel: definition.submitLabel,
@@ -465,7 +465,7 @@
 
   function renderForm(formModel) {
     var definition = formModel.definition || {};
-    var modal = createModal(text(formModel.title || definition.title, "Input required"), text(definition.description || formModel.content, ""));
+    var modal = createModal(text(formModel.title || definition.title, "Input required"), text(definition.description, ""));
     modal.classList.add("form-" + classNameToken(formModel.formId || definition.formId || "unknown"));
     var body = modal.querySelector(".modal-body");
     var footerNote = modal.querySelector(".modal-note");

@@ -2,6 +2,7 @@ import process from "node:process";
 import { writeSync } from "node:fs";
 
 import { FlowInterruptedError } from "../../errors.js";
+import type { FlowExecutionState } from "../../pipeline/spec-types.js";
 import { listArtifactCatalog, type ArtifactCatalog } from "../../runtime/artifact-catalog.js";
 import { createArtifactRegistry } from "../../runtime/artifact-registry.js";
 import { InteractiveSessionController } from "../controller.js";
@@ -40,6 +41,7 @@ export function createWebInteractiveSession(
   let mounted = false;
   let shuttingDown = false;
   let activeScopeKey = options.scopeKey;
+  let artifactRestoreGeneration = 0;
 
   const artifactCatalogProvider = webOptions.getArtifactCatalog ?? ((input?: ArtifactCatalogRequest) => {
     const explorerScopeKey = controller.getViewModel().artifactExplorer.scopeKey;
@@ -64,37 +66,73 @@ export function createWebInteractiveSession(
     }
   }
 
-  function candidateRunIds(): string[] {
-    const executionState = controller.getCurrentFlowExecutionState();
-    return [
-      executionState?.publicationRunId ?? null,
-      executionState?.runId ?? null,
-    ].filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index);
+  function uniqueStrings(values: Array<string | null | undefined>): string[] {
+    return values.filter((value, index, allValues): value is string => (
+      typeof value === "string" && value.length > 0 && allValues.indexOf(value) === index
+    ));
   }
 
-  async function resolveArtifactExplorerRunMetadata(scopeKey: string): Promise<{ runId: string | null; artifactCount?: number }> {
+  function collectPublishedArtifactRunIds(executionState: FlowExecutionState | null): string[] {
+    const runIds: string[] = [];
+    for (const phase of executionState?.phases ?? []) {
+      for (const step of phase.steps) {
+        for (const artifact of step.publishedArtifacts ?? []) {
+          const runId = artifact.manifest?.run_id;
+          if (runId) {
+            runIds.push(runId);
+          }
+        }
+      }
+    }
+    return uniqueStrings(runIds);
+  }
+
+  function candidateRunIds(): string[] {
+    const executionState = controller.getCurrentFlowExecutionState();
+    return uniqueStrings([
+      executionState?.runId ?? null,
+      executionState?.publicationRunId ?? null,
+      ...collectPublishedArtifactRunIds(executionState),
+    ]);
+  }
+
+  async function resolveArtifactExplorerRunMetadata(scopeKey: string): Promise<{ runId: string | null; runIds?: string[]; artifactCount?: number }> {
     const candidates = candidateRunIds();
     const preferredRunId = candidates[0] ?? null;
     try {
-      const catalog = await artifactCatalogProvider({ scopeKey, ...(preferredRunId ? { runId: preferredRunId } : {}) });
+      const catalog = await artifactCatalogProvider({
+        scopeKey,
+        ...(candidates.length === 1 && preferredRunId ? { runId: preferredRunId, runIds: candidates } : {}),
+        ...(candidates.length > 1 ? { runIds: candidates } : {}),
+      });
       if (!catalog || catalog.scopeKey !== scopeKey) {
         return { runId: preferredRunId };
       }
       if (candidates.length === 0) {
         return {
           runId: null,
-          artifactCount: catalog.items.filter((item) => item.scopeKey === scopeKey).length,
+          artifactCount: catalog.items.filter((item) => item.scopeKey === scopeKey && item.kind === "markdown").length,
         };
       }
-      for (const candidate of candidates) {
-        const artifactCount = catalog.items.filter((item) => item.scopeKey === scopeKey && item.runId === candidate).length;
-        if (artifactCount > 0) {
-          return { runId: candidate, artifactCount };
-        }
+      const matchingRunIds = candidates.filter((candidate) => (
+        catalog.items.some((item) => item.scopeKey === scopeKey && item.runId === candidate && item.kind === "markdown")
+      ));
+      if (matchingRunIds.length > 0) {
+        const matchingRunIdSet = new Set(matchingRunIds);
+        return {
+          runId: matchingRunIds[0] ?? preferredRunId,
+          ...(matchingRunIds.length > 1 ? { runIds: matchingRunIds } : {}),
+          artifactCount: catalog.items.filter((item) => (
+            item.scopeKey === scopeKey
+            && item.kind === "markdown"
+            && item.runId !== null
+            && matchingRunIdSet.has(item.runId)
+          )).length,
+        };
       }
       return {
         runId: preferredRunId,
-        artifactCount: catalog.items.filter((item) => item.scopeKey === scopeKey && item.runId === preferredRunId).length,
+        artifactCount: catalog.items.filter((item) => item.scopeKey === scopeKey && item.kind === "markdown" && item.runId === preferredRunId).length,
       };
     } catch {
       return { runId: preferredRunId };
@@ -102,15 +140,49 @@ export function createWebInteractiveSession(
   }
 
   async function markArtifactExplorerForCompletedRun(status: "completed" | "failed"): Promise<void> {
+    artifactRestoreGeneration += 1;
     const scopeKey = activeScopeKey;
-    const { runId, artifactCount } = await resolveArtifactExplorerRunMetadata(scopeKey);
+    const { runId, runIds, artifactCount } = await resolveArtifactExplorerRunMetadata(scopeKey);
     controller.setArtifactExplorerAvailability({
       scopeKey,
       runId,
+      ...(runIds ? { runIds } : {}),
       status,
       ...(artifactCount !== undefined ? { artifactCount } : {}),
       open: !controller.hasActiveInput(),
     });
+  }
+
+  async function restoreArtifactExplorerFromScope(scopeKey: string): Promise<void> {
+    const generation = ++artifactRestoreGeneration;
+    try {
+      const catalog = await artifactCatalogProvider({ scopeKey });
+      if (generation !== artifactRestoreGeneration || shuttingDown || activeScopeKey !== scopeKey) {
+        return;
+      }
+      if (!catalog || catalog.scopeKey !== scopeKey) {
+        controller.setArtifactExplorerUnavailable();
+        return;
+      }
+      const artifactCount = catalog.items.filter((item) => item.scopeKey === scopeKey && item.kind === "markdown").length;
+      if (artifactCount === 0) {
+        controller.setArtifactExplorerUnavailable("No markdown artifacts were found for the current scope.");
+        return;
+      }
+      controller.setArtifactExplorerAvailability({
+        scopeKey,
+        runId: null,
+        status: "completed",
+        artifactCount,
+        open: false,
+        label: "Artifacts available",
+        message: "Markdown artifacts from this scope are available for review.",
+      });
+    } catch {
+      if (generation === artifactRestoreGeneration && !shuttingDown && activeScopeKey === scopeKey) {
+        controller.setArtifactExplorerUnavailable("Artifact Explorer could not inspect the current scope.");
+      }
+    }
   }
 
   async function dispatch(action: ClientAction, client: WebSocketClient): Promise<void> {
@@ -211,6 +283,7 @@ export function createWebInteractiveSession(
       }
       mounted = true;
       controller.mount();
+      void restoreArtifactExplorerFromScope(activeScopeKey);
       unsubscribe = controller.subscribe((event) => {
         if (event.type === "log") {
           server?.broadcast({ type: "log.append", appendedLines: event.appendedLines });
@@ -278,6 +351,8 @@ export function createWebInteractiveSession(
     setScope: (scopeKey, jiraIssueKey, gitBranchName) => {
       activeScopeKey = scopeKey;
       controller.setScope(scopeKey, jiraIssueKey, gitBranchName);
+      controller.setArtifactExplorerUnavailable();
+      void restoreArtifactExplorerFromScope(scopeKey);
     },
     appendLog: (text) => controller.appendLog(text),
     setFlowFailed: (flowId) => controller.setFlowFailed(flowId),

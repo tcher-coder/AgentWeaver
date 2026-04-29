@@ -655,6 +655,7 @@ export class InteractiveSessionController {
   setArtifactExplorerAvailability(input: {
     scopeKey: string;
     runId?: string | null;
+    runIds?: string[];
     status: Exclude<ArtifactExplorerStatus, "unavailable">;
     artifactCount?: number;
     open?: boolean;
@@ -681,9 +682,26 @@ export class InteractiveSessionController {
       open: Boolean(input.open) && !this.hasActiveInput(),
       scopeKey: input.scopeKey,
       runId: input.runId ?? null,
+      ...(input.runIds && input.runIds.length > 1 ? { runIds: input.runIds } : {}),
       status: input.status,
       label,
       ...(hasCount ? { artifactCount: count } : {}),
+      message,
+    };
+    this.emitChange();
+  }
+
+  setArtifactExplorerUnavailable(message = "Artifacts are available after a Web UI workflow run completes."): void {
+    if (!this.state.artifactExplorer.available && !this.state.artifactExplorer.open) {
+      return;
+    }
+    this.state.artifactExplorer = {
+      available: false,
+      open: false,
+      scopeKey: null,
+      runId: null,
+      status: "unavailable",
+      label: "Artifact Explorer",
       message,
     };
     this.emitChange();

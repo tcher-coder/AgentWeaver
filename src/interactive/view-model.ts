@@ -29,6 +29,7 @@ export type ArtifactExplorerViewModel = {
   open: boolean;
   scopeKey: string | null;
   runId: string | null;
+  runIds?: string[];
   status: ArtifactExplorerStatus;
   label: string;
   artifactCount?: number;

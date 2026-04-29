@@ -2,6 +2,8 @@ import process from "node:process";
 import { writeSync } from "node:fs";
 
 import { FlowInterruptedError } from "../../errors.js";
+import { listArtifactCatalog } from "../../runtime/artifact-catalog.js";
+import { createArtifactRegistry } from "../../runtime/artifact-registry.js";
 import { InteractiveSessionController } from "../controller.js";
 import type { InteractiveSession, InteractiveSessionOptions } from "../session.js";
 import type { ClientAction, ServerEvent } from "./protocol.js";
@@ -14,6 +16,7 @@ export type CreateWebInteractiveSessionOptions = {
   onServerReady?: (server: StartedWebServer) => void;
   printInfo?: (message: string) => void;
   openBrowser?: WebServerOptions["openBrowser"];
+  getArtifactCatalog?: WebServerOptions["getArtifactCatalog"];
 };
 
 function actionId(action: ClientAction): string | undefined {
@@ -29,6 +32,7 @@ export function createWebInteractiveSession(
   let unsubscribe: (() => void) | null = null;
   let mounted = false;
   let shuttingDown = false;
+  let activeScopeKey = options.scopeKey;
 
   function snapshot(): ServerEvent {
     return { type: "snapshot", viewModel: controller.getViewModel() };
@@ -139,6 +143,10 @@ export function createWebInteractiveSession(
           controller.appendLog(message);
         },
         ...(webOptions.openBrowser ? { openBrowser: webOptions.openBrowser } : {}),
+        getArtifactCatalog: webOptions.getArtifactCatalog ?? (() => listArtifactCatalog({
+          scopeKey: activeScopeKey,
+          artifactRegistry: createArtifactRegistry(),
+        })),
         onClientAction: (action, client) => {
           void dispatch(action, client);
         },
@@ -186,7 +194,10 @@ export function createWebInteractiveSession(
     requestUserInput: (form) => controller.requestUserInput(form),
     setSummary: (markdown) => controller.setSummary(markdown),
     clearSummary: () => controller.clearSummary(),
-    setScope: (scopeKey, jiraIssueKey, gitBranchName) => controller.setScope(scopeKey, jiraIssueKey, gitBranchName),
+    setScope: (scopeKey, jiraIssueKey, gitBranchName) => {
+      activeScopeKey = scopeKey;
+      controller.setScope(scopeKey, jiraIssueKey, gitBranchName);
+    },
     appendLog: (text) => controller.appendLog(text),
     setFlowFailed: (flowId) => controller.setFlowFailed(flowId),
     interruptActiveForm: (message = "Flow interrupted by user.") => {

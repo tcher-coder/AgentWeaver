@@ -7,6 +7,7 @@ import process from "node:process";
 import type { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 
+import type { ArtifactCatalog } from "../../runtime/artifact-catalog.js";
 import type { ClientAction, ServerEvent } from "./protocol.js";
 import { parseClientAction } from "./protocol.js";
 
@@ -23,6 +24,7 @@ export type WebServerOptions = {
   onClientAction: (action: ClientAction, client: WebSocketClient) => void;
   onClientConnected: (client: WebSocketClient) => void;
   onExitRequested: () => void;
+  getArtifactCatalog?: () => ArtifactCatalog | Promise<ArtifactCatalog>;
   printInfo?: (message: string) => void;
   openBrowser?: (url: string) => Promise<void>;
 };
@@ -147,6 +149,14 @@ function serveStaticAsset(request: IncomingMessage, response: http.ServerRespons
   });
   response.end(readFileSync(assetPath));
   return true;
+}
+
+function writeJson(response: http.ServerResponse, statusCode: number, value: unknown): void {
+  response.writeHead(statusCode, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  response.end(JSON.stringify(value));
 }
 
 function htmlShell(): string {
@@ -473,8 +483,26 @@ export async function startWebServer(options: WebServerOptions): Promise<Started
   let closed = false;
   const server = http.createServer((request, response) => {
     if (request.method === "GET" && request.url === "/__agentweaver/health") {
-      response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-      response.end(JSON.stringify({ ok: true }));
+      writeJson(response, 200, { ok: true });
+      return;
+    }
+    if (request.method === "GET" && request.url === "/__agentweaver/artifacts") {
+      if (!isAuthorized(request, auth)) {
+        writeAuthRequired(response);
+        return;
+      }
+      if (!options.getArtifactCatalog) {
+        writeJson(response, 404, { error: "Artifact catalog provider is not configured." });
+        return;
+      }
+      void Promise.resolve()
+        .then(() => options.getArtifactCatalog?.())
+        .then((catalog) => {
+          writeJson(response, 200, catalog);
+        })
+        .catch((error) => {
+          writeJson(response, 500, { error: (error as Error).message });
+        });
       return;
     }
     if (request.method === "GET" && staticAssetPath(request.url)) {

@@ -130,6 +130,7 @@ import {
 } from "./scope.js";
 
 const COMMANDS = [
+  "auto",
   "auto-golang",
   "auto-common-guided",
   "auto-common",
@@ -340,6 +341,8 @@ function usage(): string {
   agentweaver review-loop [--dry] [--verbose] [--prompt <text>] [--scope <name>] [--blocking-severities <list>] [<jira-browse-url|jira-issue-key>]
   agentweaver run-go-tests-loop [--dry] [--verbose] [--prompt <text>] [--scope <name>] [<jira-browse-url|jira-issue-key>]
   agentweaver run-go-linter-loop [--dry] [--verbose] [--prompt <text>] [--scope <name>] [<jira-browse-url|jira-issue-key>]
+  agentweaver auto [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] <jira-browse-url|jira-issue-key>
+  agentweaver auto --help-phases
   agentweaver auto-golang [--dry] [--verbose] [--prompt <text>] [<jira-browse-url|jira-issue-key>]
   agentweaver auto-golang [--dry] [--verbose] [--prompt <text>] --from <phase> [<jira-browse-url|jira-issue-key>]
   agentweaver auto-golang --help-phases
@@ -2006,11 +2009,12 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
     process.exit(1);
   }
 
-  const command = argv[0];
-  if (!COMMANDS.includes(command as CommandName)) {
+  const rawCommand = argv[0];
+  if (!COMMANDS.includes(rawCommand as CommandName)) {
     writeStderrSync(`${usage()}\n`);
     process.exit(1);
   }
+  const command = rawCommand === "auto" ? "auto-common" : rawCommand;
 
   let dry = false;
   let verbose = false;

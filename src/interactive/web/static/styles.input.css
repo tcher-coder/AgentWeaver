@@ -280,8 +280,8 @@ h2 {
 
 .artifact-drawer {
   @apply fixed right-0 top-0 z-10 grid h-full;
-  width: min(560px, 100vw);
-  grid-template-rows: auto auto minmax(0, 1fr) minmax(180px, 34vh);
+  width: min(1120px, calc(100vw - 32px));
+  grid-template-rows: auto auto minmax(0, 1fr);
   border-left: 1px solid var(--aw-border-strong);
   background: rgba(10, 16, 14, 0.98);
   box-shadow: var(--aw-shadow);
@@ -296,7 +296,9 @@ h2 {
 .artifact-drawer-header p,
 .artifact-message,
 .artifact-empty,
-.artifact-row-main span {
+.artifact-row-main span,
+.artifact-selected p,
+.artifact-action-status {
   color: var(--aw-muted);
   font-size: 13px;
 }
@@ -304,6 +306,21 @@ h2 {
 .artifact-message {
   padding: 10px 14px;
   border-bottom: 1px solid var(--aw-border);
+}
+
+.artifact-drawer-body {
+  @apply grid min-h-0 gap-0;
+  grid-template-columns: minmax(300px, 0.42fr) minmax(420px, 1fr);
+}
+
+.artifact-list-pane,
+.artifact-preview {
+  @apply grid min-h-0;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.artifact-list-pane {
+  border-right: 1px solid var(--aw-border);
 }
 
 .artifact-list {
@@ -341,16 +358,31 @@ h2 {
   box-shadow: none;
 }
 
-.artifact-row-main strong,
-.artifact-row-main span {
+.artifact-row-main strong {
   @apply overflow-hidden text-ellipsis whitespace-nowrap;
+}
+
+.artifact-row-meta {
+  @apply grid min-w-0 gap-1;
+  grid-template-columns: auto auto minmax(0, 1fr);
+}
+
+.artifact-row-meta span {
+  @apply min-w-0 overflow-hidden text-ellipsis whitespace-nowrap;
+}
+
+.artifact-row-meta span:not(:last-child)::after {
+  content: "|";
+  margin-left: 0.25rem;
+  color: var(--aw-dim);
 }
 
 .artifact-row-actions {
   @apply flex items-center gap-2;
 }
 
-.artifact-row-actions a {
+.artifact-row-actions a,
+.artifact-action-link {
   color: var(--aw-cyan);
   font-size: 12px;
   font-weight: 700;
@@ -358,15 +390,52 @@ h2 {
 }
 
 .artifact-row-actions a:hover,
-.artifact-row-actions a:focus-visible {
+.artifact-row-actions a:focus-visible,
+.artifact-action-link:hover,
+.artifact-action-link:focus-visible {
   color: var(--aw-accent-strong);
   text-decoration: underline;
 }
 
 .artifact-preview {
-  @apply grid min-h-0;
   grid-template-rows: auto minmax(0, 1fr);
-  border-top: 1px solid var(--aw-border);
+}
+
+.artifact-preview-header {
+  @apply grid gap-2 px-3 py-2;
+  border-bottom: 1px solid var(--aw-border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012));
+}
+
+.artifact-selected {
+  @apply grid min-w-0 gap-1;
+}
+
+.artifact-selected h2,
+.artifact-selected p {
+  @apply overflow-hidden text-ellipsis whitespace-nowrap;
+}
+
+.artifact-toolbar {
+  @apply flex flex-wrap items-center gap-2;
+}
+
+.artifact-action-link {
+  @apply inline-flex min-h-8 items-center justify-center rounded-md px-3 py-1.5;
+  border: 1px solid var(--aw-border-strong);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015));
+}
+
+.artifact-action-link.disabled {
+  color: var(--aw-dim);
+  cursor: not-allowed;
+  opacity: 0.48;
+  pointer-events: none;
+  text-decoration: none;
+}
+
+.artifact-action-status {
+  min-height: 18px;
 }
 
 .artifact-empty {
@@ -536,6 +605,14 @@ h2 {
     grid-column: 1 / -1;
     min-height: 320px;
   }
+
+  .artifact-drawer {
+    width: min(960px, calc(100vw - 18px));
+  }
+
+  .artifact-drawer-body {
+    grid-template-columns: minmax(280px, 0.45fr) minmax(360px, 1fr);
+  }
 }
 
 @media (max-width: 760px) {
@@ -562,10 +639,48 @@ h2 {
   .artifact-drawer {
     top: auto;
     bottom: 0;
-    height: min(84vh, 720px);
+    height: min(92vh, 760px);
     width: 100vw;
+    grid-template-rows: auto auto minmax(0, 1fr);
     border-left: 0;
     border-top: 1px solid var(--aw-border-strong);
+  }
+
+  .artifact-drawer-header {
+    align-items: flex-start;
+  }
+
+  .artifact-drawer-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(190px, 0.42fr) minmax(260px, 1fr);
+  }
+
+  .artifact-list-pane {
+    border-right: 0;
+    border-bottom: 1px solid var(--aw-border);
+  }
+
+  .artifact-row {
+    grid-template-columns: 1fr;
+  }
+
+  .artifact-row-actions {
+    justify-content: flex-start;
+  }
+
+  .artifact-row-meta {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .artifact-row-meta span:not(:last-child)::after {
+    content: "";
+    margin-left: 0;
+  }
+
+  .artifact-selected h2,
+  .artifact-selected p {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .field-pair {

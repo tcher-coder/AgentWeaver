@@ -13,6 +13,9 @@
       error: null,
       preview: null,
       selectedId: null,
+      actionStatus: null,
+      actionStatusFailed: false,
+      previewRequestId: 0,
     },
   };
 
@@ -41,6 +44,14 @@
     artifactMeta: document.getElementById("artifact-meta"),
     artifactMessage: document.getElementById("artifact-message"),
     artifactList: document.getElementById("artifact-list"),
+    artifactSelectedTitle: document.getElementById("artifact-selected-title"),
+    artifactSelectedMeta: document.getElementById("artifact-selected-meta"),
+    artifactActionStatus: document.getElementById("artifact-action-status"),
+    artifactCopyContent: document.getElementById("artifact-copy-content-button"),
+    artifactCopyReference: document.getElementById("artifact-copy-reference-button"),
+    artifactOpenRaw: document.getElementById("artifact-open-raw-link"),
+    artifactDownload: document.getElementById("artifact-download-link"),
+    artifactToolbarClose: document.getElementById("artifact-toolbar-close-button"),
     artifactPreview: document.getElementById("artifact-preview-text"),
     helpPanel: document.getElementById("help-panel"),
     helpText: document.getElementById("help-text"),
@@ -404,28 +415,44 @@
     var signature = artifactSignature(explorer);
     if (signature !== state.artifacts.signature) {
       state.artifacts.signature = signature;
+      state.artifacts.loading = false;
       state.artifacts.catalog = null;
       state.artifacts.error = null;
       state.artifacts.preview = null;
       state.artifacts.selectedId = null;
+      state.artifacts.actionStatus = null;
+      state.artifacts.actionStatusFailed = false;
+      state.artifacts.previewRequestId += 1;
       fetchArtifacts(explorer);
     }
     renderArtifactList(explorer);
-    renderArtifactPreview();
+    renderArtifactPreview(explorer);
   }
 
   function artifactMetaText(explorer) {
     var parts = [];
+    var count = typeof explorer.artifactCount === "number" ? explorer.artifactCount : null;
+    if (explorer.status === "completed") {
+      parts.push("Workflow completed. " + artifactCountText(count));
+    } else if (explorer.status === "failed") {
+      parts.push("Workflow failed. " + artifactCountText(count));
+    } else if (count !== null) {
+      parts.push(artifactCountText(count));
+    }
     if (explorer.scopeKey) {
       parts.push("Scope " + explorer.scopeKey);
     }
     if (explorer.runId) {
       parts.push("Run " + explorer.runId);
     }
-    if (typeof explorer.artifactCount === "number") {
-      parts.push(String(explorer.artifactCount) + " artifact" + (explorer.artifactCount === 1 ? "" : "s"));
-    }
     return parts.join(" | ");
+  }
+
+  function artifactCountText(count) {
+    if (typeof count !== "number") {
+      return "Artifacts are available.";
+    }
+    return String(count) + " artifact" + (count === 1 ? "" : "s") + " created.";
   }
 
   function artifactApiUrl(explorer, suffix) {
@@ -439,6 +466,106 @@
     }
     var query = params.toString();
     return query ? base + "?" + query : base;
+  }
+
+  function artifactGroups(catalog) {
+    if (catalog && Array.isArray(catalog.groups) && catalog.groups.length > 0) {
+      return catalog.groups.map(function (group) {
+        return {
+          title: group.title || group.phaseId || "Artifacts",
+          items: Array.isArray(group.items) ? group.items : [],
+        };
+      });
+    }
+    return [{
+      title: "Artifacts",
+      items: catalog && Array.isArray(catalog.items) ? catalog.items : [],
+    }];
+  }
+
+  function flattenArtifacts(catalog) {
+    return artifactGroups(catalog).reduce(function (items, group) {
+      return items.concat(group.items);
+    }, []);
+  }
+
+  function selectedArtifact() {
+    var items = state.artifacts.catalog ? flattenArtifacts(state.artifacts.catalog) : [];
+    return items.find(function (item) {
+      return item && item.id === state.artifacts.selectedId;
+    }) || null;
+  }
+
+  function artifactReference(item) {
+    return item && (item.relativePath || item.logicalKey || item.id) || "";
+  }
+
+  function artifactDisplayTitle(item) {
+    return item && (item.title || item.logicalKey || item.relativePath || item.id) || "Untitled artifact";
+  }
+
+  function formatArtifactBytes(value) {
+    if (!Number.isFinite(value)) {
+      return "Unknown size";
+    }
+    var bytes = Math.max(0, value);
+    if (bytes < 1024) {
+      return String(bytes) + " B";
+    }
+    var units = ["KB", "MB", "GB"];
+    var size = bytes / 1024;
+    var index = 0;
+    while (size >= 1024 && index < units.length - 1) {
+      size = size / 1024;
+      index += 1;
+    }
+    return (size >= 10 ? size.toFixed(0) : size.toFixed(1)).replace(/\.0$/, "") + " " + units[index];
+  }
+
+  function artifactKind(item) {
+    return item && item.kind ? String(item.kind) : "unknown";
+  }
+
+  function chooseDefaultArtifact(items) {
+    if (!Array.isArray(items) || items.length === 0) {
+      return null;
+    }
+    var best = null;
+    var bestScore = Infinity;
+    items.forEach(function (item, index) {
+      var score = artifactUsefulnessScore(item) * 1000 + index;
+      if (score < bestScore) {
+        best = item;
+        bestScore = score;
+      }
+    });
+    return best;
+  }
+
+  function artifactUsefulnessScore(item) {
+    var role = String(item && item.role || "").toLowerCase();
+    var haystack = [
+      item && item.logicalKey,
+      item && item.relativePath,
+      item && item.title,
+      item && item.id,
+    ].filter(Boolean).join(" ").toLowerCase();
+    if (role.indexOf("design") !== -1 || /\bdesign\b/.test(haystack)) return 0;
+    if (role.indexOf("plan") !== -1 || /\bplan\b/.test(haystack)) return 1;
+    if (role.indexOf("review") !== -1 || /\breview\b/.test(haystack)) return 2;
+    if (role === "qa" || role.indexOf("qa") !== -1 || /\bqa\b/.test(haystack)) return 3;
+    if (role.indexOf("ready-to-merge") !== -1 || haystack.indexOf("ready-to-merge") !== -1) return 4;
+    if (isDiagnosticArtifact(role, haystack)) return 100;
+    return 50;
+  }
+
+  function isDiagnosticArtifact(role, haystack) {
+    return role.indexOf("diagnostic") !== -1
+      || role.indexOf("internal") !== -1
+      || /\b(log|trace|debug|diagnostic|diagnostics|internal)\b/.test(haystack)
+      || haystack.indexOf("manifest-history") !== -1
+      || haystack.indexOf("restart-archives") !== -1
+      || haystack.indexOf("artifact-index") !== -1;
   }
 
   function fetchArtifacts(explorer) {
@@ -462,13 +589,27 @@
         state.artifacts.catalog = catalog;
         state.artifacts.error = null;
         state.artifacts.loading = false;
+        var items = flattenArtifacts(catalog);
+        var selectedStillExists = items.some(function (item) {
+          return item && item.id === state.artifacts.selectedId;
+        });
+        if (!selectedStillExists) {
+          var defaultItem = chooseDefaultArtifact(items);
+          state.artifacts.selectedId = defaultItem ? defaultItem.id : null;
+          state.artifacts.preview = null;
+          if (defaultItem) {
+            previewArtifact(explorer, defaultItem);
+          }
+        }
         renderArtifactList(explorer);
+        renderArtifactPreview(explorer);
       })
       .catch(function (error) {
         state.artifacts.catalog = null;
         state.artifacts.error = error.message || "Artifact catalog request failed.";
         state.artifacts.loading = false;
         renderArtifactList(explorer);
+        renderArtifactPreview(explorer);
       });
   }
 
@@ -487,9 +628,7 @@
       elements.artifactList.append(artifactEmpty("Artifacts have not been loaded yet."));
       return;
     }
-    var groups = Array.isArray(catalog.groups) && catalog.groups.length > 0
-      ? catalog.groups
-      : [{ title: "Artifacts", items: Array.isArray(catalog.items) ? catalog.items : [] }];
+    var groups = artifactGroups(catalog);
     var rendered = 0;
     groups.forEach(function (group) {
       var items = Array.isArray(group.items) ? group.items : [];
@@ -499,7 +638,7 @@
       var section = document.createElement("section");
       section.className = "artifact-group";
       var title = document.createElement("h3");
-      title.textContent = group.title || group.phaseId || "Artifacts";
+      title.textContent = group.title || "Artifacts";
       section.append(title);
       items.forEach(function (item) {
         rendered += 1;
@@ -508,23 +647,32 @@
       elements.artifactList.append(section);
     });
     if (rendered === 0) {
-      elements.artifactList.append(artifactEmpty("No artifacts found for this run."));
+      elements.artifactList.append(artifactEmpty("No artifacts were found for the current scope or run."));
     }
   }
 
   function renderArtifactRow(explorer, item) {
     var row = document.createElement("article");
     row.className = "artifact-row" + (state.artifacts.selectedId === item.id ? " selected" : "");
+    row.dataset.artifactId = item.id || "";
     var details = document.createElement("button");
     details.type = "button";
     details.className = "artifact-row-main";
+    details.setAttribute("aria-pressed", state.artifacts.selectedId === item.id ? "true" : "false");
     details.addEventListener("click", function () {
       previewArtifact(explorer, item);
     });
     var title = document.createElement("strong");
-    title.textContent = item.title || item.logicalKey || item.relativePath || item.id;
+    title.textContent = artifactDisplayTitle(item);
     var meta = document.createElement("span");
-    meta.textContent = [item.kind, item.role, item.relativePath].filter(Boolean).join(" | ");
+    meta.className = "artifact-row-meta";
+    var kind = document.createElement("span");
+    kind.textContent = artifactKind(item);
+    var size = document.createElement("span");
+    size.textContent = formatArtifactBytes(item.sizeBytes);
+    var reference = document.createElement("span");
+    reference.textContent = artifactReference(item);
+    meta.append(kind, size, reference);
     details.append(title, meta);
 
     var actions = document.createElement("div");
@@ -550,10 +698,14 @@
   }
 
   function previewArtifact(explorer, item) {
+    var requestId = state.artifacts.previewRequestId + 1;
+    state.artifacts.previewRequestId = requestId;
     state.artifacts.selectedId = item.id;
-    state.artifacts.preview = { loading: true, content: "Loading preview..." };
+    state.artifacts.actionStatus = null;
+    state.artifacts.actionStatusFailed = false;
+    state.artifacts.preview = { artifactId: item.id, loading: true, content: "Loading preview..." };
     renderArtifactList(explorer);
-    renderArtifactPreview();
+    renderArtifactPreview(explorer);
     fetch(artifactApiUrl(explorer, "/" + encodeURIComponent(item.id) + "/preview"))
       .then(function (response) {
         return response.json().then(function (body) {
@@ -564,33 +716,124 @@
         });
       })
       .then(function (preview) {
+        if (requestId !== state.artifacts.previewRequestId || state.artifacts.selectedId !== item.id) {
+          return;
+        }
         state.artifacts.preview = {
+          artifactId: item.id,
           loading: false,
           content: preview.content || "",
           truncated: preview.truncated,
           title: preview.artifact && preview.artifact.title ? preview.artifact.title : item.title,
         };
-        renderArtifactPreview();
+        renderArtifactPreview(explorer);
       })
       .catch(function (error) {
+        if (requestId !== state.artifacts.previewRequestId || state.artifacts.selectedId !== item.id) {
+          return;
+        }
         state.artifacts.preview = {
+          artifactId: item.id,
           loading: false,
           content: error.message || "Artifact preview request failed.",
           error: true,
         };
-        renderArtifactPreview();
+        renderArtifactPreview(explorer);
       });
   }
 
-  function renderArtifactPreview() {
+  function renderArtifactPreview(explorer) {
+    var item = selectedArtifact();
+    renderArtifactToolbar(explorer, item);
     var preview = state.artifacts.preview;
-    if (!preview) {
+    if (!item) {
+      elements.artifactSelectedTitle.textContent = "Preview";
+      elements.artifactSelectedMeta.textContent = "Select an artifact to preview it.";
+      elements.artifactPreview.classList.remove("error-text");
       elements.artifactPreview.textContent = "Select an artifact to preview it.";
       return;
     }
+    elements.artifactSelectedTitle.textContent = artifactDisplayTitle(item);
+    elements.artifactSelectedMeta.textContent = [
+      artifactKind(item),
+      formatArtifactBytes(item.sizeBytes),
+      artifactReference(item),
+    ].filter(Boolean).join(" | ");
+    if (!preview) {
+      elements.artifactPreview.classList.remove("error-text");
+      elements.artifactPreview.textContent = "Select an artifact to preview it.";
+      return;
+    }
+    elements.artifactPreview.classList.toggle("error-text", Boolean(preview.error));
     var prefix = preview.title ? preview.title + "\n\n" : "";
     var suffix = preview.truncated ? "\n\n[Preview truncated]" : "";
     elements.artifactPreview.textContent = prefix + (preview.content || "") + suffix;
+  }
+
+  function renderArtifactToolbar(explorer, item) {
+    var preview = state.artifacts.preview;
+    var hasItem = Boolean(item);
+    var hasContent = hasItem && preview && !preview.loading && !preview.error && typeof preview.content === "string";
+    elements.artifactCopyContent.disabled = !hasContent;
+    elements.artifactCopyReference.disabled = !hasItem;
+    setArtifactActionLink(elements.artifactOpenRaw, hasItem ? artifactApiUrl(explorer, "/" + encodeURIComponent(item.id) + "/raw") : "");
+    setArtifactActionLink(elements.artifactDownload, hasItem ? artifactApiUrl(explorer, "/" + encodeURIComponent(item.id) + "/download") : "");
+    elements.artifactActionStatus.textContent = state.artifacts.actionStatus || "";
+    elements.artifactActionStatus.classList.toggle("error-text", Boolean(state.artifacts.actionStatusFailed));
+  }
+
+  function setArtifactActionLink(link, href) {
+    if (href) {
+      link.href = href;
+      link.classList.remove("disabled");
+      link.setAttribute("aria-disabled", "false");
+    } else {
+      link.removeAttribute("href");
+      link.classList.add("disabled");
+      link.setAttribute("aria-disabled", "true");
+    }
+  }
+
+  function setArtifactActionStatus(message, failed) {
+    state.artifacts.actionStatus = message;
+    state.artifacts.actionStatusFailed = Boolean(failed);
+    elements.artifactActionStatus.textContent = message || "";
+    elements.artifactActionStatus.classList.toggle("error-text", Boolean(failed));
+    if (failed && message) {
+      appendLog("[artifacts] " + message);
+    }
+  }
+
+  function writeClipboard(value, successMessage) {
+    if (typeof navigator === "undefined" || !navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+      setArtifactActionStatus("Clipboard is not available in this browser.", true);
+      return Promise.resolve(false);
+    }
+    return navigator.clipboard.writeText(value).then(function () {
+      setArtifactActionStatus(successMessage, false);
+      return true;
+    }).catch(function (error) {
+      setArtifactActionStatus("Clipboard copy failed: " + (error && error.message ? error.message : "permission denied."), true);
+      return false;
+    });
+  }
+
+  function copySelectedArtifactContent() {
+    var preview = state.artifacts.preview;
+    if (!preview || preview.loading || preview.error || typeof preview.content !== "string") {
+      setArtifactActionStatus("Preview content is not ready to copy.", true);
+      return;
+    }
+    writeClipboard(preview.content, "Copied artifact preview content.");
+  }
+
+  function copySelectedArtifactReference() {
+    var item = selectedArtifact();
+    if (!item) {
+      setArtifactActionStatus("No artifact is selected.", true);
+      return;
+    }
+    writeClipboard(artifactReference(item), "Copied artifact path/reference.");
   }
 
   function renderModal(vm) {
@@ -947,6 +1190,9 @@
   elements.interrupt.addEventListener("click", api.openInterruptConfirm);
   elements.artifactOpen.addEventListener("click", api.openArtifactExplorer);
   elements.artifactClose.addEventListener("click", api.closeArtifactExplorer);
+  elements.artifactToolbarClose.addEventListener("click", api.closeArtifactExplorer);
+  elements.artifactCopyContent.addEventListener("click", copySelectedArtifactContent);
+  elements.artifactCopyReference.addEventListener("click", copySelectedArtifactReference);
   elements.help.addEventListener("click", api.toggleHelp);
   elements.closeHelp.addEventListener("click", function () {
     api.showHelp(false);

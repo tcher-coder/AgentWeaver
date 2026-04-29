@@ -81,12 +81,30 @@
       <button id="artifact-close-button" type="button">Close</button>
     </div>
     <div id="artifact-message" class="artifact-message"></div>
-    <div id="artifact-list" class="artifact-list"></div>
-    <div class="artifact-preview">
-      <div class="pane-heading">
-        <h2>Preview</h2>
-      </div>
-      <pre id="artifact-preview-text" class="text-panel compact">Select an artifact to preview it.</pre>
+    <div class="artifact-drawer-body">
+      <section class="artifact-list-pane" aria-label="Artifacts by phase">
+        <div class="pane-heading">
+          <h2>Artifacts</h2>
+        </div>
+        <div id="artifact-list" class="artifact-list"></div>
+      </section>
+      <section class="artifact-preview" aria-label="Selected artifact preview">
+        <div class="artifact-preview-header">
+          <div class="artifact-selected">
+            <h2 id="artifact-selected-title">Preview</h2>
+            <p id="artifact-selected-meta">Select an artifact to preview it.</p>
+          </div>
+          <div class="artifact-toolbar" aria-label="Selected artifact actions">
+            <button id="artifact-copy-content-button" type="button" disabled>Copy content</button>
+            <button id="artifact-copy-reference-button" type="button" disabled>Copy path/reference</button>
+            <a id="artifact-open-raw-link" class="artifact-action-link disabled" target="_blank" rel="noreferrer" aria-disabled="true">Open raw</a>
+            <a id="artifact-download-link" class="artifact-action-link disabled" aria-disabled="true">Download</a>
+            <button id="artifact-toolbar-close-button" type="button">Close</button>
+          </div>
+          <p id="artifact-action-status" class="artifact-action-status" role="status" aria-live="polite"></p>
+        </div>
+        <pre id="artifact-preview-text" class="text-panel compact">Select an artifact to preview it.</pre>
+      </section>
     </div>
   </aside>
 

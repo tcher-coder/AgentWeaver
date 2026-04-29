@@ -1,12 +1,25 @@
 import { spawn } from "node:child_process";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
+import type { Stats } from "node:fs";
 import http, { type IncomingMessage } from "node:http";
 import path from "node:path";
 import process from "node:process";
 import type { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 
+import { parseArtifactReference, type ArtifactManifest } from "../../artifact-manifest.js";
+import { scopeArtifactsDir, scopeWorkspaceDir } from "../../artifacts.js";
+import {
+  groupArtifactCatalog,
+  inferArtifactRenderKind,
+  inferArtifactRole,
+  inferArtifactTitle,
+  type ArtifactCatalog,
+  type ArtifactCatalogItem,
+  type ArtifactRenderKind,
+} from "../../runtime/artifact-catalog.js";
+import { createArtifactRegistry } from "../../runtime/artifact-registry.js";
 import type { ClientAction, ServerEvent } from "./protocol.js";
 import { parseClientAction } from "./protocol.js";
 
@@ -23,8 +36,15 @@ export type WebServerOptions = {
   onClientAction: (action: ClientAction, client: WebSocketClient) => void;
   onClientConnected: (client: WebSocketClient) => void;
   onExitRequested: () => void;
+  getArtifactCatalog?: (input?: ArtifactCatalogRequest) => ArtifactCatalog | Promise<ArtifactCatalog>;
   printInfo?: (message: string) => void;
   openBrowser?: (url: string) => Promise<void>;
+};
+
+export type ArtifactCatalogRequest = {
+  scopeKey?: string;
+  runId?: string;
+  runIds?: string[];
 };
 
 export type WebServerAuthConfig = {
@@ -40,6 +60,8 @@ export type StartedWebServer = {
 };
 
 const STATIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "static");
+const MAX_PREVIEW_SIZE = 512 * 1024;
+const MAX_JSON_PARSE_SIZE = 2 * 1024 * 1024;
 
 const CONTENT_TYPES = new Map<string, string>([
   [".html", "text/html; charset=utf-8"],
@@ -50,6 +72,58 @@ const CONTENT_TYPES = new Map<string, string>([
 ]);
 
 const BASIC_AUTH_REALM = "AgentWeaver Web UI";
+const ARTIFACT_API_PREFIX = "/__agentweaver/api/artifacts";
+
+type ArtifactApiErrorCode =
+  | "invalid_id"
+  | "missing_scope"
+  | "scope_mismatch"
+  | "forbidden_path"
+  | "not_found"
+  | "unsupported_preview"
+  | "read_failed";
+
+const ARTIFACT_ERROR_STATUSES: Record<ArtifactApiErrorCode, number> = {
+  invalid_id: 400,
+  missing_scope: 400,
+  scope_mismatch: 403,
+  forbidden_path: 403,
+  not_found: 404,
+  unsupported_preview: 415,
+  read_failed: 500,
+};
+
+type ArtifactAction = "preview" | "raw" | "download";
+
+type ArtifactApiRoute =
+  | { kind: "list"; scopeKey: string | null; runIds: string[] }
+  | { kind: "content"; artifactId: string; action: ArtifactAction; scopeKey: string | null; runIds: string[] };
+
+type SafeArtifactMetadata = Pick<
+  ArtifactCatalogItem,
+  | "id"
+  | "scopeKey"
+  | "runId"
+  | "logicalKey"
+  | "title"
+  | "relativePath"
+  | "kind"
+  | "role"
+  | "phaseId"
+  | "stepId"
+  | "schemaId"
+  | "sizeBytes"
+  | "updatedAt"
+  | "isLatest"
+  | "source"
+>;
+
+type ResolvedArtifact = {
+  item: ArtifactCatalogItem;
+  filePath: string;
+  realPath: string;
+  stats: Stats;
+};
 
 function hashCredential(value: string): Buffer {
   return createHash("sha256").update(value, "utf8").digest();
@@ -146,6 +220,463 @@ function serveStaticAsset(request: IncomingMessage, response: http.ServerRespons
     "cache-control": "no-store",
   });
   response.end(readFileSync(assetPath));
+  return true;
+}
+
+function writeJson(response: http.ServerResponse, statusCode: number, value: unknown): void {
+  response.writeHead(statusCode, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  response.end(JSON.stringify(value));
+}
+
+function writeArtifactApiError(
+  response: http.ServerResponse,
+  code: ArtifactApiErrorCode,
+  message: string,
+  artifact?: SafeArtifactMetadata,
+): void {
+  writeJson(response, ARTIFACT_ERROR_STATUSES[code], {
+    code,
+    message,
+    ...(artifact ? { artifact } : {}),
+  });
+}
+
+function safeArtifactMetadata(item: ArtifactCatalogItem): SafeArtifactMetadata {
+  return {
+    id: item.id,
+    scopeKey: item.scopeKey,
+    runId: item.runId,
+    logicalKey: item.logicalKey,
+    title: item.title,
+    relativePath: item.relativePath,
+    kind: item.kind,
+    role: item.role,
+    phaseId: item.phaseId,
+    stepId: item.stepId,
+    schemaId: item.schemaId,
+    sizeBytes: item.sizeBytes,
+    updatedAt: item.updatedAt,
+    isLatest: item.isLatest,
+    source: item.source,
+  };
+}
+
+function normalizePathSeparators(value: string): string {
+  return value.replace(/\\/g, "/");
+}
+
+function isInsideDirectory(parent: string, candidate: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function safeDecodeURIComponent(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
+function parseArtifactApiRoute(requestUrl: string | undefined): ArtifactApiRoute | null {
+  const parsed = new URL(requestUrl ?? "/", "http://agentweaver.local");
+  const scopeKey = parsed.searchParams.get("scope");
+  const runIds = parsed.searchParams.getAll("runId").filter((value, index, values) => (
+    value.length > 0 && values.indexOf(value) === index
+  ));
+  if (parsed.pathname === ARTIFACT_API_PREFIX) {
+    return { kind: "list", scopeKey, runIds };
+  }
+  if (!parsed.pathname.startsWith(`${ARTIFACT_API_PREFIX}/`)) {
+    return null;
+  }
+
+  const suffix = parsed.pathname.slice(`${ARTIFACT_API_PREFIX}/`.length);
+  for (const action of ["preview", "raw", "download"] as const) {
+    const actionSuffix = `/${action}`;
+    if (!suffix.endsWith(actionSuffix)) {
+      continue;
+    }
+    const encodedId = suffix.slice(0, -actionSuffix.length);
+    const artifactId = safeDecodeURIComponent(encodedId);
+    if (!artifactId || artifactId.includes("\0")) {
+      return { kind: "content", artifactId: "", action, scopeKey, runIds };
+    }
+    return { kind: "content", artifactId, action, scopeKey, runIds };
+  }
+  return { kind: "content", artifactId: "", action: "preview", scopeKey, runIds };
+}
+
+function filterCatalog(catalog: ArtifactCatalog, scopeKey: string, runIds: string[]): ArtifactCatalog {
+  const runIdSet = new Set(runIds);
+  let items = catalog.items.filter((item) => item.scopeKey === scopeKey && item.kind === "markdown");
+  if (runIdSet.size > 0) {
+    items = items.filter((item) => item.runId !== null && runIdSet.has(item.runId));
+  }
+  const sortedItems = items.slice();
+  return {
+    scopeKey,
+    items: sortedItems,
+    groups: groupArtifactCatalog(sortedItems),
+  };
+}
+
+async function loadArtifactCatalog(
+  options: WebServerOptions,
+  input?: ArtifactCatalogRequest,
+): Promise<ArtifactCatalog | null> {
+  if (!options.getArtifactCatalog) {
+    return null;
+  }
+  return options.getArtifactCatalog(input);
+}
+
+function scopeRelativePath(scopeKey: string, payloadPath: string): string {
+  const workspaceDir = path.resolve(scopeWorkspaceDir(scopeKey));
+  const normalizedPayloadPath = path.resolve(payloadPath);
+  if (isInsideDirectory(workspaceDir, normalizedPayloadPath)) {
+    return normalizePathSeparators(path.relative(workspaceDir, normalizedPayloadPath));
+  }
+  return normalizePathSeparators(path.basename(normalizedPayloadPath));
+}
+
+function itemFromManifest(scopeKey: string, manifest: ArtifactManifest): ArtifactCatalogItem {
+  const relativePath = scopeRelativePath(scopeKey, manifest.payload_path);
+  const kind = inferArtifactRenderKind({
+    payloadFamily: manifest.payload_family,
+    schemaId: manifest.schema_id,
+    filePath: manifest.payload_path,
+  });
+  return {
+    id: manifest.artifact_id,
+    scopeKey,
+    runId: manifest.run_id,
+    logicalKey: manifest.logical_key,
+    title: inferArtifactTitle(scopeKey, manifest.logical_key, relativePath),
+    relativePath,
+    kind,
+    role: inferArtifactRole(manifest.logical_key, relativePath),
+    phaseId: manifest.phase_id || null,
+    stepId: manifest.step_id || null,
+    schemaId: manifest.schema_id || null,
+    sizeBytes: 0,
+    updatedAt: manifest.created_at,
+    isLatest: manifest.status === "ready",
+    source: "manifest",
+  };
+}
+
+function realExistingRoots(scopeKey: string): string[] {
+  const roots = [scopeWorkspaceDir(scopeKey), scopeArtifactsDir(scopeKey)];
+  const realRoots: string[] = [];
+  for (const root of roots) {
+    try {
+      realRoots.push(realpathSync(root));
+    } catch {
+      // A missing .artifacts directory should not block regular scope files.
+    }
+  }
+  return [...new Set(realRoots)];
+}
+
+function assertContainedRegularFile(scopeKey: string, filePath: string): { filePath: string; realPath: string; stats: Stats } {
+  let realPath: string;
+  try {
+    realPath = realpathSync(filePath);
+  } catch {
+    throw new ArtifactApiResolutionError("not_found");
+  }
+
+  const allowedRoots = realExistingRoots(scopeKey);
+  if (allowedRoots.length === 0 || !allowedRoots.some((root) => isInsideDirectory(root, realPath))) {
+    throw new ArtifactApiResolutionError("forbidden_path");
+  }
+
+  let stats: Stats;
+  try {
+    stats = statSync(realPath);
+  } catch {
+    throw new ArtifactApiResolutionError("not_found");
+  }
+  if (!stats.isFile()) {
+    throw new ArtifactApiResolutionError("forbidden_path");
+  }
+  return { filePath, realPath, stats };
+}
+
+class ArtifactApiResolutionError extends Error {
+  constructor(readonly code: ArtifactApiErrorCode) {
+    super(code);
+  }
+}
+
+function catalogFilePath(scopeKey: string, item: ArtifactCatalogItem): string {
+  if (path.isAbsolute(item.relativePath) || item.relativePath.includes("\0")) {
+    throw new ArtifactApiResolutionError("forbidden_path");
+  }
+  return path.join(scopeWorkspaceDir(scopeKey), item.relativePath);
+}
+
+function findCatalogItemForReference(catalog: ArtifactCatalog, reference: string): ArtifactCatalogItem | null {
+  return catalog.items.find((item) => item.id === reference) ?? null;
+}
+
+function resolveArtifactRequest(catalog: ArtifactCatalog, artifactId: string): ResolvedArtifact {
+  if (!artifactId.trim() || artifactId.includes("\0")) {
+    throw new ArtifactApiResolutionError("invalid_id");
+  }
+
+  const parsedReference = parseArtifactReference(artifactId);
+  if (parsedReference) {
+    if (parsedReference.kind === "artifact-id" && parsedReference.parsedId.scopeKey !== catalog.scopeKey) {
+      throw new ArtifactApiResolutionError("scope_mismatch");
+    }
+    let manifest: ArtifactManifest;
+    try {
+      manifest = createArtifactRegistry().resolveArtifact(catalog.scopeKey, artifactId);
+    } catch {
+      throw new ArtifactApiResolutionError("not_found");
+    }
+    const item = findCatalogItemForReference(catalog, manifest.artifact_id) ?? itemFromManifest(catalog.scopeKey, manifest);
+    const contained = assertContainedRegularFile(catalog.scopeKey, manifest.payload_path);
+    return { item: { ...item, sizeBytes: contained.stats.size }, ...contained };
+  }
+
+  const item = findCatalogItemForReference(catalog, artifactId);
+  if (!item) {
+    throw new ArtifactApiResolutionError("invalid_id");
+  }
+  if (item.scopeKey !== catalog.scopeKey) {
+    throw new ArtifactApiResolutionError("scope_mismatch");
+  }
+  const contained = assertContainedRegularFile(catalog.scopeKey, catalogFilePath(catalog.scopeKey, item));
+  return { item: { ...item, sizeBytes: contained.stats.size }, ...contained };
+}
+
+function readLeadingBytes(filePath: string, byteLimit: number): { buffer: Buffer; loadedBytes: number } {
+  const fd = openSync(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(byteLimit);
+    const loadedBytes = readSync(fd, buffer, 0, byteLimit, 0);
+    return { buffer: buffer.subarray(0, loadedBytes), loadedBytes };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function contentTypeForArtifactKind(kind: ArtifactRenderKind): string {
+  switch (kind) {
+    case "markdown":
+      return "text/markdown; charset=utf-8";
+    case "json":
+      return "application/json; charset=utf-8";
+    case "text":
+    case "diff":
+      return "text/plain; charset=utf-8";
+    case "binary":
+    case "unknown":
+      return "application/octet-stream";
+  }
+}
+
+function sanitizeDownloadFilename(value: string): string {
+  const normalizedSeparators = normalizePathSeparators(value);
+  const basename = path.posix.basename(normalizedSeparators);
+  const sanitized = basename
+    .replace(/["\r\n\\/]/g, "_")
+    .replace(/[\x00-\x1f\x7f-\x9f]/g, "_")
+    .replace(/[^\x20-\x7e]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+  return sanitized && sanitized !== "." && sanitized !== ".." ? sanitized : "artifact";
+}
+
+function writeArtifactBytes(
+  response: http.ServerResponse,
+  resolved: ResolvedArtifact,
+  attachment: boolean,
+): void {
+  const headers: Record<string, string> = {
+    "content-type": contentTypeForArtifactKind(resolved.item.kind),
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+  };
+  if (attachment) {
+    headers["content-disposition"] = `attachment; filename="${sanitizeDownloadFilename(resolved.item.relativePath || path.basename(resolved.realPath))}"`;
+  }
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(resolved.realPath);
+  } catch {
+    writeArtifactApiError(response, "read_failed", "Artifact content could not be read.", safeArtifactMetadata(resolved.item));
+    return;
+  }
+  response.writeHead(200, headers);
+  response.end(bytes);
+}
+
+function previewJsonArtifact(resolved: ResolvedArtifact): {
+  content: string;
+  loadedBytes: number;
+  truncated: boolean;
+  jsonParseSafe: boolean;
+} {
+  if (resolved.stats.size <= MAX_JSON_PARSE_SIZE) {
+    const loadedBytes = Number(resolved.stats.size);
+    const content = readFileSync(resolved.realPath).toString("utf8");
+    const contentBytes = Buffer.from(content, "utf8");
+    if (contentBytes.length > MAX_PREVIEW_SIZE) {
+      return {
+        content: contentBytes.subarray(0, MAX_PREVIEW_SIZE).toString("utf8"),
+        loadedBytes,
+        truncated: true,
+        jsonParseSafe: false,
+      };
+    }
+    return { content, loadedBytes, truncated: false, jsonParseSafe: true };
+  }
+
+  const { buffer, loadedBytes } = readLeadingBytes(resolved.realPath, MAX_PREVIEW_SIZE);
+  return {
+    content: buffer.toString("utf8"),
+    loadedBytes,
+    truncated: true,
+    jsonParseSafe: false,
+  };
+}
+
+function writeArtifactPreview(response: http.ServerResponse, resolved: ResolvedArtifact): void {
+  if (resolved.item.kind === "binary" || resolved.item.kind === "unknown") {
+    writeArtifactApiError(
+      response,
+      "unsupported_preview",
+      "Artifact preview is not supported for this content type.",
+      safeArtifactMetadata(resolved.item),
+    );
+    return;
+  }
+
+  try {
+    const preview: {
+      content: string;
+      loadedBytes: number;
+      truncated: boolean;
+      jsonParseSafe?: boolean;
+    } = resolved.item.kind === "json"
+      ? previewJsonArtifact(resolved)
+      : (() => {
+        const byteLimit = Math.min(Number(resolved.stats.size), MAX_PREVIEW_SIZE);
+        const { buffer, loadedBytes } = readLeadingBytes(resolved.realPath, byteLimit);
+        return {
+          content: buffer.toString("utf8"),
+          loadedBytes,
+          truncated: resolved.stats.size > loadedBytes,
+        };
+      })();
+
+    writeJson(response, 200, {
+      artifact: safeArtifactMetadata(resolved.item),
+      renderKind: resolved.item.kind,
+      kind: resolved.item.kind,
+      encoding: "utf-8",
+      content: preview.content,
+      truncated: preview.truncated,
+      sizeBytes: resolved.stats.size,
+      loadedBytes: preview.loadedBytes,
+      ...(resolved.item.kind === "json" ? { jsonParseSafe: preview.jsonParseSafe } : {}),
+    });
+  } catch {
+    writeArtifactApiError(response, "read_failed", "Artifact preview could not be read.", safeArtifactMetadata(resolved.item));
+  }
+}
+
+function handleArtifactApiRequest(
+  request: IncomingMessage,
+  response: http.ServerResponse,
+  options: WebServerOptions,
+  auth: WebServerAuthConfig | undefined,
+): boolean {
+  if (request.method !== "GET") {
+    return false;
+  }
+  const route = parseArtifactApiRoute(request.url);
+  if (!route) {
+    return false;
+  }
+  if (!isAuthorized(request, auth)) {
+    writeAuthRequired(response);
+    return true;
+  }
+
+  if (route.kind === "list") {
+    if (!route.scopeKey) {
+      writeArtifactApiError(response, "missing_scope", "A scope query parameter is required.");
+      return true;
+    }
+    const primaryRunId = route.runIds[0];
+    void loadArtifactCatalog(options, {
+      scopeKey: route.scopeKey,
+      ...(route.runIds.length === 1 && primaryRunId ? { runId: primaryRunId, runIds: route.runIds } : {}),
+      ...(route.runIds.length > 1 ? { runIds: route.runIds } : {}),
+    })
+      .then((catalog) => {
+        if (!catalog) {
+          writeArtifactApiError(response, "not_found", "Artifact catalog provider is not configured.");
+          return;
+        }
+        if (catalog.scopeKey !== route.scopeKey) {
+          writeArtifactApiError(response, "scope_mismatch", "Requested scope does not match the active Web UI scope.");
+          return;
+        }
+        writeJson(response, 200, filterCatalog(catalog, route.scopeKey, route.runIds));
+      })
+      .catch(() => {
+        writeArtifactApiError(response, "read_failed", "Artifact catalog could not be loaded.");
+      });
+    return true;
+  }
+
+  if (!route.artifactId) {
+    writeArtifactApiError(response, "invalid_id", "Artifact identifier is invalid.");
+    return true;
+  }
+
+  const primaryRunId = route.runIds[0];
+  void loadArtifactCatalog(options, {
+    ...(route.scopeKey ? { scopeKey: route.scopeKey } : {}),
+    ...(route.runIds.length === 1 && primaryRunId ? { runId: primaryRunId, runIds: route.runIds } : {}),
+    ...(route.runIds.length > 1 ? { runIds: route.runIds } : {}),
+  })
+    .then((catalog) => {
+      if (!catalog) {
+        writeArtifactApiError(response, "not_found", "Artifact catalog provider is not configured.");
+        return;
+      }
+      if (route.scopeKey && catalog.scopeKey !== route.scopeKey) {
+        writeArtifactApiError(response, "scope_mismatch", "Requested scope does not match the active Web UI scope.");
+        return;
+      }
+      let resolved: ResolvedArtifact;
+      try {
+        resolved = resolveArtifactRequest(catalog, route.artifactId);
+      } catch (error) {
+        const code = error instanceof ArtifactApiResolutionError ? error.code : "read_failed";
+        writeArtifactApiError(response, code, code === "invalid_id" ? "Artifact identifier is invalid." : "Artifact could not be resolved.");
+        return;
+      }
+      if (route.action === "preview") {
+        writeArtifactPreview(response, resolved);
+        return;
+      }
+      writeArtifactBytes(response, resolved, route.action === "download");
+    })
+    .catch(() => {
+      writeArtifactApiError(response, "read_failed", "Artifact could not be loaded.");
+    });
   return true;
 }
 
@@ -473,8 +1004,29 @@ export async function startWebServer(options: WebServerOptions): Promise<Started
   let closed = false;
   const server = http.createServer((request, response) => {
     if (request.method === "GET" && request.url === "/__agentweaver/health") {
-      response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-      response.end(JSON.stringify({ ok: true }));
+      writeJson(response, 200, { ok: true });
+      return;
+    }
+    if (handleArtifactApiRequest(request, response, options, auth)) {
+      return;
+    }
+    if (request.method === "GET" && request.url === "/__agentweaver/artifacts") {
+      if (!isAuthorized(request, auth)) {
+        writeAuthRequired(response);
+        return;
+      }
+      if (!options.getArtifactCatalog) {
+        writeJson(response, 404, { error: "Artifact catalog provider is not configured." });
+        return;
+      }
+      void Promise.resolve()
+        .then(() => options.getArtifactCatalog?.())
+        .then((catalog) => {
+          writeJson(response, 200, catalog);
+        })
+        .catch((error) => {
+          writeJson(response, 500, { error: (error as Error).message });
+        });
       return;
     }
     if (request.method === "GET" && staticAssetPath(request.url)) {

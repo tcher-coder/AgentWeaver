@@ -20,7 +20,12 @@ import { selectHeaderLabel } from "./selectors.js";
 import { createInitialInteractiveState, type InteractiveSessionState } from "./state.js";
 import { buildFlowTree, collectInitiallyExpandedFolderKeys, computeVisibleFlowItems, makeFlowKey, makeFolderKey } from "./tree.js";
 import type { FocusPane, FlowTreeNode, InteractiveFlowDefinition, VisibleFlowTreeItem } from "./types.js";
-import type { InteractiveConfirmationAction, InteractiveSessionViewModel, InteractiveFormViewModel } from "./view-model.js";
+import type {
+  ArtifactExplorerStatus,
+  InteractiveConfirmationAction,
+  InteractiveSessionViewModel,
+  InteractiveFormViewModel,
+} from "./view-model.js";
 
 type Keypress = {
   full?: string;
@@ -639,6 +644,94 @@ export class InteractiveSessionController {
     this.applyScrollOffset(panel, offset, this.panelMaxScroll(panel));
   }
 
+  getCurrentFlowExecutionState(): FlowExecutionState | null {
+    return this.state.flowState.executionState;
+  }
+
+  hasActiveInput(): boolean {
+    return this.confirmSession !== null || this.activeFormSession !== null;
+  }
+
+  setArtifactExplorerAvailability(input: {
+    scopeKey: string;
+    runId?: string | null;
+    runIds?: string[];
+    status: Exclude<ArtifactExplorerStatus, "unavailable">;
+    artifactCount?: number;
+    open?: boolean;
+    label?: string;
+    message?: string;
+  }): void {
+    const count = input.artifactCount;
+    const hasCount = typeof count === "number";
+    const failed = input.status === "failed";
+    const label = input.label
+      ?? (failed
+        ? hasCount && count > 0 ? "Run failed; artifacts available" : "Run failed"
+        : hasCount && count === 0 ? "Run completed; no artifacts found" : "Artifacts ready");
+    const message = input.message
+      ?? (failed
+        ? hasCount && count > 0
+          ? "The workflow failed, but artifacts are available for review."
+          : "The workflow failed. The explorer can check for any artifacts written before failure."
+        : hasCount && count === 0
+          ? "The workflow completed, but no artifacts were found for this run yet."
+          : "The workflow completed and artifacts are available for review.");
+    this.state.artifactExplorer = {
+      available: true,
+      open: Boolean(input.open) && !this.hasActiveInput(),
+      scopeKey: input.scopeKey,
+      runId: input.runId ?? null,
+      ...(input.runIds && input.runIds.length > 1 ? { runIds: input.runIds } : {}),
+      status: input.status,
+      label,
+      ...(hasCount ? { artifactCount: count } : {}),
+      message,
+    };
+    this.emitChange();
+  }
+
+  setArtifactExplorerUnavailable(message = "Artifacts are available after a Web UI workflow run completes."): void {
+    if (!this.state.artifactExplorer.available && !this.state.artifactExplorer.open) {
+      return;
+    }
+    this.state.artifactExplorer = {
+      available: false,
+      open: false,
+      scopeKey: null,
+      runId: null,
+      status: "unavailable",
+      label: "Artifact Explorer",
+      message,
+    };
+    this.emitChange();
+  }
+
+  closeArtifactExplorer(): void {
+    if (!this.state.artifactExplorer.open) {
+      return;
+    }
+    this.state.artifactExplorer = {
+      ...this.state.artifactExplorer,
+      open: false,
+    };
+    this.emitChange();
+  }
+
+  openArtifactExplorer(): void {
+    if (!this.state.artifactExplorer.available || this.hasActiveInput()) {
+      return;
+    }
+    if (this.state.artifactExplorer.open) {
+      return;
+    }
+    this.state.artifactExplorer = {
+      ...this.state.artifactExplorer,
+      open: true,
+    };
+    this.emitChange();
+  }
+
   getViewModel(layout?: { formContentWidth?: number }): InteractiveSessionViewModel {
     const selectedItem = this.selectedFlowTreeItem();
     const activeFlowId = this.activeFlowId();
@@ -685,6 +778,7 @@ export class InteractiveSessionController {
       confirmText: this.renderConfirmText(),
       confirmation: this.renderConfirmationView(),
       form: this.renderFormView(layout),
+      artifactExplorer: { ...this.state.artifactExplorer },
     };
   }
 

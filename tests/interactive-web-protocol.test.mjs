@@ -26,6 +26,8 @@ describe("interactive web protocol", () => {
       { type: "interrupt.openConfirm" },
       { type: "flow.interrupt", flowId: "plan" },
       { type: "log.clear" },
+      { type: "artifactExplorer.open" },
+      { type: "artifactExplorer.close", actionId: "artifact-close-1" },
       { type: "help.toggle", visible: true },
       { type: "scroll", pane: "log", delta: 1 },
       { type: "scroll", pane: "summary", offset: 0, actionId: "a-1" },
@@ -40,6 +42,9 @@ describe("interactive web protocol", () => {
     assert.throws(() => parseClientAction("{"), /valid JSON/);
     assert.throws(() => parseClientAction(JSON.stringify({})), /string type/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "submitInput" })), /Unknown protocol action/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "artifactExplorer.toggle" })), /Unknown protocol action/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "artifactExplorer.open", actionId: "" })), /actionId must be a non-empty string/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "artifactExplorer.close", actionId: 123 })), /actionId must be a non-empty string/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "flow.select" })), /requires index or key/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "folder.toggle", key: "" })), /key must be a non-empty string/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "form.update", values: [] })), /values must be an object/);

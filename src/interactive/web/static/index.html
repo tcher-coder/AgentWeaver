@@ -18,6 +18,7 @@
         <span id="session-status">Idle</span>
       </div>
       <div class="topbar-actions">
+        <button id="artifact-open-button" type="button" hidden>Artifacts</button>
         <button id="run-button" type="button">Run</button>
         <button id="interrupt-button" type="button">Interrupt</button>
         <button id="help-button" type="button" aria-pressed="false">Help</button>
@@ -70,6 +71,42 @@
       </section>
     </main>
   </div>
+
+  <aside id="artifact-drawer" class="artifact-drawer" aria-label="Artifact Explorer" hidden>
+    <div class="artifact-drawer-header">
+      <div>
+        <h2 id="artifact-title">Artifact Explorer</h2>
+        <p id="artifact-meta"></p>
+      </div>
+      <button id="artifact-close-button" type="button">Close</button>
+    </div>
+    <div id="artifact-message" class="artifact-message"></div>
+    <div class="artifact-drawer-body">
+      <section class="artifact-list-pane" aria-label="Artifacts by phase">
+        <div class="pane-heading">
+          <h2>Artifacts</h2>
+        </div>
+        <div id="artifact-list" class="artifact-list"></div>
+      </section>
+      <section class="artifact-preview" aria-label="Selected artifact preview">
+        <div class="artifact-preview-header">
+          <div class="artifact-selected">
+            <h2 id="artifact-selected-title">Preview</h2>
+            <p id="artifact-selected-meta">Select an artifact to preview it.</p>
+          </div>
+          <div class="artifact-toolbar" aria-label="Selected artifact actions">
+            <button id="artifact-copy-content-button" type="button" disabled>Copy content</button>
+            <button id="artifact-copy-reference-button" type="button" disabled>Copy path/reference</button>
+            <a id="artifact-open-raw-link" class="artifact-action-link disabled" target="_blank" rel="noopener noreferrer" aria-disabled="true">Open raw</a>
+            <a id="artifact-download-link" class="artifact-action-link disabled" aria-disabled="true">Download</a>
+            <button id="artifact-toolbar-close-button" type="button">Close</button>
+          </div>
+          <p id="artifact-action-status" class="artifact-action-status" role="status" aria-live="polite"></p>
+        </div>
+        <div id="artifact-preview-text" class="artifact-preview-content text-panel compact">Select an artifact to preview it.</div>
+      </section>
+    </div>
+  </aside>
 
   <div id="modal-root" class="modal-root" aria-live="polite"></div>
   <script src="/static/app.js" defer></script>

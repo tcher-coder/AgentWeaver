@@ -9,6 +9,9 @@ const distRoot = path.resolve(process.cwd(), "dist");
 const { createWebInteractiveSession } = await import(
   pathToFileURL(path.join(distRoot, "interactive/web/index.js")).href
 );
+const { setFlowExecutionState } = await import(
+  pathToFileURL(path.join(distRoot, "tui.js")).href
+);
 
 function createOptions(overrides = {}) {
   return {
@@ -136,6 +139,54 @@ async function connectWebSocket(url) {
   };
 }
 
+async function nextMatching(client, predicate, limit = 20) {
+  for (let index = 0; index < limit; index += 1) {
+    const message = await client.nextMessage();
+    if (predicate(message)) {
+      return message;
+    }
+  }
+  throw new Error("Expected WebSocket message was not received.");
+}
+
+function catalogItem(scopeKey, overrides = {}) {
+  return {
+    id: overrides.id ?? "artifact-1",
+    scopeKey,
+    runId: overrides.runId ?? null,
+    logicalKey: overrides.logicalKey ?? "artifacts/result.json",
+    title: overrides.title ?? "Result",
+    relativePath: overrides.relativePath ?? ".artifacts/result.json",
+    kind: overrides.kind ?? "json",
+    role: overrides.role ?? "artifact",
+    phaseId: overrides.phaseId ?? null,
+    stepId: overrides.stepId ?? null,
+    schemaId: overrides.schemaId ?? null,
+    sizeBytes: overrides.sizeBytes ?? 2,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    isLatest: true,
+    source: overrides.source ?? "manifest",
+  };
+}
+
+function manualCatalog(scopeKey, items) {
+  return {
+    scopeKey,
+    items,
+    groups: [{ phaseId: "unclassified", title: "Unclassified", items }],
+  };
+}
+
+function publishedArtifact(id, runId) {
+  return {
+    artifact_id: id,
+    payload_path: `/tmp/${id}.md`,
+    manifest: {
+      run_id: runId,
+    },
+  };
+}
+
 describe("web interactive session", () => {
   it("streams controller snapshots, logs, and semantic actions", async (t) => {
     let ready;
@@ -167,6 +218,7 @@ describe("web interactive session", () => {
       const snapshot = await client.nextMessage();
       assert.equal(snapshot.type, "snapshot");
       assert.match(snapshot.viewModel.header, /Scope ag-107/);
+      assert.equal(snapshot.viewModel.artifactExplorer.available, false);
       assert.match(snapshot.viewModel.summaryText, /Initial summary/);
       assert.equal(snapshot.viewModel.flowItems.some((item) => item.key === "flow:plan"), true);
 
@@ -198,6 +250,7 @@ describe("web interactive session", () => {
       assert.match(confirmation.viewModel.confirmText, /Run flow/);
       assert.equal(confirmation.viewModel.confirmation.kind, "run");
       assert.deepEqual(confirmation.viewModel.confirmation.actions, ["restart", "cancel"]);
+      assert.equal(confirmation.viewModel.artifactExplorer.open, false);
       client.send({ type: "confirm.accept", action: "restart" });
       assert.deepEqual(await runPromise, { flowId: "plan", mode: "restart" });
 
@@ -206,7 +259,7 @@ describe("web interactive session", () => {
         title: "Demo",
         fields: [{ id: "name", type: "text", label: "Name", required: true }],
       });
-      const requested = await client.nextMessage();
+      const requested = await nextMatching(client, (message) => message.type === "snapshot" && message.viewModel.form?.formId === "demo");
       assert.equal(requested.type, "snapshot");
       assert.equal(requested.viewModel.form.formId, "demo");
       assert.equal(requested.viewModel.form.currentFieldId, "name");
@@ -220,6 +273,295 @@ describe("web interactive session", () => {
     } finally {
       client.close();
       session.destroy();
+      setFlowExecutionState(null, null);
+    }
+  });
+
+  it("persists Artifact Explorer state after completed runs and supports close, reopen, and reconnect", async (t) => {
+    setFlowExecutionState(null, null);
+    let ready;
+    const readyPromise = new Promise((resolve) => {
+      ready = resolve;
+    });
+    const scopeKey = "ag-116-web";
+    const items = [catalogItem(scopeKey, { id: "pub-item", kind: "markdown", relativePath: "result.md", runId: "pub-1" })];
+    const session = createWebInteractiveSession(createOptions({
+      scopeKey,
+      jiraIssueKey: "AG-116",
+      onRun: async () => {
+        setFlowExecutionState("plan", {
+          runId: "run-1",
+          publicationRunId: "pub-1",
+          flowKind: "test",
+          flowVersion: 1,
+          terminated: true,
+          terminationOutcome: "success",
+          phases: [],
+        });
+      },
+    }), {
+      noOpen: true,
+      onServerReady: ready,
+      getArtifactCatalog: (input) => manualCatalog(input?.scopeKey ?? scopeKey, items),
+    });
+    session.mount();
+    const server = await Promise.race([
+      readyPromise,
+      new Promise((resolve) => setTimeout(() => resolve(null), 1000)),
+    ]);
+    if (!server) {
+      t.skip("local TCP listeners are not permitted in this sandbox");
+      session.destroy();
+      return;
+    }
+    const client = await connectWebSocket(server.url);
+    try {
+      await client.nextMessage();
+      client.send({ type: "run.openConfirm", flowId: "plan" });
+      await nextMatching(client, (message) => message.type === "snapshot" && message.viewModel.confirmation?.kind === "run");
+      client.send({ type: "confirm.accept", action: "restart" });
+      const completed = await nextMatching(
+        client,
+        (message) => message.type === "snapshot" && message.viewModel.artifactExplorer?.available === true,
+      );
+      assert.deepEqual(completed.viewModel.artifactExplorer, {
+        available: true,
+        open: true,
+        scopeKey,
+        runId: "pub-1",
+        status: "completed",
+        label: "Artifacts ready",
+        artifactCount: 1,
+        message: "The workflow completed and artifacts are available for review.",
+      });
+
+      client.send({ type: "artifactExplorer.close" });
+      const closed = await nextMatching(
+        client,
+        (message) => message.type === "snapshot" && message.viewModel.artifactExplorer?.open === false,
+      );
+      assert.equal(closed.viewModel.artifactExplorer.available, true);
+      assert.equal(closed.viewModel.artifactExplorer.scopeKey, scopeKey);
+      assert.equal(closed.viewModel.artifactExplorer.runId, "pub-1");
+      assert.equal(closed.viewModel.artifactExplorer.artifactCount, 1);
+
+      const inputPromise = session.requestUserInput({
+        formId: "artifact-block",
+        title: "Artifact Block",
+        fields: [{ id: "name", type: "text", label: "Name", required: true }],
+      });
+      const formSnapshot = await nextMatching(client, (message) => message.type === "snapshot" && message.viewModel.form?.formId === "artifact-block");
+      assert.equal(formSnapshot.viewModel.artifactExplorer.open, false);
+      client.send({ type: "form.fieldUpdate", fieldId: "name", value: "Ada" });
+      await nextMatching(client, (message) => message.type === "snapshot" && message.viewModel.form?.values?.name === "Ada");
+      client.send({ type: "form.submit" });
+      await inputPromise;
+
+      client.send({ type: "artifactExplorer.open" });
+      const reopened = await nextMatching(
+        client,
+        (message) => message.type === "snapshot" && message.viewModel.artifactExplorer?.open === true,
+      );
+      assert.equal(reopened.viewModel.artifactExplorer.scopeKey, scopeKey);
+      assert.equal(reopened.viewModel.artifactExplorer.runId, "pub-1");
+
+      const reconnect = await connectWebSocket(server.url);
+      try {
+        const recovered = await reconnect.nextMessage();
+        assert.equal(recovered.type, "snapshot");
+        assert.equal(recovered.viewModel.artifactExplorer.available, true);
+        assert.equal(recovered.viewModel.artifactExplorer.open, true);
+        assert.equal(recovered.viewModel.artifactExplorer.scopeKey, scopeKey);
+        assert.equal(recovered.viewModel.artifactExplorer.runId, "pub-1");
+      } finally {
+        reconnect.close();
+      }
+    } finally {
+      client.close();
+      session.destroy();
+      setFlowExecutionState(null, null);
+    }
+  });
+
+  it("restores Artifact Explorer availability from existing scope artifacts on startup", async (t) => {
+    setFlowExecutionState(null, null);
+    let ready;
+    const readyPromise = new Promise((resolve) => {
+      ready = resolve;
+    });
+    const scopeKey = "ag-116-existing-artifacts";
+    const items = [
+      catalogItem(scopeKey, { id: "design", kind: "markdown", relativePath: "design.md", runId: "old-run" }),
+      catalogItem(scopeKey, { id: "design-json", kind: "json", relativePath: ".artifacts/design.json", runId: "old-run" }),
+    ];
+    const session = createWebInteractiveSession(createOptions({
+      scopeKey,
+      jiraIssueKey: "AG-116",
+    }), {
+      noOpen: true,
+      onServerReady: ready,
+      getArtifactCatalog: (input) => manualCatalog(input?.scopeKey ?? scopeKey, items),
+    });
+    session.mount();
+    const server = await Promise.race([
+      readyPromise,
+      new Promise((resolve) => setTimeout(() => resolve(null), 1000)),
+    ]);
+    if (!server) {
+      t.skip("local TCP listeners are not permitted in this sandbox");
+      session.destroy();
+      return;
+    }
+    const client = await connectWebSocket(server.url);
+    try {
+      const restored = await nextMatching(
+        client,
+        (message) => message.type === "snapshot" && message.viewModel.artifactExplorer?.available === true,
+      );
+      assert.equal(restored.viewModel.artifactExplorer.scopeKey, scopeKey);
+      assert.equal(restored.viewModel.artifactExplorer.runId, null);
+      assert.equal(restored.viewModel.artifactExplorer.open, false);
+      assert.equal(restored.viewModel.artifactExplorer.artifactCount, 1);
+      assert.equal(restored.viewModel.artifactExplorer.label, "Artifacts available");
+    } finally {
+      client.close();
+      session.destroy();
+      setFlowExecutionState(null, null);
+    }
+  });
+
+  it("keeps nested flow artifacts visible in the completed-run Artifact Explorer", async (t) => {
+    setFlowExecutionState(null, null);
+    let ready;
+    const readyPromise = new Promise((resolve) => {
+      ready = resolve;
+    });
+    const scopeKey = "ag-116-nested-artifacts";
+    const items = [
+      catalogItem(scopeKey, { id: "project-guidance", kind: "markdown", relativePath: "project-guidance-plan.md", runId: "top-run" }),
+      catalogItem(scopeKey, { id: "design", kind: "markdown", relativePath: "design.md", runId: "nested-plan-run" }),
+      catalogItem(scopeKey, { id: "design-json", kind: "json", relativePath: ".artifacts/design.json", runId: "nested-plan-run" }),
+      catalogItem(scopeKey, { id: "old-design", kind: "markdown", relativePath: "old-design.md", runId: "old-run" }),
+    ];
+    const session = createWebInteractiveSession(createOptions({
+      scopeKey,
+      jiraIssueKey: "AG-116",
+      onRun: async () => {
+        setFlowExecutionState("plan", {
+          runId: "top-run",
+          publicationRunId: "publication-run",
+          flowKind: "auto-common-guided-flow",
+          flowVersion: 1,
+          terminated: true,
+          terminationOutcome: "success",
+          phases: [
+            {
+              id: "plan",
+              status: "done",
+              repeatVars: {},
+              steps: [
+                {
+                  id: "run_plan_flow",
+                  status: "done",
+                  publishedArtifacts: [publishedArtifact("design", "nested-plan-run")],
+                },
+              ],
+            },
+          ],
+        });
+      },
+    }), {
+      noOpen: true,
+      onServerReady: ready,
+      getArtifactCatalog: (input) => manualCatalog(input?.scopeKey ?? scopeKey, items),
+    });
+    session.mount();
+    const server = await Promise.race([
+      readyPromise,
+      new Promise((resolve) => setTimeout(() => resolve(null), 1000)),
+    ]);
+    if (!server) {
+      t.skip("local TCP listeners are not permitted in this sandbox");
+      session.destroy();
+      return;
+    }
+    const client = await connectWebSocket(server.url);
+    try {
+      await client.nextMessage();
+      client.send({ type: "run.openConfirm", flowId: "plan" });
+      await nextMatching(client, (message) => message.type === "snapshot" && message.viewModel.confirmation?.kind === "run");
+      client.send({ type: "confirm.accept", action: "restart" });
+      const completed = await nextMatching(
+        client,
+        (message) => message.type === "snapshot" && message.viewModel.artifactExplorer?.available === true,
+      );
+      assert.equal(completed.viewModel.artifactExplorer.runId, "top-run");
+      assert.deepEqual(completed.viewModel.artifactExplorer.runIds, ["top-run", "nested-plan-run"]);
+      assert.equal(completed.viewModel.artifactExplorer.artifactCount, 2);
+    } finally {
+      client.close();
+      session.destroy();
+      setFlowExecutionState(null, null);
+    }
+  });
+
+  it("offers Artifact Explorer after failed runs when artifacts are available", async (t) => {
+    setFlowExecutionState(null, null);
+    let ready;
+    const readyPromise = new Promise((resolve) => {
+      ready = resolve;
+    });
+    const scopeKey = "ag-116-failed";
+    const items = [catalogItem(scopeKey, { id: "failed-item", kind: "markdown", relativePath: "failed.md", runId: "run-failed" })];
+    const session = createWebInteractiveSession(createOptions({
+      scopeKey,
+      jiraIssueKey: "AG-116",
+      onRun: async () => {
+        setFlowExecutionState("plan", {
+          runId: "run-failed",
+          flowKind: "test",
+          flowVersion: 1,
+          terminated: true,
+          terminationReason: "executor_error",
+          phases: [],
+        });
+        throw new Error("run failed");
+      },
+    }), {
+      noOpen: true,
+      onServerReady: ready,
+      getArtifactCatalog: (input) => manualCatalog(input?.scopeKey ?? scopeKey, items),
+    });
+    session.mount();
+    const server = await Promise.race([
+      readyPromise,
+      new Promise((resolve) => setTimeout(() => resolve(null), 1000)),
+    ]);
+    if (!server) {
+      t.skip("local TCP listeners are not permitted in this sandbox");
+      session.destroy();
+      return;
+    }
+    const client = await connectWebSocket(server.url);
+    try {
+      await client.nextMessage();
+      client.send({ type: "run.openConfirm", flowId: "plan" });
+      await nextMatching(client, (message) => message.type === "snapshot" && message.viewModel.confirmation?.kind === "run");
+      client.send({ type: "confirm.accept", action: "restart" });
+      const failed = await nextMatching(
+        client,
+        (message) => message.type === "snapshot" && message.viewModel.artifactExplorer?.status === "failed",
+      );
+      assert.equal(failed.viewModel.artifactExplorer.available, true);
+      assert.equal(failed.viewModel.artifactExplorer.open, true);
+      assert.equal(failed.viewModel.artifactExplorer.scopeKey, scopeKey);
+      assert.equal(failed.viewModel.artifactExplorer.runId, "run-failed");
+      assert.equal(failed.viewModel.artifactExplorer.artifactCount, 1);
+      assert.match(failed.viewModel.artifactExplorer.label, /failed/i);
+    } finally {
+      client.close();
+      session.destroy();
+      setFlowExecutionState(null, null);
     }
   });
 

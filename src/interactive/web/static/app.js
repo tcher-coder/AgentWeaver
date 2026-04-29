@@ -6,6 +6,14 @@
     connectionState: "connecting",
     formValues: {},
     modalSignature: null,
+    artifacts: {
+      signature: null,
+      loading: false,
+      catalog: null,
+      error: null,
+      preview: null,
+      selectedId: null,
+    },
   };
 
   var elements = {
@@ -26,6 +34,14 @@
     logTitle: document.getElementById("log-title"),
     log: document.getElementById("log-text"),
     clearLog: document.getElementById("clear-log-button"),
+    artifactOpen: document.getElementById("artifact-open-button"),
+    artifactDrawer: document.getElementById("artifact-drawer"),
+    artifactClose: document.getElementById("artifact-close-button"),
+    artifactTitle: document.getElementById("artifact-title"),
+    artifactMeta: document.getElementById("artifact-meta"),
+    artifactMessage: document.getElementById("artifact-message"),
+    artifactList: document.getElementById("artifact-list"),
+    artifactPreview: document.getElementById("artifact-preview-text"),
     helpPanel: document.getElementById("help-panel"),
     helpText: document.getElementById("help-text"),
     closeHelp: document.getElementById("close-help-button"),
@@ -129,6 +145,12 @@
     clearLog: function () {
       api.send({ type: "log.clear" });
     },
+    openArtifactExplorer: function () {
+      api.send({ type: "artifactExplorer.open" });
+    },
+    closeArtifactExplorer: function () {
+      api.send({ type: "artifactExplorer.close" });
+    },
     toggleHelp: function () {
       api.send({ type: "help.toggle", visible: !(state.viewModel && state.viewModel.helpVisible) });
     },
@@ -205,6 +227,7 @@
 
     renderFlows(vm);
     renderModal(vm);
+    renderArtifactExplorer(vm);
   }
 
   function setTextPreservingScroll(element, value) {
@@ -333,6 +356,241 @@
       row.append(icon, label, meta);
       elements.flows.append(row);
     });
+  }
+
+  function artifactState(vm) {
+    var explorer = vm && vm.artifactExplorer;
+    if (!explorer || typeof explorer !== "object") {
+      return {
+        available: false,
+        open: false,
+        scopeKey: null,
+        runId: null,
+        status: "unavailable",
+        label: "Artifact Explorer",
+        message: "",
+      };
+    }
+    return explorer;
+  }
+
+  function hasBlockingInput(vm) {
+    return Boolean(vm && (vm.confirmation || vm.confirmText || vm.form));
+  }
+
+  function artifactSignature(explorer) {
+    return [
+      explorer.scopeKey || "",
+      explorer.runId || "",
+      explorer.status || "",
+      typeof explorer.artifactCount === "number" ? String(explorer.artifactCount) : "",
+    ].join("|");
+  }
+
+  function renderArtifactExplorer(vm) {
+    var explorer = artifactState(vm);
+    var blocked = hasBlockingInput(vm);
+    elements.artifactOpen.hidden = !explorer.available || explorer.open || blocked;
+    elements.artifactOpen.textContent = explorer.label || "Artifacts";
+    elements.artifactDrawer.hidden = !explorer.open;
+    elements.artifactTitle.textContent = explorer.label || "Artifact Explorer";
+    elements.artifactMeta.textContent = artifactMetaText(explorer);
+    elements.artifactMessage.textContent = explorer.message || "";
+
+    if (!explorer.open) {
+      return;
+    }
+
+    var signature = artifactSignature(explorer);
+    if (signature !== state.artifacts.signature) {
+      state.artifacts.signature = signature;
+      state.artifacts.catalog = null;
+      state.artifacts.error = null;
+      state.artifacts.preview = null;
+      state.artifacts.selectedId = null;
+      fetchArtifacts(explorer);
+    }
+    renderArtifactList(explorer);
+    renderArtifactPreview();
+  }
+
+  function artifactMetaText(explorer) {
+    var parts = [];
+    if (explorer.scopeKey) {
+      parts.push("Scope " + explorer.scopeKey);
+    }
+    if (explorer.runId) {
+      parts.push("Run " + explorer.runId);
+    }
+    if (typeof explorer.artifactCount === "number") {
+      parts.push(String(explorer.artifactCount) + " artifact" + (explorer.artifactCount === 1 ? "" : "s"));
+    }
+    return parts.join(" | ");
+  }
+
+  function artifactApiUrl(explorer, suffix) {
+    var base = "/__agentweaver/api/artifacts" + (suffix || "");
+    var params = new URLSearchParams();
+    if (explorer.scopeKey) {
+      params.set("scope", explorer.scopeKey);
+    }
+    if (explorer.runId) {
+      params.set("runId", explorer.runId);
+    }
+    var query = params.toString();
+    return query ? base + "?" + query : base;
+  }
+
+  function fetchArtifacts(explorer) {
+    if (!explorer.scopeKey) {
+      state.artifacts.error = "Artifact scope is not available.";
+      renderArtifactList(explorer);
+      return;
+    }
+    state.artifacts.loading = true;
+    renderArtifactList(explorer);
+    fetch(artifactApiUrl(explorer))
+      .then(function (response) {
+        return response.json().then(function (body) {
+          if (!response.ok) {
+            throw new Error(body && body.message ? body.message : "Artifact catalog request failed.");
+          }
+          return body;
+        });
+      })
+      .then(function (catalog) {
+        state.artifacts.catalog = catalog;
+        state.artifacts.error = null;
+        state.artifacts.loading = false;
+        renderArtifactList(explorer);
+      })
+      .catch(function (error) {
+        state.artifacts.catalog = null;
+        state.artifacts.error = error.message || "Artifact catalog request failed.";
+        state.artifacts.loading = false;
+        renderArtifactList(explorer);
+      });
+  }
+
+  function renderArtifactList(explorer) {
+    elements.artifactList.innerHTML = "";
+    if (state.artifacts.loading) {
+      elements.artifactList.append(artifactEmpty("Loading artifacts..."));
+      return;
+    }
+    if (state.artifacts.error) {
+      elements.artifactList.append(artifactEmpty(state.artifacts.error));
+      return;
+    }
+    var catalog = state.artifacts.catalog;
+    if (!catalog) {
+      elements.artifactList.append(artifactEmpty("Artifacts have not been loaded yet."));
+      return;
+    }
+    var groups = Array.isArray(catalog.groups) && catalog.groups.length > 0
+      ? catalog.groups
+      : [{ title: "Artifacts", items: Array.isArray(catalog.items) ? catalog.items : [] }];
+    var rendered = 0;
+    groups.forEach(function (group) {
+      var items = Array.isArray(group.items) ? group.items : [];
+      if (items.length === 0) {
+        return;
+      }
+      var section = document.createElement("section");
+      section.className = "artifact-group";
+      var title = document.createElement("h3");
+      title.textContent = group.title || group.phaseId || "Artifacts";
+      section.append(title);
+      items.forEach(function (item) {
+        rendered += 1;
+        section.append(renderArtifactRow(explorer, item));
+      });
+      elements.artifactList.append(section);
+    });
+    if (rendered === 0) {
+      elements.artifactList.append(artifactEmpty("No artifacts found for this run."));
+    }
+  }
+
+  function renderArtifactRow(explorer, item) {
+    var row = document.createElement("article");
+    row.className = "artifact-row" + (state.artifacts.selectedId === item.id ? " selected" : "");
+    var details = document.createElement("button");
+    details.type = "button";
+    details.className = "artifact-row-main";
+    details.addEventListener("click", function () {
+      previewArtifact(explorer, item);
+    });
+    var title = document.createElement("strong");
+    title.textContent = item.title || item.logicalKey || item.relativePath || item.id;
+    var meta = document.createElement("span");
+    meta.textContent = [item.kind, item.role, item.relativePath].filter(Boolean).join(" | ");
+    details.append(title, meta);
+
+    var actions = document.createElement("div");
+    actions.className = "artifact-row-actions";
+    var raw = document.createElement("a");
+    raw.href = artifactApiUrl(explorer, "/" + encodeURIComponent(item.id) + "/raw");
+    raw.target = "_blank";
+    raw.rel = "noreferrer";
+    raw.textContent = "Raw";
+    var download = document.createElement("a");
+    download.href = artifactApiUrl(explorer, "/" + encodeURIComponent(item.id) + "/download");
+    download.textContent = "Download";
+    actions.append(raw, download);
+    row.append(details, actions);
+    return row;
+  }
+
+  function artifactEmpty(message) {
+    var empty = document.createElement("div");
+    empty.className = "artifact-empty";
+    empty.textContent = message;
+    return empty;
+  }
+
+  function previewArtifact(explorer, item) {
+    state.artifacts.selectedId = item.id;
+    state.artifacts.preview = { loading: true, content: "Loading preview..." };
+    renderArtifactList(explorer);
+    renderArtifactPreview();
+    fetch(artifactApiUrl(explorer, "/" + encodeURIComponent(item.id) + "/preview"))
+      .then(function (response) {
+        return response.json().then(function (body) {
+          if (!response.ok) {
+            throw new Error(body && body.message ? body.message : "Artifact preview request failed.");
+          }
+          return body;
+        });
+      })
+      .then(function (preview) {
+        state.artifacts.preview = {
+          loading: false,
+          content: preview.content || "",
+          truncated: preview.truncated,
+          title: preview.artifact && preview.artifact.title ? preview.artifact.title : item.title,
+        };
+        renderArtifactPreview();
+      })
+      .catch(function (error) {
+        state.artifacts.preview = {
+          loading: false,
+          content: error.message || "Artifact preview request failed.",
+          error: true,
+        };
+        renderArtifactPreview();
+      });
+  }
+
+  function renderArtifactPreview() {
+    var preview = state.artifacts.preview;
+    if (!preview) {
+      elements.artifactPreview.textContent = "Select an artifact to preview it.";
+      return;
+    }
+    var prefix = preview.title ? preview.title + "\n\n" : "";
+    var suffix = preview.truncated ? "\n\n[Preview truncated]" : "";
+    elements.artifactPreview.textContent = prefix + (preview.content || "") + suffix;
   }
 
   function renderModal(vm) {
@@ -687,6 +945,8 @@
 
   elements.run.addEventListener("click", api.openRunConfirm);
   elements.interrupt.addEventListener("click", api.openInterruptConfirm);
+  elements.artifactOpen.addEventListener("click", api.openArtifactExplorer);
+  elements.artifactClose.addEventListener("click", api.closeArtifactExplorer);
   elements.help.addEventListener("click", api.toggleHelp);
   elements.closeHelp.addEventListener("click", function () {
     api.showHelp(false);

@@ -278,6 +278,103 @@ h2 {
   box-shadow: var(--aw-shadow);
 }
 
+.artifact-drawer {
+  @apply fixed right-0 top-0 z-10 grid h-full;
+  width: min(560px, 100vw);
+  grid-template-rows: auto auto minmax(0, 1fr) minmax(180px, 34vh);
+  border-left: 1px solid var(--aw-border-strong);
+  background: rgba(10, 16, 14, 0.98);
+  box-shadow: var(--aw-shadow);
+}
+
+.artifact-drawer-header {
+  @apply flex items-start justify-between gap-3 px-4 py-3;
+  border-bottom: 1px solid var(--aw-border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.012));
+}
+
+.artifact-drawer-header p,
+.artifact-message,
+.artifact-empty,
+.artifact-row-main span {
+  color: var(--aw-muted);
+  font-size: 13px;
+}
+
+.artifact-message {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--aw-border);
+}
+
+.artifact-list {
+  @apply min-h-0 overflow-auto px-3 py-2;
+}
+
+.artifact-group {
+  @apply grid gap-2 py-2;
+}
+
+.artifact-group h3 {
+  @apply m-0 text-xs font-bold uppercase tracking-normal;
+  color: var(--aw-dim);
+}
+
+.artifact-row {
+  @apply grid items-center gap-2 rounded-md p-2;
+  grid-template-columns: minmax(0, 1fr) auto;
+  border: 1px solid var(--aw-border);
+  background: rgba(7, 11, 10, 0.42);
+}
+
+.artifact-row.selected {
+  border-color: rgba(56, 224, 143, 0.62);
+  background: var(--aw-accent-soft);
+}
+
+.artifact-row-main {
+  @apply grid min-h-0 justify-stretch gap-1 border-0 bg-transparent p-0 text-left;
+  box-shadow: none;
+}
+
+.artifact-row-main:hover,
+.artifact-row-main:focus-visible {
+  box-shadow: none;
+}
+
+.artifact-row-main strong,
+.artifact-row-main span {
+  @apply overflow-hidden text-ellipsis whitespace-nowrap;
+}
+
+.artifact-row-actions {
+  @apply flex items-center gap-2;
+}
+
+.artifact-row-actions a {
+  color: var(--aw-cyan);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.artifact-row-actions a:hover,
+.artifact-row-actions a:focus-visible {
+  color: var(--aw-accent-strong);
+  text-decoration: underline;
+}
+
+.artifact-preview {
+  @apply grid min-h-0;
+  grid-template-rows: auto minmax(0, 1fr);
+  border-top: 1px solid var(--aw-border);
+}
+
+.artifact-empty {
+  @apply rounded-md p-3;
+  border: 1px dashed var(--aw-border);
+  background: rgba(7, 11, 10, 0.32);
+}
+
 .modal-root:empty {
   display: none;
 }
@@ -460,6 +557,15 @@ h2 {
 
   .workspace {
     grid-template-rows: 260px 520px 340px;
+  }
+
+  .artifact-drawer {
+    top: auto;
+    bottom: 0;
+    height: min(84vh, 720px);
+    width: 100vw;
+    border-left: 0;
+    border-top: 1px solid var(--aw-border-strong);
   }
 
   .field-pair {

@@ -22,6 +22,8 @@ export type ClientAction =
   | { type: "interrupt.openConfirm"; actionId?: string }
   | { type: "flow.interrupt"; flowId?: string; actionId?: string }
   | { type: "log.clear"; actionId?: string }
+  | { type: "artifactExplorer.open"; actionId?: string }
+  | { type: "artifactExplorer.close"; actionId?: string }
   | { type: "help.toggle"; visible?: boolean; actionId?: string }
   | { type: "scroll"; pane: FocusPane | "help"; delta?: number; offset?: number; actionId?: string };
 
@@ -39,6 +41,8 @@ const ACTION_TYPES = new Set([
   "interrupt.openConfirm",
   "flow.interrupt",
   "log.clear",
+  "artifactExplorer.open",
+  "artifactExplorer.close",
   "help.toggle",
   "scroll",
 ]);
@@ -132,7 +136,13 @@ export function parseClientAction(raw: string): ClientAction {
     const action = optionalNonEmptyString(parsed, "action");
     return { type: "confirm.accept", ...(action ? { action } : {}), ...(actionId ? { actionId } : {}) };
   }
-  if (parsed.type === "confirm.cancel" || parsed.type === "form.cancel" || parsed.type === "log.clear") {
+  if (
+    parsed.type === "confirm.cancel"
+    || parsed.type === "form.cancel"
+    || parsed.type === "log.clear"
+    || parsed.type === "artifactExplorer.open"
+    || parsed.type === "artifactExplorer.close"
+  ) {
     return { type: parsed.type, ...(actionId ? { actionId } : {}) } as ClientAction;
   }
   if (parsed.type === "form.update") {

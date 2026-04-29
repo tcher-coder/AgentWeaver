@@ -519,25 +519,21 @@ function previewJsonArtifact(resolved: ResolvedArtifact): {
   content: string;
   loadedBytes: number;
   truncated: boolean;
+  jsonParseSafe: boolean;
 } {
   if (resolved.stats.size <= MAX_JSON_PARSE_SIZE) {
     const loadedBytes = Number(resolved.stats.size);
-    const raw = readFileSync(resolved.realPath);
-    let content = raw.toString("utf8");
-    try {
-      content = JSON.stringify(JSON.parse(content), null, 2);
-    } catch {
-      // Invalid JSON artifacts are still previewed as bounded text.
-    }
+    const content = readFileSync(resolved.realPath).toString("utf8");
     const contentBytes = Buffer.from(content, "utf8");
     if (contentBytes.length > MAX_PREVIEW_SIZE) {
       return {
         content: contentBytes.subarray(0, MAX_PREVIEW_SIZE).toString("utf8"),
         loadedBytes,
         truncated: true,
+        jsonParseSafe: false,
       };
     }
-    return { content, loadedBytes, truncated: false };
+    return { content, loadedBytes, truncated: false, jsonParseSafe: true };
   }
 
   const { buffer, loadedBytes } = readLeadingBytes(resolved.realPath, MAX_PREVIEW_SIZE);
@@ -545,6 +541,7 @@ function previewJsonArtifact(resolved: ResolvedArtifact): {
     content: buffer.toString("utf8"),
     loadedBytes,
     truncated: true,
+    jsonParseSafe: false,
   };
 }
 
@@ -560,7 +557,12 @@ function writeArtifactPreview(response: http.ServerResponse, resolved: ResolvedA
   }
 
   try {
-    const preview = resolved.item.kind === "json"
+    const preview: {
+      content: string;
+      loadedBytes: number;
+      truncated: boolean;
+      jsonParseSafe?: boolean;
+    } = resolved.item.kind === "json"
       ? previewJsonArtifact(resolved)
       : (() => {
         const byteLimit = Math.min(Number(resolved.stats.size), MAX_PREVIEW_SIZE);
@@ -581,6 +583,7 @@ function writeArtifactPreview(response: http.ServerResponse, resolved: ResolvedA
       truncated: preview.truncated,
       sizeBytes: resolved.stats.size,
       loadedBytes: preview.loadedBytes,
+      ...(resolved.item.kind === "json" ? { jsonParseSafe: preview.jsonParseSafe } : {}),
     });
   } catch {
     writeArtifactApiError(response, "read_failed", "Artifact preview could not be read.", safeArtifactMetadata(resolved.item));

@@ -438,6 +438,165 @@ h2 {
   min-height: 18px;
 }
 
+.artifact-preview-content {
+  @apply grid min-h-0 gap-3 overflow-auto;
+  align-content: start;
+}
+
+.artifact-rendered-markdown {
+  @apply grid gap-3;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--aw-text);
+}
+
+.artifact-rendered-markdown h1,
+.artifact-rendered-markdown h2,
+.artifact-rendered-markdown h3,
+.artifact-rendered-markdown h4,
+.artifact-rendered-markdown h5,
+.artifact-rendered-markdown h6 {
+  margin: 0;
+  color: var(--aw-text);
+  font-weight: 750;
+  text-transform: none;
+}
+
+.artifact-rendered-markdown h1 {
+  font-size: 22px;
+}
+
+.artifact-rendered-markdown h1::before {
+  content: none;
+}
+
+.artifact-rendered-markdown h2 {
+  font-size: 18px;
+}
+
+.artifact-rendered-markdown h3 {
+  font-size: 15px;
+}
+
+.artifact-rendered-markdown p,
+.artifact-rendered-markdown ul,
+.artifact-rendered-markdown ol {
+  margin: 0;
+}
+
+.artifact-rendered-markdown ul,
+.artifact-rendered-markdown ol {
+  padding-left: 1.35rem;
+}
+
+.artifact-rendered-markdown a,
+.artifact-placeholder-actions a {
+  color: var(--aw-cyan);
+  font-weight: 700;
+}
+
+.artifact-rendered-markdown code,
+.artifact-rendered-markdown pre,
+.artifact-text-preview {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+.artifact-rendered-markdown code {
+  border: 1px solid var(--aw-border);
+  border-radius: 4px;
+  background: rgba(101, 216, 255, 0.08);
+  padding: 0.08rem 0.28rem;
+  color: #d8f7e7;
+}
+
+.artifact-rendered-markdown pre,
+.artifact-text-preview {
+  @apply m-0 overflow-auto rounded-md p-3;
+  border: 1px solid var(--aw-border);
+  background: rgba(3, 7, 6, 0.62);
+  color: #d7eadf;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.artifact-rendered-markdown pre code {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.artifact-rendered-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.artifact-rendered-markdown th,
+.artifact-rendered-markdown td {
+  border: 1px solid var(--aw-border);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.artifact-rendered-markdown th {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--aw-accent-strong);
+}
+
+.artifact-json-viewer {
+  @apply grid gap-3;
+}
+
+.artifact-preview-modes {
+  @apply flex flex-wrap items-center gap-2;
+}
+
+.artifact-preview-warning,
+.artifact-truncation {
+  @apply rounded-md px-3 py-2;
+  border: 1px solid rgba(242, 201, 76, 0.42);
+  background: rgba(242, 201, 76, 0.11);
+  color: #ffe49a;
+  font-size: 13px;
+}
+
+.artifact-kind-label {
+  @apply inline-flex w-fit rounded-full px-2.5 py-1 text-xs font-bold uppercase tracking-normal;
+  border: 1px solid var(--aw-border-strong);
+  color: var(--aw-cyan);
+  background: rgba(101, 216, 255, 0.09);
+}
+
+.artifact-placeholder {
+  @apply grid gap-3 rounded-md p-3;
+  border: 1px dashed var(--aw-border-strong);
+  background: rgba(7, 11, 10, 0.38);
+}
+
+.artifact-placeholder dl {
+  @apply grid gap-2;
+  grid-template-columns: minmax(80px, auto) minmax(0, 1fr);
+  margin: 0;
+}
+
+.artifact-placeholder dt {
+  color: var(--aw-muted);
+  font-weight: 700;
+}
+
+.artifact-placeholder dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.artifact-placeholder-actions {
+  @apply flex flex-wrap gap-3;
+}
+
 .artifact-empty {
   @apply rounded-md p-3;
   border: 1px dashed var(--aw-border);

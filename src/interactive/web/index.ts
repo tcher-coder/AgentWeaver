@@ -143,7 +143,7 @@ export function createWebInteractiveSession(
           controller.appendLog(message);
         },
         ...(webOptions.openBrowser ? { openBrowser: webOptions.openBrowser } : {}),
-        getArtifactCatalog: webOptions.getArtifactCatalog ?? (() => listArtifactCatalog({
+        getArtifactCatalog: webOptions.getArtifactCatalog ?? ((_input) => listArtifactCatalog({
           scopeKey: activeScopeKey,
           artifactRegistry: createArtifactRegistry(),
         })),

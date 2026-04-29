@@ -478,11 +478,12 @@ describe("web server", () => {
     }
   });
 
-  it("lists only active-scope artifacts and applies exact runId filtering", async (t) => {
+  it("lists only markdown artifacts for the active scope and selected run ids", async (t) => {
     const scopeKey = "web-api-list-active";
     const items = [
       catalogItem(scopeKey, { id: "run-1-item", relativePath: "run-1.md", kind: "markdown", runId: "run-1" }),
       catalogItem(scopeKey, { id: "run-2-item", relativePath: "run-2.md", kind: "markdown", runId: "run-2" }),
+      catalogItem(scopeKey, { id: "run-1-json", relativePath: ".artifacts/run-1.json", kind: "json", runId: "run-1" }),
       catalogItem(scopeKey, { id: "scope-item", relativePath: "scope.md", kind: "markdown", runId: null }),
       catalogItem("other-scope", { id: "other-item", relativePath: "other.md", kind: "markdown", runId: "run-1" }),
     ];
@@ -518,6 +519,11 @@ describe("web server", () => {
       const filtered = await fetch(activeUrl);
       assert.equal(filtered.status, 200);
       assert.deepEqual((await filtered.json()).items.map((item) => item.id), ["run-1-item"]);
+
+      activeUrl.searchParams.append("runId", "run-2");
+      const multiRunFiltered = await fetch(activeUrl);
+      assert.equal(multiRunFiltered.status, 200);
+      assert.deepEqual((await multiRunFiltered.json()).items.map((item) => item.id), ["run-1-item", "run-2-item"]);
     } finally {
       await server.close();
     }

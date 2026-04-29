@@ -177,6 +177,16 @@ function manualCatalog(scopeKey, items) {
   };
 }
 
+function publishedArtifact(id, runId) {
+  return {
+    artifact_id: id,
+    payload_path: `/tmp/${id}.md`,
+    manifest: {
+      run_id: runId,
+    },
+  };
+}
+
 describe("web interactive session", () => {
   it("streams controller snapshots, logs, and semantic actions", async (t) => {
     let ready;
@@ -274,7 +284,7 @@ describe("web interactive session", () => {
       ready = resolve;
     });
     const scopeKey = "ag-116-web";
-    const items = [catalogItem(scopeKey, { id: "pub-item", runId: "pub-1" })];
+    const items = [catalogItem(scopeKey, { id: "pub-item", kind: "markdown", relativePath: "result.md", runId: "pub-1" })];
     const session = createWebInteractiveSession(createOptions({
       scopeKey,
       jiraIssueKey: "AG-116",
@@ -373,6 +383,128 @@ describe("web interactive session", () => {
     }
   });
 
+  it("restores Artifact Explorer availability from existing scope artifacts on startup", async (t) => {
+    setFlowExecutionState(null, null);
+    let ready;
+    const readyPromise = new Promise((resolve) => {
+      ready = resolve;
+    });
+    const scopeKey = "ag-116-existing-artifacts";
+    const items = [
+      catalogItem(scopeKey, { id: "design", kind: "markdown", relativePath: "design.md", runId: "old-run" }),
+      catalogItem(scopeKey, { id: "design-json", kind: "json", relativePath: ".artifacts/design.json", runId: "old-run" }),
+    ];
+    const session = createWebInteractiveSession(createOptions({
+      scopeKey,
+      jiraIssueKey: "AG-116",
+    }), {
+      noOpen: true,
+      onServerReady: ready,
+      getArtifactCatalog: (input) => manualCatalog(input?.scopeKey ?? scopeKey, items),
+    });
+    session.mount();
+    const server = await Promise.race([
+      readyPromise,
+      new Promise((resolve) => setTimeout(() => resolve(null), 1000)),
+    ]);
+    if (!server) {
+      t.skip("local TCP listeners are not permitted in this sandbox");
+      session.destroy();
+      return;
+    }
+    const client = await connectWebSocket(server.url);
+    try {
+      const restored = await nextMatching(
+        client,
+        (message) => message.type === "snapshot" && message.viewModel.artifactExplorer?.available === true,
+      );
+      assert.equal(restored.viewModel.artifactExplorer.scopeKey, scopeKey);
+      assert.equal(restored.viewModel.artifactExplorer.runId, null);
+      assert.equal(restored.viewModel.artifactExplorer.open, false);
+      assert.equal(restored.viewModel.artifactExplorer.artifactCount, 1);
+      assert.equal(restored.viewModel.artifactExplorer.label, "Artifacts available");
+    } finally {
+      client.close();
+      session.destroy();
+      setFlowExecutionState(null, null);
+    }
+  });
+
+  it("keeps nested flow artifacts visible in the completed-run Artifact Explorer", async (t) => {
+    setFlowExecutionState(null, null);
+    let ready;
+    const readyPromise = new Promise((resolve) => {
+      ready = resolve;
+    });
+    const scopeKey = "ag-116-nested-artifacts";
+    const items = [
+      catalogItem(scopeKey, { id: "project-guidance", kind: "markdown", relativePath: "project-guidance-plan.md", runId: "top-run" }),
+      catalogItem(scopeKey, { id: "design", kind: "markdown", relativePath: "design.md", runId: "nested-plan-run" }),
+      catalogItem(scopeKey, { id: "design-json", kind: "json", relativePath: ".artifacts/design.json", runId: "nested-plan-run" }),
+      catalogItem(scopeKey, { id: "old-design", kind: "markdown", relativePath: "old-design.md", runId: "old-run" }),
+    ];
+    const session = createWebInteractiveSession(createOptions({
+      scopeKey,
+      jiraIssueKey: "AG-116",
+      onRun: async () => {
+        setFlowExecutionState("plan", {
+          runId: "top-run",
+          publicationRunId: "publication-run",
+          flowKind: "auto-common-guided-flow",
+          flowVersion: 1,
+          terminated: true,
+          terminationOutcome: "success",
+          phases: [
+            {
+              id: "plan",
+              status: "done",
+              repeatVars: {},
+              steps: [
+                {
+                  id: "run_plan_flow",
+                  status: "done",
+                  publishedArtifacts: [publishedArtifact("design", "nested-plan-run")],
+                },
+              ],
+            },
+          ],
+        });
+      },
+    }), {
+      noOpen: true,
+      onServerReady: ready,
+      getArtifactCatalog: (input) => manualCatalog(input?.scopeKey ?? scopeKey, items),
+    });
+    session.mount();
+    const server = await Promise.race([
+      readyPromise,
+      new Promise((resolve) => setTimeout(() => resolve(null), 1000)),
+    ]);
+    if (!server) {
+      t.skip("local TCP listeners are not permitted in this sandbox");
+      session.destroy();
+      return;
+    }
+    const client = await connectWebSocket(server.url);
+    try {
+      await client.nextMessage();
+      client.send({ type: "run.openConfirm", flowId: "plan" });
+      await nextMatching(client, (message) => message.type === "snapshot" && message.viewModel.confirmation?.kind === "run");
+      client.send({ type: "confirm.accept", action: "restart" });
+      const completed = await nextMatching(
+        client,
+        (message) => message.type === "snapshot" && message.viewModel.artifactExplorer?.available === true,
+      );
+      assert.equal(completed.viewModel.artifactExplorer.runId, "top-run");
+      assert.deepEqual(completed.viewModel.artifactExplorer.runIds, ["top-run", "nested-plan-run"]);
+      assert.equal(completed.viewModel.artifactExplorer.artifactCount, 2);
+    } finally {
+      client.close();
+      session.destroy();
+      setFlowExecutionState(null, null);
+    }
+  });
+
   it("offers Artifact Explorer after failed runs when artifacts are available", async (t) => {
     setFlowExecutionState(null, null);
     let ready;
@@ -380,7 +512,7 @@ describe("web interactive session", () => {
       ready = resolve;
     });
     const scopeKey = "ag-116-failed";
-    const items = [catalogItem(scopeKey, { id: "failed-item", runId: "run-failed" })];
+    const items = [catalogItem(scopeKey, { id: "failed-item", kind: "markdown", relativePath: "failed.md", runId: "run-failed" })];
     const session = createWebInteractiveSession(createOptions({
       scopeKey,
       jiraIssueKey: "AG-116",

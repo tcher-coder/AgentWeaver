@@ -394,6 +394,7 @@
     return [
       explorer.scopeKey || "",
       explorer.runId || "",
+      Array.isArray(explorer.runIds) ? explorer.runIds.join(",") : "",
       explorer.status || "",
       typeof explorer.artifactCount === "number" ? String(explorer.artifactCount) : "",
     ].join("|");
@@ -444,7 +445,9 @@
     if (explorer.scopeKey) {
       parts.push("Scope " + explorer.scopeKey);
     }
-    if (explorer.runId) {
+    if (Array.isArray(explorer.runIds) && explorer.runIds.length > 1) {
+      parts.push("Runs " + explorer.runIds.join(", "));
+    } else if (explorer.runId) {
       parts.push("Run " + explorer.runId);
     }
     return parts.join(" | ");
@@ -463,7 +466,11 @@
     if (explorer.scopeKey) {
       params.set("scope", explorer.scopeKey);
     }
-    if (explorer.runId) {
+    if (Array.isArray(explorer.runIds) && explorer.runIds.length > 0) {
+      explorer.runIds.forEach(function (runId) {
+        params.append("runId", runId);
+      });
+    } else if (explorer.runId) {
       params.set("runId", explorer.runId);
     }
     var query = params.toString();

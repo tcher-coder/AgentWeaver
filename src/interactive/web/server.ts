@@ -44,6 +44,7 @@ export type WebServerOptions = {
 export type ArtifactCatalogRequest = {
   scopeKey?: string;
   runId?: string;
+  runIds?: string[];
 };
 
 export type WebServerAuthConfig = {
@@ -95,8 +96,8 @@ const ARTIFACT_ERROR_STATUSES: Record<ArtifactApiErrorCode, number> = {
 type ArtifactAction = "preview" | "raw" | "download";
 
 type ArtifactApiRoute =
-  | { kind: "list"; scopeKey: string | null; runId: string | null }
-  | { kind: "content"; artifactId: string; action: ArtifactAction; scopeKey: string | null; runId: string | null };
+  | { kind: "list"; scopeKey: string | null; runIds: string[] }
+  | { kind: "content"; artifactId: string; action: ArtifactAction; scopeKey: string | null; runIds: string[] };
 
 type SafeArtifactMetadata = Pick<
   ArtifactCatalogItem,
@@ -283,9 +284,11 @@ function safeDecodeURIComponent(value: string): string | null {
 function parseArtifactApiRoute(requestUrl: string | undefined): ArtifactApiRoute | null {
   const parsed = new URL(requestUrl ?? "/", "http://agentweaver.local");
   const scopeKey = parsed.searchParams.get("scope");
-  const runId = parsed.searchParams.get("runId");
+  const runIds = parsed.searchParams.getAll("runId").filter((value, index, values) => (
+    value.length > 0 && values.indexOf(value) === index
+  ));
   if (parsed.pathname === ARTIFACT_API_PREFIX) {
-    return { kind: "list", scopeKey, runId };
+    return { kind: "list", scopeKey, runIds };
   }
   if (!parsed.pathname.startsWith(`${ARTIFACT_API_PREFIX}/`)) {
     return null;
@@ -300,17 +303,18 @@ function parseArtifactApiRoute(requestUrl: string | undefined): ArtifactApiRoute
     const encodedId = suffix.slice(0, -actionSuffix.length);
     const artifactId = safeDecodeURIComponent(encodedId);
     if (!artifactId || artifactId.includes("\0")) {
-      return { kind: "content", artifactId: "", action, scopeKey, runId };
+      return { kind: "content", artifactId: "", action, scopeKey, runIds };
     }
-    return { kind: "content", artifactId, action, scopeKey, runId };
+    return { kind: "content", artifactId, action, scopeKey, runIds };
   }
-  return { kind: "content", artifactId: "", action: "preview", scopeKey, runId };
+  return { kind: "content", artifactId: "", action: "preview", scopeKey, runIds };
 }
 
-function filterCatalog(catalog: ArtifactCatalog, scopeKey: string, runId: string | null): ArtifactCatalog {
-  let items = catalog.items.filter((item) => item.scopeKey === scopeKey);
-  if (runId !== null) {
-    items = items.filter((item) => item.runId === runId);
+function filterCatalog(catalog: ArtifactCatalog, scopeKey: string, runIds: string[]): ArtifactCatalog {
+  const runIdSet = new Set(runIds);
+  let items = catalog.items.filter((item) => item.scopeKey === scopeKey && item.kind === "markdown");
+  if (runIdSet.size > 0) {
+    items = items.filter((item) => item.runId !== null && runIdSet.has(item.runId));
   }
   const sortedItems = items.slice();
   return {
@@ -613,7 +617,12 @@ function handleArtifactApiRequest(
       writeArtifactApiError(response, "missing_scope", "A scope query parameter is required.");
       return true;
     }
-    void loadArtifactCatalog(options, { scopeKey: route.scopeKey, ...(route.runId !== null ? { runId: route.runId } : {}) })
+    const primaryRunId = route.runIds[0];
+    void loadArtifactCatalog(options, {
+      scopeKey: route.scopeKey,
+      ...(route.runIds.length === 1 && primaryRunId ? { runId: primaryRunId, runIds: route.runIds } : {}),
+      ...(route.runIds.length > 1 ? { runIds: route.runIds } : {}),
+    })
       .then((catalog) => {
         if (!catalog) {
           writeArtifactApiError(response, "not_found", "Artifact catalog provider is not configured.");
@@ -623,7 +632,7 @@ function handleArtifactApiRequest(
           writeArtifactApiError(response, "scope_mismatch", "Requested scope does not match the active Web UI scope.");
           return;
         }
-        writeJson(response, 200, filterCatalog(catalog, route.scopeKey, route.runId));
+        writeJson(response, 200, filterCatalog(catalog, route.scopeKey, route.runIds));
       })
       .catch(() => {
         writeArtifactApiError(response, "read_failed", "Artifact catalog could not be loaded.");
@@ -636,7 +645,12 @@ function handleArtifactApiRequest(
     return true;
   }
 
-  void loadArtifactCatalog(options, { ...(route.scopeKey ? { scopeKey: route.scopeKey } : {}), ...(route.runId ? { runId: route.runId } : {}) })
+  const primaryRunId = route.runIds[0];
+  void loadArtifactCatalog(options, {
+    ...(route.scopeKey ? { scopeKey: route.scopeKey } : {}),
+    ...(route.runIds.length === 1 && primaryRunId ? { runId: primaryRunId, runIds: route.runIds } : {}),
+    ...(route.runIds.length > 1 ? { runIds: route.runIds } : {}),
+  })
     .then((catalog) => {
       if (!catalog) {
         writeArtifactApiError(response, "not_found", "Artifact catalog provider is not configured.");

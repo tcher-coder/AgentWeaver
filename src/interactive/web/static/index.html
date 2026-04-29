@@ -18,6 +18,7 @@
         <span id="session-status">Idle</span>
       </div>
       <div class="topbar-actions">
+        <button id="artifact-open-button" type="button" hidden>Artifacts</button>
         <button id="run-button" type="button">Run</button>
         <button id="interrupt-button" type="button">Interrupt</button>
         <button id="help-button" type="button" aria-pressed="false">Help</button>
@@ -70,6 +71,24 @@
       </section>
     </main>
   </div>
+
+  <aside id="artifact-drawer" class="artifact-drawer" aria-label="Artifact Explorer" hidden>
+    <div class="artifact-drawer-header">
+      <div>
+        <h2 id="artifact-title">Artifact Explorer</h2>
+        <p id="artifact-meta"></p>
+      </div>
+      <button id="artifact-close-button" type="button">Close</button>
+    </div>
+    <div id="artifact-message" class="artifact-message"></div>
+    <div id="artifact-list" class="artifact-list"></div>
+    <div class="artifact-preview">
+      <div class="pane-heading">
+        <h2>Preview</h2>
+      </div>
+      <pre id="artifact-preview-text" class="text-panel compact">Select an artifact to preview it.</pre>
+    </div>
+  </aside>
 
   <div id="modal-root" class="modal-root" aria-live="polite"></div>
   <script src="/static/app.js" defer></script>

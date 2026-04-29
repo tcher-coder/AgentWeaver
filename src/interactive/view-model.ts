@@ -22,6 +22,19 @@ export type InteractiveFormViewModel = {
   error: string | null;
 };
 
+export type ArtifactExplorerStatus = "unavailable" | "completed" | "failed";
+
+export type ArtifactExplorerViewModel = {
+  available: boolean;
+  open: boolean;
+  scopeKey: string | null;
+  runId: string | null;
+  status: ArtifactExplorerStatus;
+  label: string;
+  artifactCount?: number;
+  message: string;
+};
+
 export type InteractiveSessionViewModel = {
   title: string;
   header: string;
@@ -54,4 +67,5 @@ export type InteractiveSessionViewModel = {
   confirmText: string | null;
   confirmation: InteractiveConfirmationViewModel | null;
   form: InteractiveFormViewModel | null;
+  artifactExplorer: ArtifactExplorerViewModel;
 };

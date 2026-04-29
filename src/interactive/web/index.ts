@@ -2,12 +2,19 @@ import process from "node:process";
 import { writeSync } from "node:fs";
 
 import { FlowInterruptedError } from "../../errors.js";
-import { listArtifactCatalog } from "../../runtime/artifact-catalog.js";
+import { listArtifactCatalog, type ArtifactCatalog } from "../../runtime/artifact-catalog.js";
 import { createArtifactRegistry } from "../../runtime/artifact-registry.js";
 import { InteractiveSessionController } from "../controller.js";
 import type { InteractiveSession, InteractiveSessionOptions } from "../session.js";
 import type { ClientAction, ServerEvent } from "./protocol.js";
-import { startWebServer, type StartedWebServer, type WebServerAuthConfig, type WebServerOptions, type WebSocketClient } from "./server.js";
+import {
+  startWebServer,
+  type ArtifactCatalogRequest,
+  type StartedWebServer,
+  type WebServerAuthConfig,
+  type WebServerOptions,
+  type WebSocketClient,
+} from "./server.js";
 
 export type CreateWebInteractiveSessionOptions = {
   noOpen?: boolean;
@@ -34,6 +41,16 @@ export function createWebInteractiveSession(
   let shuttingDown = false;
   let activeScopeKey = options.scopeKey;
 
+  const artifactCatalogProvider = webOptions.getArtifactCatalog ?? ((input?: ArtifactCatalogRequest) => {
+    const explorerScopeKey = controller.getViewModel().artifactExplorer.scopeKey;
+    const requestedScopeKey = input?.scopeKey;
+    const scopeKey = requestedScopeKey && requestedScopeKey === explorerScopeKey ? requestedScopeKey : activeScopeKey;
+    return listArtifactCatalog({
+      scopeKey,
+      artifactRegistry: createArtifactRegistry(),
+    });
+  });
+
   function snapshot(): ServerEvent {
     return { type: "snapshot", viewModel: controller.getViewModel() };
   }
@@ -47,7 +64,57 @@ export function createWebInteractiveSession(
     }
   }
 
+  function candidateRunIds(): string[] {
+    const executionState = controller.getCurrentFlowExecutionState();
+    return [
+      executionState?.publicationRunId ?? null,
+      executionState?.runId ?? null,
+    ].filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index);
+  }
+
+  async function resolveArtifactExplorerRunMetadata(scopeKey: string): Promise<{ runId: string | null; artifactCount?: number }> {
+    const candidates = candidateRunIds();
+    const preferredRunId = candidates[0] ?? null;
+    try {
+      const catalog = await artifactCatalogProvider({ scopeKey, ...(preferredRunId ? { runId: preferredRunId } : {}) });
+      if (!catalog || catalog.scopeKey !== scopeKey) {
+        return { runId: preferredRunId };
+      }
+      if (candidates.length === 0) {
+        return {
+          runId: null,
+          artifactCount: catalog.items.filter((item) => item.scopeKey === scopeKey).length,
+        };
+      }
+      for (const candidate of candidates) {
+        const artifactCount = catalog.items.filter((item) => item.scopeKey === scopeKey && item.runId === candidate).length;
+        if (artifactCount > 0) {
+          return { runId: candidate, artifactCount };
+        }
+      }
+      return {
+        runId: preferredRunId,
+        artifactCount: catalog.items.filter((item) => item.scopeKey === scopeKey && item.runId === preferredRunId).length,
+      };
+    } catch {
+      return { runId: preferredRunId };
+    }
+  }
+
+  async function markArtifactExplorerForCompletedRun(status: "completed" | "failed"): Promise<void> {
+    const scopeKey = activeScopeKey;
+    const { runId, artifactCount } = await resolveArtifactExplorerRunMetadata(scopeKey);
+    controller.setArtifactExplorerAvailability({
+      scopeKey,
+      runId,
+      status,
+      ...(artifactCount !== undefined ? { artifactCount } : {}),
+      open: !controller.hasActiveInput(),
+    });
+  }
+
   async function dispatch(action: ClientAction, client: WebSocketClient): Promise<void> {
+    let acceptedRunConfirmation = false;
     try {
       if (action.type === "flow.select") {
         if (action.key) {
@@ -70,10 +137,16 @@ export function createWebInteractiveSession(
         return;
       }
       if (action.type === "confirm.accept") {
+        const confirmation = controller.getViewModel().confirmation;
+        const acceptedAction = action.action ?? confirmation?.selectedAction;
+        acceptedRunConfirmation = confirmation?.kind === "run" && acceptedAction !== "cancel";
         if (action.action) {
           controller.selectConfirmAction(action.action);
         }
         await controller.acceptConfirmation();
+        if (acceptedRunConfirmation) {
+          await markArtifactExplorerForCompletedRun("completed");
+        }
         return;
       }
       if (action.type === "confirm.cancel") {
@@ -108,12 +181,23 @@ export function createWebInteractiveSession(
         controller.clearLog();
         return;
       }
+      if (action.type === "artifactExplorer.open") {
+        controller.openArtifactExplorer();
+        return;
+      }
+      if (action.type === "artifactExplorer.close") {
+        controller.closeArtifactExplorer();
+        return;
+      }
       if (action.type === "help.toggle") {
         controller.showHelp(action.visible ?? !controller.getViewModel().helpVisible);
         return;
       }
       controller.scrollPane(action.pane, { ...(action.delta !== undefined ? { delta: action.delta } : {}), ...(action.offset !== undefined ? { offset: action.offset } : {}) });
     } catch (error) {
+      if (acceptedRunConfirmation) {
+        await markArtifactExplorerForCompletedRun("failed");
+      }
       const message = (error as Error).message;
       controller.appendLog(`Web action failed: ${message}`);
       sendError(client, message, actionId(action));
@@ -143,10 +227,7 @@ export function createWebInteractiveSession(
           controller.appendLog(message);
         },
         ...(webOptions.openBrowser ? { openBrowser: webOptions.openBrowser } : {}),
-        getArtifactCatalog: webOptions.getArtifactCatalog ?? ((_input) => listArtifactCatalog({
-          scopeKey: activeScopeKey,
-          artifactRegistry: createArtifactRegistry(),
-        })),
+        getArtifactCatalog: (input) => artifactCatalogProvider(input) as ArtifactCatalog | Promise<ArtifactCatalog>,
         onClientAction: (action, client) => {
           void dispatch(action, client);
         },

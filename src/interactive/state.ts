@@ -1,5 +1,6 @@
 import type { InteractiveSessionOptions } from "./session.js";
 import type { FlowStatusState, FocusPane } from "./types.js";
+import type { ArtifactExplorerViewModel } from "./view-model.js";
 import { buildFlowTree, collectInitiallyExpandedFolderKeys, computeVisibleFlowItems, makeFlowKey } from "./tree.js";
 
 export type InteractiveSessionState = {
@@ -25,6 +26,7 @@ export type InteractiveSessionState = {
   summaryScrollOffset: number;
   logScrollOffset: number;
   helpScrollOffset: number;
+  artifactExplorer: ArtifactExplorerViewModel;
 };
 
 export function createInitialInteractiveState(options: InteractiveSessionOptions): InteractiveSessionState {
@@ -60,5 +62,14 @@ export function createInitialInteractiveState(options: InteractiveSessionOptions
     summaryScrollOffset: 0,
     logScrollOffset: 0,
     helpScrollOffset: 0,
+    artifactExplorer: {
+      available: false,
+      open: false,
+      scopeKey: null,
+      runId: null,
+      status: "unavailable",
+      label: "Artifact Explorer",
+      message: "Artifacts are available after a Web UI workflow run completes.",
+    },
   };
 }

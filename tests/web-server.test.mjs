@@ -254,6 +254,9 @@ describe("web server", () => {
       assert.equal(exitDenied.status, 401);
       assert.equal(exitCount, 0);
 
+      const catalogDenied = await fetch(new URL("/__agentweaver/artifacts", server.url));
+      assert.equal(catalogDenied.status, 401);
+
       const authedRoot = await fetch(server.url, { headers: { authorization: basicAuthHeader() } });
       assert.equal(authedRoot.status, 200);
       assert.match(await authedRoot.text(), /AgentWeaver Operator Console/);
@@ -265,6 +268,99 @@ describe("web server", () => {
       const authedExit = await fetch(new URL("/__agentweaver/exit", server.url), { method: "POST", headers: { authorization: basicAuthHeader() } });
       assert.equal(authedExit.status, 202);
       assert.equal(exitCount, 1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("serves injected artifact catalog JSON and reports absent provider clearly", async (t) => {
+    const catalog = {
+      scopeKey: "ag-web-1",
+      items: [
+        {
+          id: "artifact-1",
+          scopeKey: "ag-web-1",
+          runId: "run-1",
+          logicalKey: "design-main",
+          title: "Design",
+          relativePath: "design-ag-web-1-1.md",
+          kind: "markdown",
+          role: "design",
+          phaseId: "design",
+          stepId: "write_design",
+          schemaId: "markdown/v1",
+          sizeBytes: 12,
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          isLatest: true,
+          source: "manifest",
+        },
+      ],
+      groups: [
+        {
+          phaseId: "design",
+          title: "Design",
+          items: [],
+        },
+      ],
+    };
+    const server = await startOrSkip(t, {
+      noOpen: true,
+      getArtifactCatalog: () => catalog,
+      onClientAction: () => {},
+      onClientConnected: () => {},
+      onExitRequested: () => {},
+    });
+    if (!server) return;
+    try {
+      const response = await fetch(new URL("/__agentweaver/artifacts", server.url));
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get("content-type") ?? "", /application\/json/);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      assert.deepEqual(await response.json(), catalog);
+    } finally {
+      await server.close();
+    }
+
+    const withoutProvider = await startOrSkip(t, {
+      noOpen: true,
+      onClientAction: () => {},
+      onClientConnected: () => {},
+      onExitRequested: () => {},
+    });
+    if (!withoutProvider) return;
+    try {
+      const response = await fetch(new URL("/__agentweaver/artifacts", withoutProvider.url));
+      assert.equal(response.status, 404);
+      assert.deepEqual(await response.json(), { error: "Artifact catalog provider is not configured." });
+    } finally {
+      await withoutProvider.close();
+    }
+  });
+
+  it("requires valid Basic auth for the artifact catalog endpoint when auth is active", async (t) => {
+    const server = await startOrSkip(t, {
+      noOpen: true,
+      auth: AUTH,
+      getArtifactCatalog: () => ({ scopeKey: "ag-web-auth", items: [], groups: [] }),
+      onClientAction: () => {},
+      onClientConnected: () => {},
+      onExitRequested: () => {},
+    });
+    if (!server) return;
+    try {
+      const denied = await fetch(new URL("/__agentweaver/artifacts", server.url));
+      assert.equal(denied.status, 401);
+
+      const wrong = await fetch(new URL("/__agentweaver/artifacts", server.url), {
+        headers: { authorization: basicAuthHeader(AUTH.username, "bad") },
+      });
+      assert.equal(wrong.status, 401);
+
+      const allowed = await fetch(new URL("/__agentweaver/artifacts", server.url), {
+        headers: { authorization: basicAuthHeader() },
+      });
+      assert.equal(allowed.status, 200);
+      assert.deepEqual(await allowed.json(), { scopeKey: "ag-web-auth", items: [], groups: [] });
     } finally {
       await server.close();
     }

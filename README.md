@@ -146,6 +146,14 @@ The Web UI serves the operator console from the same local process, including `/
 
 Web UI state is process-local: it exists only while the AgentWeaver process is running and is not shared with other AgentWeaver processes. The Web UI is intended to match the interactive operator workflow for flow selection, launch confirmation, routing and user-input forms, progress and logs, and interrupt handling.
 
+### Artifact Explorer
+
+After a Web UI workflow completes, and also after a failed run when artifacts were written before failure, the Web UI offers the Artifact Explorer. It reads artifacts from the active AgentWeaver scope only, optionally filtered to the run id published by the completed workflow. The browser requests artifact content through safe artifact identifiers resolved by the active catalog and registry; it does not accept arbitrary filesystem paths.
+
+The MVP explorer previews Markdown, JSON, plain text, and diff artifacts. Diffs are rendered as text. Binary and unknown artifacts are listed with metadata and safe raw/download actions, but their inline preview is a placeholder. Large previews are bounded and marked as truncated with loaded byte and total size metadata; raw and download links can still serve the full artifact bytes with no-store cache headers and safe content types.
+
+When Web UI credentials are configured, the same HTTP Basic auth protection applies to `/`, `/static/*`, `/__agentweaver/ws`, `/__agentweaver/exit`, and the artifact list, preview, raw, and download API routes. The MVP explorer does not support artifact editing, comments, run comparison, image previews, specialized viewers, live updates, or full-text search.
+
 ## Installation
 
 Local development:

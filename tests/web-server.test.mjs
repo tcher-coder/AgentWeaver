@@ -465,6 +465,13 @@ describe("web server", () => {
 
       const allowed = await fetch(listingUrl, { headers: { authorization: basicAuthHeader() } });
       assert.equal(allowed.status, 200);
+
+      for (const action of ["preview", "raw", "download"]) {
+        const authedContent = await fetch(encodedArtifactUrl(server.url, item.id, action, scopeKey), {
+          headers: { authorization: basicAuthHeader() },
+        });
+        assert.equal(authedContent.status, 200);
+      }
     } finally {
       await server.close();
       removeScope(scopeKey);

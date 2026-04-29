@@ -16,6 +16,7 @@
       actionStatus: null,
       actionStatusFailed: false,
       previewRequestId: 0,
+      viewerModes: {},
     },
   };
 
@@ -423,6 +424,7 @@
       state.artifacts.actionStatus = null;
       state.artifacts.actionStatusFailed = false;
       state.artifacts.previewRequestId += 1;
+      state.artifacts.viewerModes = {};
       fetchArtifacts(explorer);
     }
     renderArtifactList(explorer);
@@ -680,7 +682,7 @@
     var raw = document.createElement("a");
     raw.href = artifactApiUrl(explorer, "/" + encodeURIComponent(item.id) + "/raw");
     raw.target = "_blank";
-    raw.rel = "noreferrer";
+    raw.rel = "noopener noreferrer";
     raw.textContent = "Raw";
     var download = document.createElement("a");
     download.href = artifactApiUrl(explorer, "/" + encodeURIComponent(item.id) + "/download");
@@ -703,7 +705,30 @@
     state.artifacts.selectedId = item.id;
     state.artifacts.actionStatus = null;
     state.artifacts.actionStatusFailed = false;
-    state.artifacts.preview = { artifactId: item.id, loading: true, content: "Loading preview..." };
+    if (artifactKind(item) === "binary" || artifactKind(item) === "unknown") {
+      state.artifacts.preview = {
+        artifactId: item.id,
+        loading: false,
+        placeholder: true,
+        renderKind: artifactKind(item),
+        kind: artifactKind(item),
+        artifact: item,
+        sizeBytes: item.sizeBytes,
+        loadedBytes: 0,
+        content: "",
+      };
+      renderArtifactList(explorer);
+      renderArtifactPreview(explorer);
+      return;
+    }
+    state.artifacts.preview = {
+      artifactId: item.id,
+      loading: true,
+      content: "Loading preview...",
+      renderKind: artifactKind(item),
+      kind: artifactKind(item),
+      artifact: item,
+    };
     renderArtifactList(explorer);
     renderArtifactPreview(explorer);
     fetch(artifactApiUrl(explorer, "/" + encodeURIComponent(item.id) + "/preview"))
@@ -724,6 +749,12 @@
           loading: false,
           content: preview.content || "",
           truncated: preview.truncated,
+          renderKind: preview.renderKind || preview.kind || artifactKind(item),
+          kind: preview.kind || preview.renderKind || artifactKind(item),
+          artifact: preview.artifact || item,
+          sizeBytes: Number.isFinite(preview.sizeBytes) ? preview.sizeBytes : item.sizeBytes,
+          loadedBytes: Number.isFinite(preview.loadedBytes) ? preview.loadedBytes : null,
+          jsonParseSafe: preview.jsonParseSafe,
           title: preview.artifact && preview.artifact.title ? preview.artifact.title : item.title,
         };
         renderArtifactPreview(explorer);
@@ -736,6 +767,9 @@
           artifactId: item.id,
           loading: false,
           content: error.message || "Artifact preview request failed.",
+          renderKind: artifactKind(item),
+          kind: artifactKind(item),
+          artifact: item,
           error: true,
         };
         renderArtifactPreview(explorer);
@@ -749,8 +783,7 @@
     if (!item) {
       elements.artifactSelectedTitle.textContent = "Preview";
       elements.artifactSelectedMeta.textContent = "Select an artifact to preview it.";
-      elements.artifactPreview.classList.remove("error-text");
-      elements.artifactPreview.textContent = "Select an artifact to preview it.";
+      renderPreviewMessage("Select an artifact to preview it.", false);
       return;
     }
     elements.artifactSelectedTitle.textContent = artifactDisplayTitle(item);
@@ -760,14 +793,339 @@
       artifactReference(item),
     ].filter(Boolean).join(" | ");
     if (!preview) {
-      elements.artifactPreview.classList.remove("error-text");
-      elements.artifactPreview.textContent = "Select an artifact to preview it.";
+      renderPreviewMessage("Select an artifact to preview it.", false);
       return;
     }
-    elements.artifactPreview.classList.toggle("error-text", Boolean(preview.error));
-    var prefix = preview.title ? preview.title + "\n\n" : "";
-    var suffix = preview.truncated ? "\n\n[Preview truncated]" : "";
-    elements.artifactPreview.textContent = prefix + (preview.content || "") + suffix;
+    renderArtifactPreviewContent(explorer, item, preview);
+  }
+
+  function resetPreviewContainer() {
+    elements.artifactPreview.textContent = "";
+    elements.artifactPreview.className = "artifact-preview-content text-panel compact";
+  }
+
+  function renderPreviewMessage(message, failed) {
+    resetPreviewContainer();
+    elements.artifactPreview.classList.toggle("error-text", Boolean(failed));
+    elements.artifactPreview.textContent = message;
+  }
+
+  function renderArtifactPreviewContent(explorer, item, preview) {
+    if (preview.loading) {
+      renderPreviewMessage("Loading preview...", false);
+      return;
+    }
+    if (preview.error) {
+      renderPreviewMessage(preview.content || "Artifact preview request failed.", true);
+      return;
+    }
+
+    resetPreviewContainer();
+    var renderKind = String(preview.renderKind || preview.kind || artifactKind(item));
+    if (renderKind === "markdown") {
+      renderMarkdownPreview(elements.artifactPreview, preview);
+    } else if (renderKind === "json") {
+      renderJsonPreview(explorer, elements.artifactPreview, item, preview);
+    } else if (renderKind === "diff") {
+      renderTextPreview(elements.artifactPreview, preview, "Diff preview");
+    } else if (renderKind === "text") {
+      renderTextPreview(elements.artifactPreview, preview, "");
+    } else {
+      renderArtifactPlaceholder(explorer, elements.artifactPreview, item, preview);
+    }
+    renderTruncationStatus(elements.artifactPreview, preview);
+  }
+
+  function renderTextPreview(container, preview, label) {
+    if (label) {
+      var badge = document.createElement("div");
+      badge.className = "artifact-kind-label";
+      badge.textContent = label;
+      container.append(badge);
+    }
+    var block = document.createElement("pre");
+    block.className = "artifact-text-preview";
+    block.textContent = preview.content || "";
+    container.append(block);
+  }
+
+  function renderJsonPreview(explorer, container, item, preview) {
+    var viewer = document.createElement("div");
+    viewer.className = "artifact-json-viewer";
+    var controls = document.createElement("div");
+    controls.className = "artifact-preview-modes";
+    var artifactId = item.id || "";
+    var mode = state.artifacts.viewerModes[artifactId] || "pretty";
+    ["pretty", "raw"].forEach(function (nextMode) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.textContent = nextMode === "pretty" ? "Pretty" : "Raw";
+      button.className = mode === nextMode ? "primary" : "";
+      button.setAttribute("aria-pressed", mode === nextMode ? "true" : "false");
+      button.addEventListener("click", function () {
+        state.artifacts.viewerModes[artifactId] = nextMode;
+        renderArtifactPreview(explorer);
+      });
+      controls.append(button);
+    });
+    viewer.append(controls);
+
+    var block = document.createElement("pre");
+    block.className = "artifact-text-preview artifact-json-preview";
+    var raw = preview.content || "";
+    if (mode === "raw") {
+      block.textContent = raw;
+      viewer.append(block);
+      container.append(viewer);
+      return;
+    }
+
+    if (preview.truncated || preview.jsonParseSafe === false) {
+      viewer.append(previewWarning("JSON Pretty is unavailable for truncated or unsafe previews. Raw preview is shown."));
+      block.textContent = raw;
+      viewer.append(block);
+      container.append(viewer);
+      return;
+    }
+
+    try {
+      block.textContent = JSON.stringify(JSON.parse(raw), null, 2);
+    } catch (error) {
+      viewer.append(previewWarning("JSON parse error: " + (error && error.message ? error.message : "invalid JSON.")));
+      block.textContent = raw;
+    }
+    viewer.append(block);
+    container.append(viewer);
+  }
+
+  function previewWarning(message) {
+    var warning = document.createElement("div");
+    warning.className = "artifact-preview-warning";
+    warning.textContent = message;
+    return warning;
+  }
+
+  function renderArtifactPlaceholder(explorer, container, item, preview) {
+    var panel = document.createElement("div");
+    panel.className = "artifact-placeholder";
+    var title = document.createElement("strong");
+    title.textContent = artifactKind(item) === "binary" ? "Binary artifact" : "Preview unavailable";
+    var meta = document.createElement("dl");
+    appendPlaceholderMeta(meta, "Kind", artifactKind(item));
+    appendPlaceholderMeta(meta, "Path", artifactReference(item) || item.id || "Unknown");
+    appendPlaceholderMeta(meta, "Size", formatArtifactBytes(Number.isFinite(preview.sizeBytes) ? preview.sizeBytes : item.sizeBytes));
+    var actions = document.createElement("div");
+    actions.className = "artifact-placeholder-actions";
+    var raw = document.createElement("a");
+    raw.href = artifactApiUrl(explorer, "/" + encodeURIComponent(item.id) + "/raw");
+    raw.target = "_blank";
+    raw.rel = "noopener noreferrer";
+    raw.textContent = "Open raw";
+    var download = document.createElement("a");
+    download.href = artifactApiUrl(explorer, "/" + encodeURIComponent(item.id) + "/download");
+    download.textContent = "Download";
+    actions.append(raw, download);
+    panel.append(title, meta, actions);
+    container.append(panel);
+  }
+
+  function appendPlaceholderMeta(list, label, value) {
+    var term = document.createElement("dt");
+    term.textContent = label;
+    var detail = document.createElement("dd");
+    detail.textContent = value || "";
+    list.append(term, detail);
+  }
+
+  function renderTruncationStatus(container, preview) {
+    if (!preview.truncated) {
+      return;
+    }
+    var status = document.createElement("div");
+    status.className = "artifact-truncation";
+    var loaded = Number.isFinite(preview.loadedBytes) ? preview.loadedBytes : 0;
+    var total = Number.isFinite(preview.sizeBytes) ? preview.sizeBytes : loaded;
+    status.textContent = "Preview truncated: loaded " + formatArtifactBytes(loaded) + " of " + formatArtifactBytes(total) + ".";
+    container.append(status);
+  }
+
+  function renderMarkdownPreview(container, preview) {
+    var root = document.createElement("div");
+    root.className = "artifact-rendered-markdown";
+    appendMarkdownBlocks(root, preview.content || "");
+    container.append(root);
+  }
+
+  function appendMarkdownBlocks(container, markdown) {
+    var lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+    var index = 0;
+    while (index < lines.length) {
+      var line = lines[index];
+      if (!line.trim()) {
+        index += 1;
+        continue;
+      }
+
+      var fence = line.match(/^\s*(```+|~~~+)\s*([^\s`]*)\s*$/);
+      if (fence) {
+        var marker = fence[1];
+        var codeLines = [];
+        index += 1;
+        while (index < lines.length && lines[index].trim() !== marker) {
+          codeLines.push(lines[index]);
+          index += 1;
+        }
+        if (index < lines.length) index += 1;
+        var pre = document.createElement("pre");
+        var code = document.createElement("code");
+        if (fence[2]) {
+          code.dataset.language = fence[2];
+        }
+        code.textContent = codeLines.join("\n");
+        pre.append(code);
+        container.append(pre);
+        continue;
+      }
+
+      if (isMarkdownTable(lines, index)) {
+        var tableResult = renderMarkdownTable(lines, index);
+        container.append(tableResult.table);
+        index = tableResult.nextIndex;
+        continue;
+      }
+
+      var heading = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+      if (heading) {
+        var headingNode = document.createElement("h" + heading[1].length);
+        appendInlineMarkdown(headingNode, heading[2]);
+        container.append(headingNode);
+        index += 1;
+        continue;
+      }
+
+      var listMatch = line.match(/^\s{0,3}((?:[-*+])|(?:\d+[.)]))\s+(.+)$/);
+      if (listMatch) {
+        var ordered = /\d/.test(listMatch[1]);
+        var list = document.createElement(ordered ? "ol" : "ul");
+        while (index < lines.length) {
+          var current = lines[index].match(/^\s{0,3}((?:[-*+])|(?:\d+[.)]))\s+(.+)$/);
+          if (!current || /\d/.test(current[1]) !== ordered) {
+            break;
+          }
+          var item = document.createElement("li");
+          appendInlineMarkdown(item, current[2]);
+          list.append(item);
+          index += 1;
+        }
+        container.append(list);
+        continue;
+      }
+
+      var paragraphLines = [line.trim()];
+      index += 1;
+      while (index < lines.length && lines[index].trim() && !isMarkdownBlockStart(lines, index)) {
+        paragraphLines.push(lines[index].trim());
+        index += 1;
+      }
+      var paragraph = document.createElement("p");
+      appendInlineMarkdown(paragraph, paragraphLines.join(" "));
+      container.append(paragraph);
+    }
+  }
+
+  function isMarkdownBlockStart(lines, index) {
+    var line = lines[index] || "";
+    return /^\s*(```+|~~~+)/.test(line)
+      || /^\s{0,3}#{1,6}\s+/.test(line)
+      || /^\s{0,3}((?:[-*+])|(?:\d+[.)]))\s+/.test(line)
+      || isMarkdownTable(lines, index);
+  }
+
+  function isMarkdownTable(lines, index) {
+    return index + 1 < lines.length
+      && lines[index].indexOf("|") !== -1
+      && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(lines[index + 1] || "");
+  }
+
+  function splitMarkdownTableRow(line) {
+    var value = String(line || "").trim();
+    if (value.charAt(0) === "|") value = value.slice(1);
+    if (value.charAt(value.length - 1) === "|") value = value.slice(0, -1);
+    return value.split("|").map(function (cell) {
+      return cell.trim();
+    });
+  }
+
+  function renderMarkdownTable(lines, startIndex) {
+    var table = document.createElement("table");
+    var thead = document.createElement("thead");
+    var tbody = document.createElement("tbody");
+    var headerRow = document.createElement("tr");
+    splitMarkdownTableRow(lines[startIndex]).forEach(function (cell) {
+      var th = document.createElement("th");
+      appendInlineMarkdown(th, cell);
+      headerRow.append(th);
+    });
+    thead.append(headerRow);
+    var index = startIndex + 2;
+    while (index < lines.length && lines[index].indexOf("|") !== -1 && lines[index].trim()) {
+      var row = document.createElement("tr");
+      splitMarkdownTableRow(lines[index]).forEach(function (cell) {
+        var td = document.createElement("td");
+        appendInlineMarkdown(td, cell);
+        row.append(td);
+      });
+      tbody.append(row);
+      index += 1;
+    }
+    table.append(thead, tbody);
+    return { table: table, nextIndex: index };
+  }
+
+  function appendInlineMarkdown(parent, value) {
+    var source = String(value || "");
+    var pattern = /(`[^`]+`)|(\[([^\]]+)\]\(([^)\s]+)\))/g;
+    var cursor = 0;
+    var match;
+    while ((match = pattern.exec(source))) {
+      if (match.index > cursor) {
+        parent.append(document.createTextNode(source.slice(cursor, match.index)));
+      }
+      if (match[1]) {
+        var code = document.createElement("code");
+        code.textContent = match[1].slice(1, -1);
+        parent.append(code);
+      } else {
+        var href = safeMarkdownHref(match[4]);
+        if (href) {
+          var link = document.createElement("a");
+          link.href = href;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.textContent = match[3];
+          parent.append(link);
+        } else {
+          parent.append(document.createTextNode(match[0]));
+        }
+      }
+      cursor = pattern.lastIndex;
+    }
+    if (cursor < source.length) {
+      parent.append(document.createTextNode(source.slice(cursor)));
+    }
+  }
+
+  function safeMarkdownHref(value) {
+    var raw = String(value || "").trim();
+    try {
+      var parsed = new URL(raw, window.location.href);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "mailto:") {
+        return parsed.href;
+      }
+    } catch {
+      return null;
+    }
+    return null;
   }
 
   function renderArtifactToolbar(explorer, item) {

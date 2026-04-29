@@ -265,6 +265,7 @@ function createHarness(fetchHandler, clipboard) {
     navigator: clipboard === undefined ? {} : { clipboard },
     WebSocket: MockWebSocket,
     URLSearchParams,
+    URL,
     fetch: async (url) => {
       fetchCalls.push(String(url));
       return fetchHandler(String(url));
@@ -361,7 +362,14 @@ describe("static Artifact Explorer app", () => {
     const harness = createHarness((url) => {
       if (url.includes("/preview")) {
         assert.match(url, /design-output\/preview\?scope=ag-117&runId=run-1$/);
-        return createResponse({ content: "# Design\n\nDetails", truncated: true, artifact: catalog.groups[1].items[0] });
+        return createResponse({
+          content: "# Design\n\nDetails",
+          truncated: true,
+          loadedBytes: 512,
+          sizeBytes: 2048,
+          renderKind: "markdown",
+          artifact: catalog.groups[1].items[0],
+        });
       }
       return createResponse(catalog);
     });
@@ -372,8 +380,8 @@ describe("static Artifact Explorer app", () => {
     assert.match(harness.document.getElementById("artifact-meta").textContent, /Workflow completed\. 2 artifacts created\./);
     assert.deepEqual(harness.document.querySelectorAll(".artifact-group").map((group) => group.querySelector("h3").textContent), ["Diagnostics", "Design"]);
     assert.equal(harness.document.querySelector('[data-artifact-id="design-output"]').classList.contains("selected"), true);
-    assert.match(harness.document.getElementById("artifact-preview-text").textContent, /# Design/);
-    assert.match(harness.document.getElementById("artifact-preview-text").textContent, /\[Preview truncated\]/);
+    assert.equal(harness.document.getElementById("artifact-preview-text").querySelector("h1").textContent, "Design");
+    assert.match(harness.document.getElementById("artifact-preview-text").textContent, /Preview truncated: loaded 512 B of 2 KB/);
     assert.match(harness.document.querySelector('[data-artifact-id="design-output"]').textContent, /markdown/);
     assert.match(harness.document.querySelector('[data-artifact-id="design-output"]').textContent, /2 KB/);
     assert.match(harness.document.querySelector('[data-artifact-id="design-output"]').textContent, /\.artifacts\/design\.md/);
@@ -458,5 +466,160 @@ describe("static Artifact Explorer app", () => {
     rejected.document.getElementById("artifact-copy-reference-button").click();
     await flush();
     assert.match(rejected.document.getElementById("artifact-action-status").textContent, /Clipboard copy failed: denied/);
+  });
+
+  it("renders the supported Markdown subset without creating unsafe links or HTML elements", async () => {
+    const catalog = {
+      scopeKey: "ag-117",
+      items: [artifact({
+        id: "markdown",
+        title: "Markdown",
+        kind: "markdown",
+        role: "design",
+        relativePath: ".artifacts/markdown.md",
+      })],
+    };
+    const markdown = [
+      "# Title",
+      "",
+      "Paragraph with `code` and [safe](https://example.com/path).",
+      "",
+      "- Bullet",
+      "- Second",
+      "",
+      "1. First",
+      "2. Second",
+      "",
+      "```js",
+      "<tag>",
+      "```",
+      "",
+      "| Name | Value |",
+      "| --- | --- |",
+      "| one | two |",
+      "",
+      "<script>alert(1)</script>",
+      "[bad](javascript:alert(1)) [data](data:text/html,x)",
+    ].join("\n");
+    const harness = createHarness((url) => {
+      if (url.includes("/preview")) {
+        return createResponse({
+          content: markdown,
+          truncated: false,
+          loadedBytes: markdown.length,
+          sizeBytes: markdown.length,
+          renderKind: "markdown",
+          artifact: catalog.items[0],
+        });
+      }
+      return createResponse(catalog);
+    });
+
+    harness.sendSnapshot(openViewModel({ artifactCount: 1 }));
+    await flush();
+
+    const preview = harness.document.getElementById("artifact-preview-text");
+    assert.equal(preview.querySelector("h1").textContent, "Title");
+    assert.match(preview.querySelector("p").textContent, /Paragraph with code and safe/);
+    assert.equal(preview.querySelectorAll("ul").length, 1);
+    assert.equal(preview.querySelectorAll("ol").length, 1);
+    assert.equal(preview.querySelector("pre").textContent, "<tag>");
+    assert.equal(preview.querySelectorAll("table").length, 1);
+    assert.equal(preview.querySelectorAll("script").length, 0);
+    assert.match(preview.textContent, /<script>alert\(1\)<\/script>/);
+
+    const links = preview.querySelectorAll("a");
+    assert.equal(links.length, 1);
+    assert.equal(links[0].href, "https://example.com/path");
+    assert.equal(links[0].target, "_blank");
+    assert.equal(links[0].rel, "noopener noreferrer");
+    assert.doesNotMatch(preview.textContent, /href=.*javascript/i);
+  });
+
+  it("supports JSON Pretty and Raw modes while falling back for invalid or truncated JSON", async () => {
+    const valid = artifact({ id: "valid-json", title: "Valid JSON", kind: "json", role: "design", relativePath: ".artifacts/valid.json" });
+    const invalid = artifact({ id: "invalid-json", title: "Invalid JSON", kind: "json", role: "qa", relativePath: ".artifacts/invalid.json" });
+    const truncated = artifact({ id: "truncated-json", title: "Truncated JSON", kind: "json", role: "artifact", relativePath: ".artifacts/truncated.json", sizeBytes: 614400 });
+    const catalog = { scopeKey: "ag-117", items: [valid, invalid, truncated] };
+    const previews = new Map([
+      ["valid-json", { content: "{\"b\":2,\"a\":1}", truncated: false, loadedBytes: 13, sizeBytes: 13, jsonParseSafe: true, renderKind: "json", artifact: valid }],
+      ["invalid-json", { content: "{\"bad\":", truncated: false, loadedBytes: 7, sizeBytes: 7, jsonParseSafe: true, renderKind: "json", artifact: invalid }],
+      ["truncated-json", { content: "{\"bad\":", truncated: true, loadedBytes: 524288, sizeBytes: 614400, jsonParseSafe: false, renderKind: "json", artifact: truncated }],
+    ]);
+    const harness = createHarness((url) => {
+      if (url.includes("/preview")) {
+        const id = decodeURIComponent(url.match(/artifacts\/(.+)\/preview/)[1]);
+        return createResponse(previews.get(id));
+      }
+      return createResponse(catalog);
+    });
+
+    harness.sendSnapshot(openViewModel({ artifactCount: 3 }));
+    await flush();
+
+    let preview = harness.document.getElementById("artifact-preview-text");
+    assert.match(preview.textContent, /"b": 2/);
+    assert.match(preview.textContent, /"a": 1/);
+    preview.querySelectorAll("button").find((button) => button.textContent === "Raw").click();
+    assert.match(preview.textContent, /\{"b":2,"a":1\}/);
+
+    harness.document.querySelector('[data-artifact-id="invalid-json"]').querySelector("button").click();
+    await flush();
+    preview = harness.document.getElementById("artifact-preview-text");
+    assert.match(preview.textContent, /JSON parse error:/);
+    assert.match(preview.textContent, /\{"bad":/);
+
+    harness.document.querySelector('[data-artifact-id="truncated-json"]').querySelector("button").click();
+    await flush();
+    preview = harness.document.getElementById("artifact-preview-text");
+    assert.match(preview.textContent, /JSON Pretty is unavailable for truncated or unsafe previews/);
+    assert.doesNotMatch(preview.textContent, /JSON parse error:/);
+    assert.match(preview.textContent, /Preview truncated: loaded 512 KB of 600 KB/);
+  });
+
+  it("renders text, diff, binary, and unknown previews through the correct safe paths", async () => {
+    const textItem = artifact({ id: "text", title: "Text", kind: "text", role: "design", relativePath: "note.txt" });
+    const diffItem = artifact({ id: "diff", title: "Diff", kind: "diff", role: "qa", relativePath: "patch.diff" });
+    const binaryItem = artifact({ id: "binary", title: "Binary", kind: "binary", role: "artifact", relativePath: "blob.bin", sizeBytes: 4 });
+    const unknownItem = artifact({ id: "unknown", title: "Unknown", kind: "unknown", role: "artifact", relativePath: "payload.custom", sizeBytes: 9 });
+    const catalog = { scopeKey: "ag-117", items: [textItem, diffItem, binaryItem, unknownItem] };
+    const harness = createHarness((url) => {
+      if (url.includes("text/preview")) {
+        return createResponse({ content: "line 1\n  indented\n\nlong long line", truncated: false, loadedBytes: 32, sizeBytes: 32, renderKind: "text", artifact: textItem });
+      }
+      if (url.includes("diff/preview")) {
+        return createResponse({ content: "diff --git a/a b/a\n+added\n", truncated: false, loadedBytes: 27, sizeBytes: 27, renderKind: "diff", artifact: diffItem });
+      }
+      if (url.includes("/preview")) {
+        return createResponse({ message: "unsupported_preview" }, false);
+      }
+      return createResponse(catalog);
+    });
+
+    harness.sendSnapshot(openViewModel({ artifactCount: 4 }));
+    await flush();
+
+    let preview = harness.document.getElementById("artifact-preview-text");
+    assert.match(preview.querySelector("pre").textContent, /line 1\n  indented\n\nlong long line/);
+
+    harness.document.querySelector('[data-artifact-id="diff"]').querySelector("button").click();
+    await flush();
+    preview = harness.document.getElementById("artifact-preview-text");
+    assert.match(preview.textContent, /Diff preview/);
+    assert.match(preview.querySelector("pre").textContent, /diff --git/);
+
+    harness.document.querySelector('[data-artifact-id="binary"]').querySelector("button").click();
+    await flush();
+    preview = harness.document.getElementById("artifact-preview-text");
+    assert.match(preview.textContent, /Binary artifact/);
+    assert.match(preview.textContent, /blob\.bin/);
+    assert.ok(!harness.fetchCalls.some((url) => url.includes("binary/preview")));
+
+    harness.document.querySelector('[data-artifact-id="unknown"]').querySelector("button").click();
+    await flush();
+    preview = harness.document.getElementById("artifact-preview-text");
+    assert.match(preview.textContent, /Preview unavailable/);
+    assert.match(preview.textContent, /payload\.custom/);
+    assert.ok(!harness.fetchCalls.some((url) => url.includes("unknown/preview")));
   });
 });

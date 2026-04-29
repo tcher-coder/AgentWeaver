@@ -521,7 +521,9 @@ describe("web server", () => {
     const root = resetScope(scopeKey);
     mkdirSync(path.join(root, ".artifacts"), { recursive: true });
     writeFileSync(path.join(root, "doc.md"), "# Heading\n", "utf8");
-    writeFileSync(path.join(root, ".artifacts", "data.json"), JSON.stringify({ ok: true }), "utf8");
+    writeFileSync(path.join(root, ".artifacts", "data.json"), "{\"ok\":true}", "utf8");
+    writeFileSync(path.join(root, ".artifacts", "invalid.json"), "{\"bad\":", "utf8");
+    writeFileSync(path.join(root, ".artifacts", "large.json"), `{"value":"${"x".repeat(600 * 1024)}"}`, "utf8");
     writeFileSync(path.join(root, "note.txt"), "plain text\n", "utf8");
     writeFileSync(path.join(root, "patch.diff"), "diff --git a/a b/a\n", "utf8");
     writeFileSync(path.join(root, "large.txt"), `${"x".repeat(600 * 1024)}tail`, "utf8");
@@ -529,6 +531,8 @@ describe("web server", () => {
     const items = [
       catalogItem(scopeKey, { id: "markdown-item", relativePath: "doc.md", kind: "markdown" }),
       catalogItem(scopeKey, { id: "json-item", relativePath: ".artifacts/data.json", kind: "json" }),
+      catalogItem(scopeKey, { id: "invalid-json-item", relativePath: ".artifacts/invalid.json", kind: "json" }),
+      catalogItem(scopeKey, { id: "large-json-item", relativePath: ".artifacts/large.json", kind: "json" }),
       catalogItem(scopeKey, { id: "text-item", relativePath: "note.txt", kind: "text" }),
       catalogItem(scopeKey, { id: "diff-item", relativePath: "patch.diff", kind: "diff" }),
       catalogItem(scopeKey, { id: "large-item", relativePath: "large.txt", kind: "text" }),
@@ -557,6 +561,25 @@ describe("web server", () => {
         assert.ok(body.loadedBytes > 0);
         assert.equal(typeof body.content, "string");
       }
+
+      const json = await fetch(encodedArtifactUrl(server.url, "json-item", "preview", scopeKey));
+      assert.equal(json.status, 200);
+      const jsonBody = await json.json();
+      assert.equal(jsonBody.content, "{\"ok\":true}");
+      assert.equal(jsonBody.jsonParseSafe, true);
+
+      const invalidJson = await fetch(encodedArtifactUrl(server.url, "invalid-json-item", "preview", scopeKey));
+      assert.equal(invalidJson.status, 200);
+      const invalidJsonBody = await invalidJson.json();
+      assert.equal(invalidJsonBody.content, "{\"bad\":");
+      assert.equal(invalidJsonBody.jsonParseSafe, true);
+
+      const largeJson = await fetch(encodedArtifactUrl(server.url, "large-json-item", "preview", scopeKey));
+      assert.equal(largeJson.status, 200);
+      const largeJsonBody = await largeJson.json();
+      assert.equal(largeJsonBody.truncated, true);
+      assert.equal(largeJsonBody.jsonParseSafe, false);
+      assert.ok(largeJsonBody.loadedBytes <= 512 * 1024);
 
       const large = await fetch(encodedArtifactUrl(server.url, "large-item", "preview", scopeKey));
       assert.equal(large.status, 200);

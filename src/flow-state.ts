@@ -352,7 +352,7 @@ export function classifyFlowLaunchAvailability(state: FlowRunState | null): Flow
         },
     restart: {
       available: true,
-      reason: "Archive the active attempt and start a fresh run.",
+      reason: "Start a fresh run.",
     },
   };
   return availability;

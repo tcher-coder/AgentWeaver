@@ -45,7 +45,14 @@ export const codexPromptNode: PipelineNodeDefinition<CodexPromptNodeParams, Code
     }
     return {
       value,
-      outputs: outputPaths.map((path) => ({ kind: "artifact" as const, path, required: true })),
+      outputs: outputPaths.map((path) => ({
+        kind: "artifact" as const,
+        path,
+        required: true,
+        manifest: {
+          publish: true,
+        },
+      })),
     };
   },
   checks(_context, params) {

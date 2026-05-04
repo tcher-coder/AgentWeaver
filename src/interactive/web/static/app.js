@@ -446,9 +446,9 @@
       parts.push("Scope " + explorer.scopeKey);
     }
     if (Array.isArray(explorer.runIds) && explorer.runIds.length > 1) {
-      parts.push("Runs " + explorer.runIds.join(", "));
+      parts.push("Current runs " + explorer.runIds.join(", "));
     } else if (explorer.runId) {
-      parts.push("Run " + explorer.runId);
+      parts.push("Current run " + explorer.runId);
     }
     return parts.join(" | ");
   }
@@ -457,7 +457,7 @@
     if (typeof count !== "number") {
       return "Artifacts are available.";
     }
-    return String(count) + " artifact" + (count === 1 ? "" : "s") + " created.";
+    return String(count) + " artifact" + (count === 1 ? "" : "s") + " in scope.";
   }
 
   function artifactApiUrl(explorer, suffix) {
@@ -465,13 +465,6 @@
     var params = new URLSearchParams();
     if (explorer.scopeKey) {
       params.set("scope", explorer.scopeKey);
-    }
-    if (Array.isArray(explorer.runIds) && explorer.runIds.length > 0) {
-      explorer.runIds.forEach(function (runId) {
-        params.append("runId", runId);
-      });
-    } else if (explorer.runId) {
-      params.set("runId", explorer.runId);
     }
     var query = params.toString();
     return query ? base + "?" + query : base;
@@ -483,6 +476,7 @@
         return {
           title: group.title || group.phaseId || "Artifacts",
           items: Array.isArray(group.items) ? group.items : [],
+          groups: Array.isArray(group.groups) ? artifactGroups({ groups: group.groups }) : [],
         };
       });
     }
@@ -493,8 +487,23 @@
   }
 
   function flattenArtifacts(catalog) {
+    function flattenGroup(group) {
+      var nested = Array.isArray(group.groups) ? group.groups.reduce(function (items, child) {
+        return items.concat(flattenGroup(child));
+      }, []) : [];
+      var ownItems = Array.isArray(group.items) ? group.items : [];
+      if (nested.length > 0) {
+        var nestedIds = new Set(nested.map(function (item) {
+          return item && item.id;
+        }));
+        ownItems = ownItems.filter(function (item) {
+          return item && !nestedIds.has(item.id);
+        });
+      }
+      return nested.concat(ownItems);
+    }
     return artifactGroups(catalog).reduce(function (items, group) {
-      return items.concat(group.items);
+      return items.concat(flattenGroup(group));
     }, []);
   }
 
@@ -535,14 +544,23 @@
     return item && item.kind ? String(item.kind) : "unknown";
   }
 
-  function chooseDefaultArtifact(items) {
+  function currentArtifactRunIds(explorer) {
+    if (explorer && Array.isArray(explorer.runIds) && explorer.runIds.length > 0) {
+      return explorer.runIds.filter(Boolean);
+    }
+    return explorer && explorer.runId ? [explorer.runId] : [];
+  }
+
+  function chooseDefaultArtifact(items, explorer) {
     if (!Array.isArray(items) || items.length === 0) {
       return null;
     }
+    var currentRunIds = new Set(currentArtifactRunIds(explorer));
     var best = null;
     var bestScore = Infinity;
     items.forEach(function (item, index) {
-      var score = artifactUsefulnessScore(item) * 1000 + index;
+      var runScore = currentRunIds.size > 0 && item && currentRunIds.has(item.runId) ? 0 : 1;
+      var score = runScore * 100000 + artifactUsefulnessScore(item) * 1000 + index;
       if (score < bestScore) {
         best = item;
         bestScore = score;
@@ -603,7 +621,7 @@
           return item && item.id === state.artifacts.selectedId;
         });
         if (!selectedStillExists) {
-          var defaultItem = chooseDefaultArtifact(items);
+          var defaultItem = chooseDefaultArtifact(items, explorer);
           state.artifacts.selectedId = defaultItem ? defaultItem.id : null;
           state.artifacts.preview = null;
           if (defaultItem) {
@@ -640,24 +658,46 @@
     var groups = artifactGroups(catalog);
     var rendered = 0;
     groups.forEach(function (group) {
-      var items = Array.isArray(group.items) ? group.items : [];
-      if (items.length === 0) {
-        return;
+      var renderedGroup = renderArtifactGroup(explorer, group, 0);
+      rendered += renderedGroup.count;
+      if (renderedGroup.element) {
+        elements.artifactList.append(renderedGroup.element);
       }
-      var section = document.createElement("section");
-      section.className = "artifact-group";
-      var title = document.createElement("h3");
-      title.textContent = group.title || "Artifacts";
-      section.append(title);
-      items.forEach(function (item) {
-        rendered += 1;
-        section.append(renderArtifactRow(explorer, item));
-      });
-      elements.artifactList.append(section);
     });
     if (rendered === 0) {
-      elements.artifactList.append(artifactEmpty("No artifacts were found for the current scope or run."));
+      elements.artifactList.append(artifactEmpty("No artifacts were found for the current scope."));
     }
+  }
+
+  function renderArtifactGroup(explorer, group, depth) {
+    var childGroups = Array.isArray(group.groups) ? group.groups : [];
+    var nestedIds = new Set();
+    childGroups.forEach(function (child) {
+      (Array.isArray(child.items) ? child.items : []).forEach(function (item) {
+        if (item && item.id) nestedIds.add(item.id);
+      });
+    });
+    var items = (Array.isArray(group.items) ? group.items : []).filter(function (item) {
+      return item && !nestedIds.has(item.id);
+    });
+    var section = document.createElement("section");
+    section.className = depth > 0 ? "artifact-group artifact-subgroup" : "artifact-group";
+    var title = document.createElement(depth > 0 ? "h4" : "h3");
+    title.textContent = group.title || "Artifacts";
+    section.append(title);
+    var count = 0;
+    childGroups.forEach(function (child) {
+      var renderedChild = renderArtifactGroup(explorer, child, depth + 1);
+      count += renderedChild.count;
+      if (renderedChild.element) {
+        section.append(renderedChild.element);
+      }
+    });
+    items.forEach(function (item) {
+      count += 1;
+      section.append(renderArtifactRow(explorer, item));
+    });
+    return { element: count > 0 ? section : null, count: count };
   }
 
   function renderArtifactRow(explorer, item) {

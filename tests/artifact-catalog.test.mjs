@@ -208,6 +208,37 @@ describe("artifact catalog", () => {
     assert.deepEqual(unclassified.items.map((item) => item.relativePath), [".artifacts/legacy.json"]);
   });
 
+  it("adds nested type groups when a phase contains repeated artifact types", () => {
+    const scopeKey = "ag-cat-4b";
+    const registry = createArtifactRegistry();
+    const firstReviewPath = writeScopeFile(scopeKey, "review-ag-cat-4b-1.md", "# Review 1\n");
+    const secondReviewPath = writeScopeFile(scopeKey, "review-ag-cat-4b-2.md", "# Review 2\n");
+
+    publishMarkdown(registry, scopeKey, firstReviewPath, {
+      runId: "review-run-1",
+      phaseId: "review",
+      stepId: "write_review",
+      logicalKey: "review-main",
+    });
+    publishMarkdown(registry, scopeKey, secondReviewPath, {
+      runId: "review-run-2",
+      phaseId: "review",
+      stepId: "write_review",
+      logicalKey: "review-main",
+    });
+
+    const catalog = listArtifactCatalog({ scopeKey, artifactRegistry: registry });
+    const reviewGroup = catalog.groups.find((group) => group.phaseId === "review");
+
+    assert.ok(reviewGroup);
+    assert.equal(reviewGroup.items.length, 2);
+    assert.deepEqual(reviewGroup.groups?.map((group) => group.title), ["Review"]);
+    assert.deepEqual(reviewGroup.groups?.[0]?.items.map((item) => item.relativePath).sort(), [
+      "review-ag-cat-4b-1.md",
+      "review-ag-cat-4b-2.md",
+    ]);
+  });
+
   it("keeps scanner traversal inside the scope workspace", () => {
     const scopeKey = "ag-cat-5";
     const registry = createArtifactRegistry();

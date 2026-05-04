@@ -336,6 +336,16 @@ h2 {
   color: var(--aw-dim);
 }
 
+.artifact-subgroup {
+  @apply gap-1 border-l pl-3 py-1;
+  border-color: var(--aw-border);
+}
+
+.artifact-subgroup h4 {
+  @apply m-0 text-xs font-bold tracking-normal;
+  color: var(--aw-muted);
+}
+
 .artifact-row {
   @apply grid items-center gap-2 rounded-md p-2;
   grid-template-columns: minmax(0, 1fr) auto;

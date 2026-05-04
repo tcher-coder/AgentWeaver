@@ -284,7 +284,10 @@ describe("web interactive session", () => {
       ready = resolve;
     });
     const scopeKey = "ag-116-web";
-    const items = [catalogItem(scopeKey, { id: "pub-item", kind: "markdown", relativePath: "result.md", runId: "pub-1" })];
+    const items = [
+      catalogItem(scopeKey, { id: "old-item", kind: "markdown", relativePath: "old.md", runId: "old-run" }),
+      catalogItem(scopeKey, { id: "pub-item", kind: "markdown", relativePath: "result.md", runId: "pub-1" }),
+    ];
     const session = createWebInteractiveSession(createOptions({
       scopeKey,
       jiraIssueKey: "AG-116",
@@ -331,8 +334,8 @@ describe("web interactive session", () => {
         runId: "pub-1",
         status: "completed",
         label: "Artifacts ready",
-        artifactCount: 1,
-        message: "The workflow completed and artifacts are available for review.",
+        artifactCount: 2,
+        message: "The workflow completed and scope artifacts are available for review.",
       });
 
       client.send({ type: "artifactExplorer.close" });
@@ -343,7 +346,7 @@ describe("web interactive session", () => {
       assert.equal(closed.viewModel.artifactExplorer.available, true);
       assert.equal(closed.viewModel.artifactExplorer.scopeKey, scopeKey);
       assert.equal(closed.viewModel.artifactExplorer.runId, "pub-1");
-      assert.equal(closed.viewModel.artifactExplorer.artifactCount, 1);
+      assert.equal(closed.viewModel.artifactExplorer.artifactCount, 2);
 
       const inputPromise = session.requestUserInput({
         formId: "artifact-block",

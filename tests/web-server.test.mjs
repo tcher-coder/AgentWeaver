@@ -478,7 +478,7 @@ describe("web server", () => {
     }
   });
 
-  it("lists only markdown artifacts for the active scope and selected run ids", async (t) => {
+  it("lists all markdown artifacts for the active scope regardless of selected run ids", async (t) => {
     const scopeKey = "web-api-list-active";
     const items = [
       catalogItem(scopeKey, { id: "run-1-item", relativePath: "run-1.md", kind: "markdown", runId: "run-1" }),
@@ -518,12 +518,12 @@ describe("web server", () => {
       activeUrl.searchParams.set("runId", "run-1");
       const filtered = await fetch(activeUrl);
       assert.equal(filtered.status, 200);
-      assert.deepEqual((await filtered.json()).items.map((item) => item.id), ["run-1-item"]);
+      assert.deepEqual((await filtered.json()).items.map((item) => item.id), ["run-1-item", "run-2-item", "scope-item"]);
 
       activeUrl.searchParams.append("runId", "run-2");
       const multiRunFiltered = await fetch(activeUrl);
       assert.equal(multiRunFiltered.status, 200);
-      assert.deepEqual((await multiRunFiltered.json()).items.map((item) => item.id), ["run-1-item", "run-2-item"]);
+      assert.deepEqual((await multiRunFiltered.json()).items.map((item) => item.id), ["run-1-item", "run-2-item", "scope-item"]);
     } finally {
       await server.close();
     }

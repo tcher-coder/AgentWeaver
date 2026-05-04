@@ -35,6 +35,7 @@ export type ArtifactCatalogGroup = {
   phaseId: string;
   title: string;
   items: ArtifactCatalogItem[];
+  groups?: ArtifactCatalogGroup[];
 };
 
 export type ArtifactCatalog = {
@@ -416,6 +417,10 @@ function phaseSortKey(phaseId: string | null): string {
   return phaseId ?? UNCLASSIFIED_PHASE_ID;
 }
 
+function typeGroupKey(item: ArtifactCatalogItem): string {
+  return `${item.role}:${item.title}`;
+}
+
 function compareCatalogItems(left: ArtifactCatalogItem, right: ArtifactCatalogItem): number {
   const phaseComparison = phaseSortKey(left.phaseId).localeCompare(phaseSortKey(right.phaseId));
   if (phaseComparison !== 0) {
@@ -428,6 +433,10 @@ function compareCatalogItems(left: ArtifactCatalogItem, right: ArtifactCatalogIt
   const titleComparison = left.title.localeCompare(right.title);
   if (titleComparison !== 0) {
     return titleComparison;
+  }
+  const updatedComparison = right.updatedAt.localeCompare(left.updatedAt);
+  if (updatedComparison !== 0) {
+    return updatedComparison;
   }
   return left.relativePath.localeCompare(right.relativePath);
 }
@@ -442,11 +451,28 @@ export function groupArtifactCatalog(items: ArtifactCatalogItem[]): ArtifactCata
   }
   return Array.from(grouped.entries())
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([phaseId, phaseItems]) => ({
-      phaseId,
-      title: phaseId === UNCLASSIFIED_PHASE_ID ? "Unclassified" : toTitleCase(phaseId),
-      items: phaseItems.slice().sort(compareCatalogItems),
-    }));
+    .map(([phaseId, phaseItems]) => {
+      const sortedPhaseItems = phaseItems.slice().sort(compareCatalogItems);
+      const typeGroups = new Map<string, ArtifactCatalogItem[]>();
+      for (const item of sortedPhaseItems) {
+        const key = typeGroupKey(item);
+        const groupItems = typeGroups.get(key) ?? [];
+        groupItems.push(item);
+        typeGroups.set(key, groupItems);
+      }
+      const nestedGroups = Array.from(typeGroups.entries())
+        .map(([key, groupItems]) => ({
+          phaseId: `${phaseId}:${key}`,
+          title: groupItems[0]?.title ?? "Artifacts",
+          items: groupItems.slice().sort(compareCatalogItems),
+        }));
+      return {
+        phaseId,
+        title: phaseId === UNCLASSIFIED_PHASE_ID ? "Unclassified" : toTitleCase(phaseId),
+        items: sortedPhaseItems,
+        ...(nestedGroups.length > 1 || nestedGroups.some((group) => group.items.length > 1) ? { groups: nestedGroups } : {}),
+      };
+    });
 }
 
 export function listArtifactCatalog(input: ListArtifactCatalogInput): ArtifactCatalog {

@@ -675,8 +675,8 @@ export class InteractiveSessionController {
           ? "The workflow failed, but artifacts are available for review."
           : "The workflow failed. The explorer can check for any artifacts written before failure."
         : hasCount && count === 0
-          ? "The workflow completed, but no artifacts were found for this run yet."
-          : "The workflow completed and artifacts are available for review.");
+          ? "The workflow completed, but no artifacts were found for this scope yet."
+          : "The workflow completed and scope artifacts are available for review.");
     this.state.artifactExplorer = {
       available: true,
       open: Boolean(input.open) && !this.hasActiveInput(),

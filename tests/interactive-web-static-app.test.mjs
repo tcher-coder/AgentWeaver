@@ -306,7 +306,7 @@ function artifact(overrides) {
     logicalKey: overrides.logicalKey ?? null,
     sizeBytes: overrides.sizeBytes ?? 0,
     phaseId: overrides.phaseId ?? null,
-    runId: "run-1",
+    runId: overrides.runId ?? "run-1",
     source: "manifest",
   };
 }
@@ -324,7 +324,7 @@ function openViewModel(overrides = {}) {
       status: "completed",
       label: "Artifacts ready",
       artifactCount: 2,
-      message: "The workflow completed and artifacts are available for review.",
+      message: "The workflow completed and scope artifacts are available for review.",
       ...overrides,
     },
   };
@@ -361,7 +361,7 @@ describe("static Artifact Explorer app", () => {
     };
     const harness = createHarness((url) => {
       if (url.includes("/preview")) {
-        assert.match(url, /design-output\/preview\?scope=ag-117&runId=run-1$/);
+        assert.match(url, /design-output\/preview\?scope=ag-117$/);
         return createResponse({
           content: "# Design\n\nDetails",
           truncated: true,
@@ -377,7 +377,7 @@ describe("static Artifact Explorer app", () => {
     harness.sendSnapshot(openViewModel());
     await flush();
 
-    assert.match(harness.document.getElementById("artifact-meta").textContent, /Workflow completed\. 2 artifacts created\./);
+    assert.match(harness.document.getElementById("artifact-meta").textContent, /Workflow completed\. 2 artifacts in scope\./);
     assert.deepEqual(harness.document.querySelectorAll(".artifact-group").map((group) => group.querySelector("h3").textContent), ["Diagnostics", "Design"]);
     assert.equal(harness.document.querySelector('[data-artifact-id="design-output"]').classList.contains("selected"), true);
     assert.equal(harness.document.getElementById("artifact-preview-text").querySelector("h1").textContent, "Design");
@@ -412,8 +412,51 @@ describe("static Artifact Explorer app", () => {
 
     assert.equal(harness.document.querySelector('[data-artifact-id="folder/item two"]').classList.contains("selected"), true);
     assert.match(harness.document.getElementById("artifact-preview-text").textContent, /Preview failed/);
-    assert.match(harness.document.getElementById("artifact-open-raw-link").href, /folder%2Fitem%20two\/raw\?scope=ag-117&runId=run-1$/);
-    assert.match(harness.document.getElementById("artifact-download-link").href, /folder%2Fitem%20two\/download\?scope=ag-117&runId=run-1$/);
+    assert.match(harness.document.getElementById("artifact-open-raw-link").href, /folder%2Fitem%20two\/raw\?scope=ag-117$/);
+    assert.match(harness.document.getElementById("artifact-download-link").href, /folder%2Fitem%20two\/download\?scope=ag-117$/);
+  });
+
+  it("renders nested artifact type groups and still selects current-run artifacts first", async () => {
+    const oldReview = artifact({
+      id: "review-old",
+      title: "Review",
+      role: "review",
+      relativePath: "review-ag-117-1.md",
+      runId: "old-run",
+    });
+    const currentReview = artifact({
+      id: "review-current",
+      title: "Review",
+      role: "review",
+      relativePath: "review-ag-117-2.md",
+      runId: "run-1",
+    });
+    const catalog = {
+      scopeKey: "ag-117",
+      groups: [{
+        title: "Review",
+        items: [oldReview, currentReview],
+        groups: [{
+          title: "Review",
+          items: [oldReview, currentReview],
+        }],
+      }],
+    };
+    const harness = createHarness((url) => {
+      if (url.includes("/preview")) {
+        assert.match(url, /review-current\/preview\?scope=ag-117$/);
+        return createResponse({ content: "Current review", artifact: currentReview });
+      }
+      return createResponse(catalog);
+    });
+
+    harness.sendSnapshot(openViewModel({ artifactCount: 2 }));
+    await flush();
+
+    assert.deepEqual(harness.document.querySelectorAll("h4").map((heading) => heading.textContent), ["Review"]);
+    assert.equal(harness.document.querySelector('[data-artifact-id="review-current"]').classList.contains("selected"), true);
+    assert.equal(harness.document.querySelectorAll('[data-artifact-id="review-old"]').length, 1);
+    assert.equal(harness.document.querySelectorAll('[data-artifact-id="review-current"]').length, 1);
   });
 
   it("renders list failure and empty catalog states without clearing close behavior", async () => {
@@ -427,7 +470,7 @@ describe("static Artifact Explorer app", () => {
     const empty = createHarness(() => createResponse({ scopeKey: "ag-117", items: [] }));
     empty.sendSnapshot(openViewModel({ artifactCount: 0 }));
     await flush();
-    assert.match(empty.document.getElementById("artifact-list").textContent, /No artifacts were found for the current scope or run/);
+    assert.match(empty.document.getElementById("artifact-list").textContent, /No artifacts were found for the current scope/);
   });
 
   it("reports clipboard success, unsupported clipboard, rejected clipboard, and close/reopen actions", async () => {

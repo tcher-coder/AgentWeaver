@@ -310,15 +310,9 @@ function parseArtifactApiRoute(requestUrl: string | undefined): ArtifactApiRoute
   return { kind: "content", artifactId: "", action: "preview", scopeKey, runIds };
 }
 
-function filterCatalog(catalog: ArtifactCatalog, scopeKey: string, runIds: string[]): ArtifactCatalog {
-  const runIdSet = new Set(runIds);
+function filterCatalog(catalog: ArtifactCatalog, scopeKey: string): ArtifactCatalog {
   const markdownItems = catalog.items.filter((item) => item.scopeKey === scopeKey && item.kind === "markdown");
-  let items = markdownItems;
-  if (runIdSet.size > 0) {
-    const runItems = markdownItems.filter((item) => item.runId !== null && runIdSet.has(item.runId));
-    items = runItems.length > 0 ? runItems : markdownItems;
-  }
-  const sortedItems = items.slice();
+  const sortedItems = markdownItems.slice();
   return {
     scopeKey,
     items: sortedItems,
@@ -619,11 +613,8 @@ function handleArtifactApiRequest(
       writeArtifactApiError(response, "missing_scope", "A scope query parameter is required.");
       return true;
     }
-    const primaryRunId = route.runIds[0];
     void loadArtifactCatalog(options, {
       scopeKey: route.scopeKey,
-      ...(route.runIds.length === 1 && primaryRunId ? { runId: primaryRunId, runIds: route.runIds } : {}),
-      ...(route.runIds.length > 1 ? { runIds: route.runIds } : {}),
     })
       .then((catalog) => {
         if (!catalog) {
@@ -634,7 +625,7 @@ function handleArtifactApiRequest(
           writeArtifactApiError(response, "scope_mismatch", "Requested scope does not match the active Web UI scope.");
           return;
         }
-        writeJson(response, 200, filterCatalog(catalog, route.scopeKey, route.runIds));
+        writeJson(response, 200, filterCatalog(catalog, route.scopeKey));
       })
       .catch(() => {
         writeArtifactApiError(response, "read_failed", "Artifact catalog could not be loaded.");
@@ -647,11 +638,8 @@ function handleArtifactApiRequest(
     return true;
   }
 
-  const primaryRunId = route.runIds[0];
   void loadArtifactCatalog(options, {
     ...(route.scopeKey ? { scopeKey: route.scopeKey } : {}),
-    ...(route.runIds.length === 1 && primaryRunId ? { runId: primaryRunId, runIds: route.runIds } : {}),
-    ...(route.runIds.length > 1 ? { runIds: route.runIds } : {}),
   })
     .then((catalog) => {
       if (!catalog) {

@@ -102,35 +102,27 @@ export function createWebInteractiveSession(
     try {
       const catalog = await artifactCatalogProvider({
         scopeKey,
-        ...(candidates.length === 1 && preferredRunId ? { runId: preferredRunId, runIds: candidates } : {}),
-        ...(candidates.length > 1 ? { runIds: candidates } : {}),
       });
       if (!catalog || catalog.scopeKey !== scopeKey) {
         return { runId: preferredRunId };
       }
+      const markdownArtifactCount = catalog.items.filter((item) => item.scopeKey === scopeKey && item.kind === "markdown").length;
       if (candidates.length === 0) {
         return {
           runId: null,
-          artifactCount: catalog.items.filter((item) => item.scopeKey === scopeKey && item.kind === "markdown").length,
+          artifactCount: markdownArtifactCount,
         };
       }
       const matchingRunIds = candidates.filter((candidate) => (
         catalog.items.some((item) => item.scopeKey === scopeKey && item.runId === candidate && item.kind === "markdown")
       ));
       if (matchingRunIds.length > 0) {
-        const matchingRunIdSet = new Set(matchingRunIds);
         return {
           runId: matchingRunIds[0] ?? preferredRunId,
           ...(matchingRunIds.length > 1 ? { runIds: matchingRunIds } : {}),
-          artifactCount: catalog.items.filter((item) => (
-            item.scopeKey === scopeKey
-            && item.kind === "markdown"
-            && item.runId !== null
-            && matchingRunIdSet.has(item.runId)
-          )).length,
+          artifactCount: markdownArtifactCount,
         };
       }
-      const markdownArtifactCount = catalog.items.filter((item) => item.scopeKey === scopeKey && item.kind === "markdown").length;
       if (markdownArtifactCount > 0) {
         return {
           runId: null,
@@ -139,7 +131,7 @@ export function createWebInteractiveSession(
       }
       return {
         runId: preferredRunId,
-        artifactCount: catalog.items.filter((item) => item.scopeKey === scopeKey && item.kind === "markdown" && item.runId === preferredRunId).length,
+        artifactCount: markdownArtifactCount,
       };
     } catch {
       return { runId: preferredRunId };

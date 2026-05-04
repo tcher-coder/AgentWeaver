@@ -312,9 +312,11 @@ function parseArtifactApiRoute(requestUrl: string | undefined): ArtifactApiRoute
 
 function filterCatalog(catalog: ArtifactCatalog, scopeKey: string, runIds: string[]): ArtifactCatalog {
   const runIdSet = new Set(runIds);
-  let items = catalog.items.filter((item) => item.scopeKey === scopeKey && item.kind === "markdown");
+  const markdownItems = catalog.items.filter((item) => item.scopeKey === scopeKey && item.kind === "markdown");
+  let items = markdownItems;
   if (runIdSet.size > 0) {
-    items = items.filter((item) => item.runId !== null && runIdSet.has(item.runId));
+    const runItems = markdownItems.filter((item) => item.runId !== null && runIdSet.has(item.runId));
+    items = runItems.length > 0 ? runItems : markdownItems;
   }
   const sortedItems = items.slice();
   return {

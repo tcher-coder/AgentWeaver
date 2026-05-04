@@ -34,7 +34,14 @@ export const planCodexNode: PipelineNodeDefinition<PlanCodexNodeParams, CodexExe
     );
     return {
       value,
-      outputs: params.requiredArtifacts.map((path) => ({ kind: "artifact" as const, path, required: true })),
+      outputs: params.requiredArtifacts.map((path) => ({
+        kind: "artifact" as const,
+        path,
+        required: true,
+        manifest: {
+          publish: true,
+        },
+      })),
     };
   },
   checks(_context, params) {

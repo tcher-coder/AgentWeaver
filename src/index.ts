@@ -163,6 +163,14 @@ const INTERACTIVE_SCOPE_WATCH_INTERVAL_MS = 1500;
 const WEB_AUTH_USERNAME_ENV = "AGENTWEAVER_WEB_USERNAME";
 const WEB_AUTH_PASSWORD_ENV = "AGENTWEAVER_WEB_PASSWORD";
 
+const SCOPE_ARCHIVING_RESTART_FLOW_IDS = new Set([
+  "auto-common",
+  "auto-common-guided",
+  "auto-golang",
+  "auto-simple",
+  "instant-task",
+]);
+
 type CommandName = (typeof COMMANDS)[number];
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -371,7 +379,7 @@ Flags:
   --prompt        Extra prompt text appended to the base prompt
   --resume        Resume an interrupted run when valid
   --continue      Continue a terminated iterative run when valid
-  --restart       Archive the active attempt and start a fresh run
+  --restart       Start a fresh run; end-to-end attempt flows archive the active attempt first
   --blocking-severities  Comma-separated severities that block merge and drive review-fix auto-selection
   --md-lang       Language for workflow markdown artifacts only: en (English) or ru (Russian, default)
   --accept-playbook-draft  Non-interactively accept generated playbook content for playbook-init or auto-common-guided missing-manifest runs
@@ -1125,7 +1133,7 @@ async function runDeclarativeFlowByRef(
   } else if (persistedState && launchMode === "continue") {
     persistedState = prepareFlowStateForContinue(persistedState, flow.phases);
   } else if (launchMode === "restart") {
-    if (existingStateForRestart) {
+    if (existingStateForRestart && SCOPE_ARCHIVING_RESTART_FLOW_IDS.has(flowId)) {
       archiveActiveAttempt(config.scope.scopeKey);
     }
     resetFlowRunState(config.scope.scopeKey, flowId);

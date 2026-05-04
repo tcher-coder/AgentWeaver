@@ -130,6 +130,13 @@ export function createWebInteractiveSession(
           )).length,
         };
       }
+      const markdownArtifactCount = catalog.items.filter((item) => item.scopeKey === scopeKey && item.kind === "markdown").length;
+      if (markdownArtifactCount > 0) {
+        return {
+          runId: null,
+          artifactCount: markdownArtifactCount,
+        };
+      }
       return {
         runId: preferredRunId,
         artifactCount: catalog.items.filter((item) => item.scopeKey === scopeKey && item.kind === "markdown" && item.runId === preferredRunId).length,

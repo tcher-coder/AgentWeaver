@@ -130,6 +130,13 @@
               "list": [
                 {
                   "artifact": {
+                    "kind": "task-summary-file",
+                    "taskKey": { "ref": "params.taskKey" },
+                    "iteration": { "ref": "params.taskSummaryIteration" }
+                  }
+                },
+                {
+                  "artifact": {
                     "kind": "task-summary-json-file",
                     "taskKey": { "ref": "params.taskKey" },
                     "iteration": { "ref": "params.taskSummaryIteration" }
@@ -251,7 +258,53 @@
           "params": {
             "labelText": { "const": "Running bug analysis mode" },
             "model": { "ref": "params.llmModel" },
-            "executor": { "ref": "params.llmExecutor" }
+            "executor": { "ref": "params.llmExecutor" },
+            "requiredArtifacts": {
+              "list": [
+                {
+                  "artifact": {
+                    "kind": "bug-analyze-file",
+                    "taskKey": { "ref": "params.taskKey" },
+                    "iteration": { "ref": "params.bugAnalyzeIteration" }
+                  }
+                },
+                {
+                  "artifact": {
+                    "kind": "bug-analyze-json-file",
+                    "taskKey": { "ref": "params.taskKey" },
+                    "iteration": { "ref": "params.bugAnalyzeIteration" }
+                  }
+                },
+                {
+                  "artifact": {
+                    "kind": "bug-fix-design-file",
+                    "taskKey": { "ref": "params.taskKey" },
+                    "iteration": { "ref": "params.bugFixDesignIteration" }
+                  }
+                },
+                {
+                  "artifact": {
+                    "kind": "bug-fix-design-json-file",
+                    "taskKey": { "ref": "params.taskKey" },
+                    "iteration": { "ref": "params.bugFixDesignIteration" }
+                  }
+                },
+                {
+                  "artifact": {
+                    "kind": "bug-fix-plan-file",
+                    "taskKey": { "ref": "params.taskKey" },
+                    "iteration": { "ref": "params.bugFixPlanIteration" }
+                  }
+                },
+                {
+                  "artifact": {
+                    "kind": "bug-fix-plan-json-file",
+                    "taskKey": { "ref": "params.taskKey" },
+                    "iteration": { "ref": "params.bugFixPlanIteration" }
+                  }
+                }
+              ]
+            }
           },
           "expect": [
             {

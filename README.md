@@ -56,7 +56,7 @@ In practice, this means you can treat an agent workflow like an engineered syste
 
 - `resume` only resumes a genuinely interrupted run and uses the saved execution state without rebuilding already completed steps
 - `continue` is intended for completed iterative cycles and starts the next iteration from the latest valid artifacts without deleting historical artifacts
-- `restart` is treated as a new run: the current active attempt is archived under `.agentweaver/scopes/<scope>/.artifacts/restart-archives/attempt-XXXX`, then a new active attempt is created
+- `restart` is treated as a new run. For end-to-end attempt flows, the current active attempt is archived under `.agentweaver/scopes/<scope>/.artifacts/restart-archives/attempt-XXXX` before the new attempt starts; for independent single-purpose flows, restart only resets that flow's saved state and keeps existing scope artifacts available.
 - For ambiguous launches, the operator must choose the action explicitly: by confirmation in interactive mode, or with `--resume`, `--continue`, or `--restart` in non-interactive mode
 - This contract applies to `auto-common`, `auto-simple`, `auto-golang`, `instant-task`, `review-loop`, `run-go-linter-loop`, and `run-go-tests-loop`
 

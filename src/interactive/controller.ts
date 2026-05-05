@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { FlowInterruptedError, TaskRunnerError } from "../errors.js";
 import { createGitService, type GitService } from "../git/git-service.js";
-import type { GitOperationFeedback, GitWorkspaceSnapshot } from "../git/git-types.js";
+import type { GitChangedFile, GitOperationFeedback, GitWorkspaceSnapshot } from "../git/git-types.js";
 import { renderMarkdownToTerminal } from "../markdown.js";
 import type { FlowExecutionState } from "../pipeline/spec-types.js";
 import { runCommand } from "../runtime/process-runner.js";
@@ -171,6 +171,17 @@ function normalizeLogText(text: string): string[] {
     return [""];
   }
   return normalized.split("\n");
+}
+
+function needsGitFileStage(file: GitChangedFile): boolean {
+  if (file.type === "untracked" || file.xy === "??") {
+    return true;
+  }
+  return file.workTreeStatus !== " ";
+}
+
+function isGitFileStaged(file: GitChangedFile): boolean {
+  return file.indexStatus !== " " && file.indexStatus !== "?";
 }
 
 export class InteractiveSessionController {
@@ -794,7 +805,12 @@ export class InteractiveSessionController {
     }
     const snapshot = this.state.gitWorkspace;
     this.updateGitSelectedPaths(paths);
-    await this.runGitOperation("stage", () => this.gitService.stage(paths, snapshot));
+    const stagePaths = this.filterGitPaths(paths, snapshot, needsGitFileStage);
+    if (stagePaths.length === 0) {
+      this.setGitOperationError("Selected files are already staged.");
+      return;
+    }
+    await this.runGitOperation("stage", () => this.gitService.stage(stagePaths, snapshot));
   }
 
   async unstageGitPaths(paths: string[]): Promise<void> {
@@ -804,7 +820,23 @@ export class InteractiveSessionController {
     }
     const snapshot = this.state.gitWorkspace;
     this.updateGitSelectedPaths(paths);
-    await this.runGitOperation("unstage", () => this.gitService.unstage(paths, snapshot));
+    const unstagePaths = this.filterGitPaths(paths, snapshot, isGitFileStaged);
+    if (unstagePaths.length === 0) {
+      this.setGitOperationError("Selected files are not staged.");
+      return;
+    }
+    await this.runGitOperation("unstage", () => this.gitService.unstage(unstagePaths, snapshot));
+  }
+
+  private filterGitPaths(
+    paths: string[],
+    snapshot: GitWorkspaceSnapshot,
+    predicate: (file: GitChangedFile) => boolean,
+  ): string[] {
+    const selected = new Set(paths);
+    return snapshot.changedFiles
+      .filter((file) => selected.has(file.path) && predicate(file))
+      .map((file) => file.path);
   }
 
   async commitGitChanges(paths: string[] | undefined, message: string): Promise<void> {

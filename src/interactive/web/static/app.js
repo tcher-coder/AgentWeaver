@@ -35,8 +35,6 @@
     description: document.getElementById("description-text"),
     progressTitle: document.getElementById("progress-title"),
     progress: document.getElementById("progress-text"),
-    summaryTitle: document.getElementById("summary-title"),
-    summary: document.getElementById("summary-text"),
     gitRefresh: document.getElementById("git-refresh-button"),
     gitSummary: document.getElementById("git-summary"),
     gitBranchInput: document.getElementById("git-branch-input"),
@@ -279,8 +277,6 @@
     elements.description.textContent = text(vm.descriptionText, "No flow selected.");
     elements.progressTitle.textContent = text(vm.progressTitle, "Progress");
     renderProgress(vm);
-    elements.summaryTitle.textContent = text(vm.summaryTitle, "Task Summary");
-    setTextPreservingScroll(elements.summary, vm.summaryVisible === false ? "Summary is hidden." : text(vm.summaryText, "No task summary yet."));
     elements.logTitle.textContent = text(vm.logTitle, "Activity");
     setTextPreservingScroll(elements.log, text(vm.logText, ""));
     elements.helpText.textContent = text(vm.helpText, "No help is available.");
@@ -350,8 +346,8 @@
     elements.gitCheckout.disabled = blocked || isRunning || !git.available || !elements.gitCheckoutSelect.value;
     elements.gitFetch.disabled = blocked || isRunning || !git.available;
     elements.gitPull.disabled = blocked || isRunning || !git.available;
-    elements.gitStage.disabled = blocked || isRunning || !git.available || selectedGitPaths().length === 0;
-    elements.gitUnstage.disabled = elements.gitStage.disabled;
+    elements.gitStage.disabled = blocked || isRunning || !git.available || selectedStageableGitPaths(git).length === 0;
+    elements.gitUnstage.disabled = blocked || isRunning || !git.available || selectedUnstageableGitPaths(git).length === 0;
     elements.gitCommit.disabled = blocked || isRunning || !git.available || elements.gitCommitMessage.value.trim().length === 0;
     elements.gitPush.disabled = blocked || isRunning || !git.available || !git.canPush;
     elements.gitPush.title = git.canPush ? "Push current branch" : (git.pushDisabledReason || "Push is not available.");
@@ -393,44 +389,218 @@
       elements.gitFiles.append(empty);
       return;
     }
+
+    var tree = buildGitFileTree(files);
+    elements.gitFiles.setAttribute("role", "tree");
+    tree.forEach(function (root) {
+      elements.gitFiles.append(renderGitTreeNode(root, 0));
+    });
+  }
+
+  function buildGitFileTree(files) {
+    var roots = [
+      createGitTreeNode("group", "modified", "modified", "modified"),
+      createGitTreeNode("group", "untracked", "untracked", "untracked"),
+    ];
+    var rootByKey = { modified: roots[0], untracked: roots[1] };
     files.forEach(function (file) {
       var filePath = file.path || file.file || "";
-      var row = document.createElement("label");
-      row.className = "git-file-row";
-      row.dataset.path = filePath;
-      row.setAttribute("role", "listitem");
-      var checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.value = filePath;
-      checkbox.checked = state.gitSelectedPaths.indexOf(filePath) !== -1;
-      checkbox.addEventListener("change", function () {
-        if (checkbox.checked && state.gitSelectedPaths.indexOf(filePath) === -1) {
-          state.gitSelectedPaths.push(filePath);
-        } else if (!checkbox.checked) {
-          state.gitSelectedPaths = state.gitSelectedPaths.filter(function (item) {
-            return item !== filePath;
-          });
-        }
-        renderGitWorkspace(state.viewModel || {});
+      if (!filePath) return;
+      var rootKey = gitRootKey(file);
+      var parent = rootByKey[rootKey] || rootByKey.modified;
+      var parts = filePath.split("/").filter(Boolean);
+      var leafName = parts.pop() || filePath;
+      parts.forEach(function (part) {
+        parent = findOrCreateGitDirectory(parent, part);
       });
-      var type = document.createElement("span");
-      type.className = "git-file-type";
-      type.textContent = file.type || file.xy || "changed";
-      var pathText = document.createElement("span");
-      pathText.className = "git-file-path";
-      pathText.textContent = file.originalPath || file.originalFile
-        ? (file.originalPath || file.originalFile) + " -> " + filePath
-        : filePath;
-      var meta = document.createElement("span");
-      meta.className = "git-file-meta";
-      meta.textContent = (file.xy || "").trim() || (file.staged ? "staged" : "unstaged");
-      row.append(checkbox, type, pathText, meta);
-      elements.gitFiles.append(row);
+      var leaf = createGitTreeNode("file", leafName, filePath, rootKey);
+      leaf.file = file;
+      leaf.path = filePath;
+      parent.children.push(leaf);
+    });
+    roots.forEach(sortGitTreeNode);
+    return roots;
+  }
+
+  function gitRootKey(file) {
+    return file && (file.type === "untracked" || file.xy === "??") ? "untracked" : "modified";
+  }
+
+  function createGitTreeNode(kind, name, label, rootKey) {
+    return {
+      kind: kind,
+      name: name,
+      label: label,
+      rootKey: rootKey,
+      children: [],
+      file: null,
+      path: null,
+    };
+  }
+
+  function findOrCreateGitDirectory(parent, name) {
+    var existing = parent.children.find(function (child) {
+      return child.kind === "dir" && child.name === name;
+    });
+    if (existing) return existing;
+    var directory = createGitTreeNode("dir", name, name, parent.rootKey);
+    parent.children.push(directory);
+    return directory;
+  }
+
+  function sortGitTreeNode(node) {
+    node.children.sort(function (left, right) {
+      if (left.kind === "dir" && right.kind !== "dir") return -1;
+      if (left.kind !== "dir" && right.kind === "dir") return 1;
+      return left.name.localeCompare(right.name);
+    });
+    node.children.forEach(sortGitTreeNode);
+  }
+
+  function renderGitTreeNode(node, depth) {
+    var paths = gitTreePaths(node);
+    var selectedCount = paths.filter(function (filePath) {
+      return state.gitSelectedPaths.indexOf(filePath) !== -1;
+    }).length;
+    var checked = paths.length > 0 && selectedCount === paths.length;
+    var indeterminate = selectedCount > 0 && selectedCount < paths.length;
+    var row = document.createElement("label");
+    row.className = node.kind === "file" ? "git-file-row git-tree-row" : "git-tree-row git-tree-" + node.kind;
+    row.style.paddingLeft = String(8 + depth * 18) + "px";
+    row.setAttribute("role", "treeitem");
+    row.setAttribute("aria-level", String(depth + 1));
+    row.setAttribute("aria-checked", indeterminate ? "mixed" : String(checked));
+    if (node.kind === "file" && node.path) {
+      row.dataset.path = node.path;
+    } else if (node.kind === "group") {
+      row.dataset.gitRoot = node.rootKey;
+    }
+
+    var checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = checked;
+    checkbox.indeterminate = indeterminate;
+    checkbox.disabled = paths.length === 0;
+    checkbox.addEventListener("change", function () {
+      setGitSelection(paths, checkbox.checked);
+      renderGitWorkspace(state.viewModel || {});
+    });
+
+    var typeLabel = gitTreeTypeLabel(node);
+    var type = null;
+    if (typeLabel) {
+      type = document.createElement("span");
+      type.className = "git-file-type" + (typeLabel === "staged" ? " staged" : "");
+      type.textContent = typeLabel;
+    } else {
+      row.classList.add("without-type");
+    }
+
+    var pathText = document.createElement("span");
+    pathText.className = "git-file-path";
+    pathText.textContent = gitTreeDisplayLabel(node);
+
+    var meta = document.createElement("span");
+    meta.className = "git-file-meta";
+    meta.textContent = node.kind === "file" ? gitFileMeta(node.file) : paths.length + " file" + (paths.length === 1 ? "" : "s");
+
+    row.append(checkbox);
+    if (type) row.append(type);
+    row.append(pathText, meta);
+    if (node.kind === "file") {
+      return row;
+    }
+
+    var container = document.createElement("div");
+    container.className = "git-tree-node";
+    container.append(row);
+    node.children.forEach(function (child) {
+      container.append(renderGitTreeNode(child, depth + 1));
+    });
+    return container;
+  }
+
+  function gitTreeTypeLabel(node) {
+    if (node.kind === "group") return node.rootKey;
+    if (node.kind === "dir") return "";
+    if (node.file && isGitFileStaged(node.file) && !needsGitFileStage(node.file)) return "staged";
+    return (node.file && (node.file.type || node.file.xy)) || "changed";
+  }
+
+  function gitTreeDisplayLabel(node) {
+    if (node.kind !== "file") return node.label;
+    var file = node.file || {};
+    return file.originalPath || file.originalFile
+      ? (file.originalPath || file.originalFile) + " -> " + (node.path || "")
+      : (node.path || node.label);
+  }
+
+  function gitFileMeta(file) {
+    file = file || {};
+    if (file.type === "untracked" || file.xy === "??") return "untracked";
+    if (isGitFileStaged(file) && needsGitFileStage(file)) return "staged+unstaged";
+    if (isGitFileStaged(file)) return "staged";
+    if (needsGitFileStage(file)) return "unstaged";
+    return (file.xy || "").trim() || "changed";
+  }
+
+  function gitTreePaths(node) {
+    if (node.kind === "file") return node.path ? [node.path] : [];
+    return node.children.reduce(function (paths, child) {
+      return paths.concat(gitTreePaths(child));
+    }, []);
+  }
+
+  function setGitSelection(paths, selected) {
+    if (selected) {
+      paths.forEach(function (filePath) {
+        if (state.gitSelectedPaths.indexOf(filePath) === -1) {
+          state.gitSelectedPaths.push(filePath);
+        }
+      });
+      return;
+    }
+    state.gitSelectedPaths = state.gitSelectedPaths.filter(function (filePath) {
+      return paths.indexOf(filePath) === -1;
     });
   }
 
   function selectedGitPaths() {
     return state.gitSelectedPaths.slice();
+  }
+
+  function selectedStageableGitPaths(git) {
+    return selectedGitPathsFor(git, needsGitFileStage);
+  }
+
+  function selectedUnstageableGitPaths(git) {
+    return selectedGitPathsFor(git, isGitFileStaged);
+  }
+
+  function selectedGitPathsFor(git, predicate) {
+    git = git || gitWorkspace(state.viewModel || {});
+    var selected = selectedGitPaths();
+    var selectedSet = new Set(selected);
+    var files = Array.isArray(git.changedFiles) ? git.changedFiles : [];
+    return files.filter(function (file) {
+      var filePath = file.path || file.file || "";
+      return selectedSet.has(filePath) && predicate(file);
+    }).map(function (file) {
+      return file.path || file.file || "";
+    });
+  }
+
+  function needsGitFileStage(file) {
+    if (!file) return false;
+    if (file.type === "untracked" || file.xy === "??") return true;
+    var workTreeStatus = typeof file.workTreeStatus === "string" ? file.workTreeStatus : (file.xy || "  ")[1];
+    return workTreeStatus !== " " && workTreeStatus !== undefined;
+  }
+
+  function isGitFileStaged(file) {
+    if (!file) return false;
+    var indexStatus = typeof file.indexStatus === "string" ? file.indexStatus : (file.xy || "  ")[0];
+    return indexStatus !== " " && indexStatus !== "?";
   }
 
   function renderProgress(vm) {
@@ -541,7 +711,6 @@
     }
     return {
       progressScrollTop: elements.progress.scrollTop,
-      summaryScrollTop: elements.summary.scrollTop,
       logScrollTop: elements.log.scrollTop,
       helpScrollTop: elements.helpText.scrollTop,
       modalScrollTop: elements.modalRoot.scrollTop,
@@ -557,7 +726,6 @@
   function restoreUiState(uiState) {
     if (!uiState) return;
     elements.progress.scrollTop = uiState.progressScrollTop;
-    elements.summary.scrollTop = uiState.summaryScrollTop;
     elements.log.scrollTop = uiState.logScrollTop;
     elements.helpText.scrollTop = uiState.helpScrollTop;
     elements.modalRoot.scrollTop = uiState.modalScrollTop;
@@ -1894,9 +2062,6 @@
   elements.clearLog.addEventListener("click", api.clearLog);
   elements.progress.addEventListener("scroll", function () {
     api.scrollPane("progress", Math.round(elements.progress.scrollTop));
-  });
-  elements.summary.addEventListener("scroll", function () {
-    api.scrollPane("summary", Math.round(elements.summary.scrollTop));
   });
   elements.log.addEventListener("scroll", function () {
     api.scrollPane("log", Math.round(elements.log.scrollTop));

@@ -940,4 +940,44 @@ describe("interactive controller", () => {
     assert.equal(view.gitWorkspace.operation.status, "success");
     assert.match(view.logText, /Git stage: staged/);
   });
+
+  it("stages only selected files that need staging while preserving the full selection", async () => {
+    const before = gitSnapshot({
+      changedFiles: [
+        { path: "src/unstaged.ts", file: "src/unstaged.ts", xy: " M", indexStatus: " ", workTreeStatus: "M", staged: false, type: "modified" },
+        { path: "src/staged.ts", file: "src/staged.ts", xy: "M ", indexStatus: "M", workTreeStatus: " ", staged: true, type: "modified" },
+      ],
+    });
+    const after = gitSnapshot({
+      changedFiles: [
+        { path: "src/unstaged.ts", file: "src/unstaged.ts", xy: "M ", indexStatus: "M", workTreeStatus: " ", staged: true, type: "modified" },
+        { path: "src/staged.ts", file: "src/staged.ts", xy: "M ", indexStatus: "M", workTreeStatus: " ", staged: true, type: "modified" },
+      ],
+    });
+    let statusCalls = 0;
+    const gitService = {
+      status: async () => {
+        statusCalls += 1;
+        return statusCalls === 1 ? before : after;
+      },
+      createBranch: async () => ({ status: "success", message: "created" }),
+      checkout: async () => ({ status: "success", message: "checked out" }),
+      stage: async (paths) => {
+        assert.deepEqual(paths, ["src/unstaged.ts"]);
+        return { status: "success", message: "staged" };
+      },
+      unstage: async () => ({ status: "success", message: "unstaged" }),
+      commit: async () => ({ status: "success", message: "committed", commitHash: "abc1234" }),
+      fetch: async () => ({ status: "success", message: "fetched" }),
+      pullFfOnly: async () => ({ status: "success", message: "pulled" }),
+      push: async () => ({ status: "success", message: "pushed" }),
+      validateBranchName: async () => ({ ok: true }),
+    };
+    const controller = createGitController(gitService);
+
+    await controller.refreshGitWorkspace();
+    await controller.stageGitPaths(["src/unstaged.ts", "src/staged.ts"]);
+
+    assert.deepEqual(controller.getViewModel().gitWorkspace.selectedPaths, ["src/unstaged.ts", "src/staged.ts"]);
+  });
 });

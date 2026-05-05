@@ -1,8 +1,11 @@
 import path from "node:path";
 
 import { FlowInterruptedError, TaskRunnerError } from "../errors.js";
+import { createGitService, type GitService } from "../git/git-service.js";
+import type { GitOperationFeedback, GitWorkspaceSnapshot } from "../git/git-types.js";
 import { renderMarkdownToTerminal } from "../markdown.js";
 import type { FlowExecutionState } from "../pipeline/spec-types.js";
+import { runCommand } from "../runtime/process-runner.js";
 import { setOutputAdapter, stripAnsi, type OutputAdapter } from "../tui.js";
 import {
   buildInitialUserInputValues,
@@ -186,6 +189,7 @@ export class InteractiveSessionController {
   private activeFormSession: ActiveFormSession | null = null;
   private spinnerTimer: NodeJS.Timeout | null = null;
   private mounted = false;
+  private readonly gitService: GitService;
 
   constructor(private readonly options: InteractiveSessionOptions) {
     if (options.flows.length === 0) {
@@ -197,6 +201,10 @@ export class InteractiveSessionController {
     this.flowTree = buildFlowTree(options.flows);
     collectInitiallyExpandedFolderKeys(this.flowTree).forEach((key) => this.expandedFlowFolders.add(key));
     this.visibleFlowItems = computeVisibleFlowItems(this.flowTree, this.expandedFlowFolders);
+    this.gitService = options.gitService ?? createGitService({
+      cwd: options.cwd,
+      runCommand,
+    });
   }
 
   subscribe(listener: (event: InteractiveSessionChangeEvent) => void): () => void {
@@ -732,6 +740,96 @@ export class InteractiveSessionController {
     this.emitChange();
   }
 
+  async refreshGitWorkspace(operation?: GitOperationFeedback): Promise<void> {
+    const previous = this.state.gitWorkspace;
+    const snapshot = await this.gitService.status();
+    const validPaths = new Set(snapshot.changedFiles.map((file) => file.path));
+    this.state.gitWorkspace = {
+      ...snapshot,
+      selectedPaths: previous.selectedPaths.filter((filePath) => validPaths.has(filePath)),
+      commitMessage: previous.commitMessage,
+      operation: operation ?? previous.operation,
+    };
+    this.emitChange();
+  }
+
+  updateGitCommitMessage(message: string): void {
+    this.state.gitWorkspace = {
+      ...this.state.gitWorkspace,
+      commitMessage: message,
+    };
+    this.emitChange();
+  }
+
+  updateGitSelectedPaths(paths: string[]): void {
+    const changed = new Set(this.state.gitWorkspace.changedFiles.map((file) => file.path));
+    const selectedPaths = paths.filter((filePath, index, allPaths) => changed.has(filePath) && allPaths.indexOf(filePath) === index);
+    this.state.gitWorkspace = {
+      ...this.state.gitWorkspace,
+      selectedPaths,
+    };
+    this.emitChange();
+  }
+
+  async createGitBranch(branchName: string): Promise<void> {
+    await this.runGitOperation("create branch", () => this.gitService.createBranch(branchName));
+  }
+
+  async checkoutGitBranch(branchName: string): Promise<void> {
+    await this.runGitOperation("checkout", () => this.gitService.checkout(branchName));
+  }
+
+  async fetchGitWorkspace(): Promise<void> {
+    await this.runGitOperation("fetch", () => this.gitService.fetch());
+  }
+
+  async pullGitWorkspaceFfOnly(): Promise<void> {
+    await this.runGitOperation("pull --ff-only", () => this.gitService.pullFfOnly());
+  }
+
+  async stageGitPaths(paths: string[]): Promise<void> {
+    if (paths.length === 0) {
+      this.setGitOperationError("No files were selected for staging.");
+      return;
+    }
+    const snapshot = this.state.gitWorkspace;
+    this.updateGitSelectedPaths(paths);
+    await this.runGitOperation("stage", () => this.gitService.stage(paths, snapshot));
+  }
+
+  async unstageGitPaths(paths: string[]): Promise<void> {
+    if (paths.length === 0) {
+      this.setGitOperationError("No files were selected for unstaging.");
+      return;
+    }
+    const snapshot = this.state.gitWorkspace;
+    this.updateGitSelectedPaths(paths);
+    await this.runGitOperation("unstage", () => this.gitService.unstage(paths, snapshot));
+  }
+
+  async commitGitChanges(paths: string[] | undefined, message: string): Promise<void> {
+    if (message.trim().length === 0) {
+      this.setGitOperationError("Commit message must not be empty.");
+      return;
+    }
+    const snapshot = this.state.gitWorkspace;
+    const commitPaths = paths ?? snapshot.selectedPaths;
+    if (paths) {
+      this.updateGitSelectedPaths(paths);
+    }
+    this.updateGitCommitMessage(message);
+    await this.runGitOperation("commit", () => this.gitService.commit(commitPaths, message, snapshot));
+  }
+
+  async pushGitWorkspace(): Promise<void> {
+    const snapshot = this.state.gitWorkspace;
+    if (!snapshot.canPush) {
+      this.setGitOperationError(snapshot.pushDisabledReason ?? "Push is not available.");
+      return;
+    }
+    await this.runGitOperation("push", () => this.gitService.push(snapshot));
+  }
+
   getViewModel(layout?: { formContentWidth?: number }): InteractiveSessionViewModel {
     const selectedItem = this.selectedFlowTreeItem();
     const activeFlowId = this.activeFlowId();
@@ -780,7 +878,41 @@ export class InteractiveSessionController {
       confirmation: this.renderConfirmationView(),
       form: this.renderFormView(layout),
       artifactExplorer: { ...this.state.artifactExplorer },
+      gitWorkspace: {
+        ...this.state.gitWorkspace,
+        changedFiles: this.state.gitWorkspace.changedFiles.map((file) => ({ ...file })),
+        branches: this.state.gitWorkspace.branches.map((branch) => ({ ...branch })),
+        remotes: this.state.gitWorkspace.remotes.map((remote) => ({ ...remote })),
+        warnings: [...this.state.gitWorkspace.warnings],
+        selectedPaths: [...this.state.gitWorkspace.selectedPaths],
+        operation: { ...this.state.gitWorkspace.operation },
+      },
     };
+  }
+
+  private setGitOperationError(message: string): void {
+    this.state.gitWorkspace = {
+      ...this.state.gitWorkspace,
+      operation: { status: "error", message },
+    };
+    this.appendLog(`Git operation failed: ${message}`);
+    this.emitChange();
+  }
+
+  private async runGitOperation(action: string, operation: () => Promise<GitOperationFeedback>): Promise<void> {
+    this.state.gitWorkspace = {
+      ...this.state.gitWorkspace,
+      operation: { status: "running", action, message: `Running git ${action}...` },
+    };
+    this.emitChange();
+
+    const result = await operation();
+    if (result.status === "success") {
+      this.appendLog(`Git ${action}: ${result.message ?? "completed."}`);
+    } else {
+      this.appendLog(`Git ${action} failed: ${result.message ?? "Git operation failed."}`);
+    }
+    await this.refreshGitWorkspace({ ...result, action });
   }
 
   private emitChange(event: InteractiveSessionChangeEvent = { type: "render" }): void {

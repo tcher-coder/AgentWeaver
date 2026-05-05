@@ -360,7 +360,84 @@ function progressSnapshot(items, overrides = {}) {
   };
 }
 
+function gitWorkspace(overrides = {}) {
+  return {
+    available: true,
+    repositoryRoot: "/repo",
+    branch: "main",
+    detachedHead: false,
+    clean: false,
+    upstream: "origin/main",
+    ahead: 1,
+    behind: 0,
+    lastCommit: { hash: "abc1234567", shortHash: "abc1234", subject: "Initial", authoredAt: "2026-01-01" },
+    changedFiles: [
+      { path: "--option-like.ts", file: "--option-like.ts", xy: " M", indexStatus: " ", workTreeStatus: "M", staged: false, type: "modified" },
+      { path: "new.ts", file: "new.ts", originalPath: "old.ts", originalFile: "old.ts", xy: "R ", indexStatus: "R", workTreeStatus: " ", staged: true, type: "renamed" },
+    ],
+    branches: [{ name: "main", current: true }, { name: "feature/ag-121", current: false }],
+    remotes: [{ name: "origin" }],
+    canPush: true,
+    pushDisabledReason: null,
+    warnings: [],
+    error: null,
+    refreshedAt: "2026-01-01T00:00:00.000Z",
+    selectedPaths: [],
+    commitMessage: "",
+    operation: { status: "idle" },
+    ...overrides,
+  };
+}
+
 describe("static Artifact Explorer app", () => {
+  it("renders Git Workspace dirty state and sends typed Git actions", () => {
+    const harness = createHarness(() => createResponse({ scopeKey: "ag-121", items: [] }));
+    harness.sendSnapshot(progressSnapshot([], {
+      gitWorkspace: gitWorkspace(),
+    }));
+
+    assert.match(harness.document.getElementById("git-summary").textContent, /Branch main/);
+    assert.match(harness.document.getElementById("git-summary").textContent, /dirty/);
+    assert.equal(harness.document.querySelectorAll(".git-file-row").length, 2);
+    assert.match(harness.document.getElementById("git-files").textContent, /--option-like\.ts/);
+    assert.match(harness.document.getElementById("git-files").textContent, /old\.ts -> new\.ts/);
+
+    const checkbox = harness.document.querySelector('[data-path="--option-like.ts"]').querySelector("input");
+    checkbox.checked = true;
+    checkbox.dispatchEvent({ type: "change", target: checkbox });
+    harness.document.getElementById("git-stage-button").click();
+    assert.deepEqual(harness.socket.sent.at(-1), {
+      type: "git.stage",
+      paths: ["--option-like.ts"],
+      actionId: harness.socket.sent.at(-1).actionId,
+    });
+
+    harness.document.getElementById("git-commit-message").value = "Commit from Web UI";
+    harness.document.getElementById("git-commit-button").disabled = false;
+    harness.document.getElementById("git-commit-button").click();
+    assert.equal(harness.socket.sent.at(-1).type, "git.commit");
+    assert.deepEqual(harness.socket.sent.at(-1).paths, ["--option-like.ts"]);
+    assert.equal(harness.socket.sent.at(-1).message, "Commit from Web UI");
+  });
+
+  it("renders clean Git Workspace and disabled no-remote push guidance", () => {
+    const harness = createHarness(() => createResponse({ scopeKey: "ag-121", items: [] }));
+    harness.sendSnapshot(progressSnapshot([], {
+      gitWorkspace: gitWorkspace({
+        clean: true,
+        changedFiles: [],
+        remotes: [],
+        canPush: false,
+        pushDisabledReason: "No Git remote is configured.",
+      }),
+    }));
+
+    assert.match(harness.document.getElementById("git-summary").textContent, /clean/);
+    assert.match(harness.document.getElementById("git-files").textContent, /No changed files/);
+    assert.equal(harness.document.getElementById("git-push-button").disabled, true);
+    assert.match(harness.document.getElementById("git-feedback").textContent, /No Git remote is configured/);
+  });
+
   it("renders structured progress rows with status-specific classes instead of parsing progressText", () => {
     const harness = createHarness(() => createResponse({ scopeKey: "ag-120", items: [] }));
     harness.sendSnapshot(progressSnapshot([

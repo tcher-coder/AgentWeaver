@@ -24,6 +24,16 @@ export type ClientAction =
   | { type: "log.clear"; actionId?: string }
   | { type: "artifactExplorer.open"; actionId?: string }
   | { type: "artifactExplorer.close"; actionId?: string }
+  | { type: "git.refresh"; actionId?: string }
+  | { type: "git.createBranch"; branchName: string; actionId?: string }
+  | { type: "git.checkout"; branchName: string; actionId?: string }
+  | { type: "git.fetch"; actionId?: string }
+  | { type: "git.pullFfOnly"; actionId?: string }
+  | { type: "git.stage"; paths: string[]; actionId?: string }
+  | { type: "git.unstage"; paths: string[]; actionId?: string }
+  | { type: "git.updateCommitMessage"; message: string; actionId?: string }
+  | { type: "git.commit"; message: string; paths?: string[]; actionId?: string }
+  | { type: "git.push"; actionId?: string }
   | { type: "help.toggle"; visible?: boolean; actionId?: string }
   | { type: "scroll"; pane: FocusPane | "help"; delta?: number; offset?: number; actionId?: string };
 
@@ -43,6 +53,16 @@ const ACTION_TYPES = new Set([
   "log.clear",
   "artifactExplorer.open",
   "artifactExplorer.close",
+  "git.refresh",
+  "git.createBranch",
+  "git.checkout",
+  "git.fetch",
+  "git.pullFfOnly",
+  "git.stage",
+  "git.unstage",
+  "git.updateCommitMessage",
+  "git.commit",
+  "git.push",
   "help.toggle",
   "scroll",
 ]);
@@ -97,6 +117,29 @@ function requireValues(value: Record<string, unknown>, fieldName = "values"): Us
   return values as UserInputFormValues;
 }
 
+function requireStringArray(value: Record<string, unknown>, fieldName: string): string[] {
+  const field = value[fieldName];
+  if (!Array.isArray(field) || field.some((item) => typeof item !== "string" || item.length === 0)) {
+    throw new Error(`${fieldName} must be an array of non-empty strings.`);
+  }
+  return field;
+}
+
+function optionalStringArray(value: Record<string, unknown>, fieldName: string): string[] | undefined {
+  if (value[fieldName] === undefined) {
+    return undefined;
+  }
+  return requireStringArray(value, fieldName);
+}
+
+function requireCommitMessage(value: Record<string, unknown>): string {
+  const message = value.message;
+  if (typeof message !== "string" || message.trim().length === 0) {
+    throw new Error("message must be a non-empty string.");
+  }
+  return message;
+}
+
 export function parseClientAction(raw: string): ClientAction {
   let parsed: unknown;
   try {
@@ -142,6 +185,10 @@ export function parseClientAction(raw: string): ClientAction {
     || parsed.type === "log.clear"
     || parsed.type === "artifactExplorer.open"
     || parsed.type === "artifactExplorer.close"
+    || parsed.type === "git.refresh"
+    || parsed.type === "git.fetch"
+    || parsed.type === "git.pullFfOnly"
+    || parsed.type === "git.push"
   ) {
     return { type: parsed.type, ...(actionId ? { actionId } : {}) } as ClientAction;
   }
@@ -182,6 +229,36 @@ export function parseClientAction(raw: string): ClientAction {
       throw new Error("visible must be a boolean when provided.");
     }
     return { type: "help.toggle", ...(parsed.visible !== undefined ? { visible: parsed.visible } : {}), ...(actionId ? { actionId } : {}) };
+  }
+  if (parsed.type === "git.createBranch") {
+    if ("selectedBase" in parsed || "base" in parsed || "baseBranch" in parsed) {
+      throw new Error("git.createBranch does not accept a selected base in the MVP.");
+    }
+    return { type: "git.createBranch", branchName: requireNonEmptyString(parsed, "branchName"), ...(actionId ? { actionId } : {}) };
+  }
+  if (parsed.type === "git.checkout") {
+    return { type: "git.checkout", branchName: requireNonEmptyString(parsed, "branchName"), ...(actionId ? { actionId } : {}) };
+  }
+  if (parsed.type === "git.stage") {
+    return { type: "git.stage", paths: requireStringArray(parsed, "paths"), ...(actionId ? { actionId } : {}) };
+  }
+  if (parsed.type === "git.unstage") {
+    return { type: "git.unstage", paths: requireStringArray(parsed, "paths"), ...(actionId ? { actionId } : {}) };
+  }
+  if (parsed.type === "git.updateCommitMessage") {
+    if (typeof parsed.message !== "string") {
+      throw new Error("message must be a string.");
+    }
+    return { type: "git.updateCommitMessage", message: parsed.message, ...(actionId ? { actionId } : {}) };
+  }
+  if (parsed.type === "git.commit") {
+    const paths = optionalStringArray(parsed, "paths");
+    return {
+      type: "git.commit",
+      message: requireCommitMessage(parsed),
+      ...(paths !== undefined ? { paths } : {}),
+      ...(actionId ? { actionId } : {}),
+    };
   }
 
   const pane = requireNonEmptyString(parsed, "pane");

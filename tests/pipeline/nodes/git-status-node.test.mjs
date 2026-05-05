@@ -211,7 +211,7 @@ describe("gitCommitExecutor", () => {
     assert.match(result.output, /commit spaced file/);
     assert.match(result.commitHash ?? "", /^[0-9a-f]{7,40}$/);
     assert.deepStrictEqual(commands, [
-      ["git", "add", "file with spaces.txt"],
+      ["git", "add", "--", "file with spaces.txt"],
       ["git", "commit", "-m", "commit spaced file"],
     ]);
   });

@@ -18,6 +18,8 @@
       previewRequestId: 0,
       viewerModes: {},
     },
+    gitSelectedPaths: [],
+    gitCommitMessage: "",
   };
 
   var elements = {
@@ -35,6 +37,21 @@
     progress: document.getElementById("progress-text"),
     summaryTitle: document.getElementById("summary-title"),
     summary: document.getElementById("summary-text"),
+    gitRefresh: document.getElementById("git-refresh-button"),
+    gitSummary: document.getElementById("git-summary"),
+    gitBranchInput: document.getElementById("git-branch-input"),
+    gitCreateBranch: document.getElementById("git-create-branch-button"),
+    gitCheckoutSelect: document.getElementById("git-checkout-select"),
+    gitCheckout: document.getElementById("git-checkout-button"),
+    gitFetch: document.getElementById("git-fetch-button"),
+    gitPull: document.getElementById("git-pull-button"),
+    gitFiles: document.getElementById("git-files"),
+    gitCommitMessage: document.getElementById("git-commit-message"),
+    gitStage: document.getElementById("git-stage-button"),
+    gitUnstage: document.getElementById("git-unstage-button"),
+    gitCommit: document.getElementById("git-commit-button"),
+    gitPush: document.getElementById("git-push-button"),
+    gitFeedback: document.getElementById("git-feedback"),
     logTitle: document.getElementById("log-title"),
     log: document.getElementById("log-text"),
     clearLog: document.getElementById("clear-log-button"),
@@ -172,6 +189,36 @@
     scrollPane: function (pane, offset) {
       api.send({ type: "scroll", pane: pane, offset: offset });
     },
+    refreshGit: function () {
+      api.send({ type: "git.refresh" });
+    },
+    createGitBranch: function () {
+      api.send({ type: "git.createBranch", branchName: elements.gitBranchInput.value });
+    },
+    checkoutGitBranch: function () {
+      api.send({ type: "git.checkout", branchName: elements.gitCheckoutSelect.value });
+    },
+    fetchGit: function () {
+      api.send({ type: "git.fetch" });
+    },
+    pullGit: function () {
+      api.send({ type: "git.pullFfOnly" });
+    },
+    stageGit: function () {
+      api.send({ type: "git.stage", paths: selectedGitPaths() });
+    },
+    unstageGit: function () {
+      api.send({ type: "git.unstage", paths: selectedGitPaths() });
+    },
+    commitGit: function () {
+      api.send({ type: "git.commit", paths: selectedGitPaths(), message: elements.gitCommitMessage.value });
+    },
+    pushGit: function () {
+      api.send({ type: "git.push" });
+    },
+    updateGitCommitMessage: function () {
+      api.send({ type: "git.updateCommitMessage", message: elements.gitCommitMessage.value });
+    },
   };
 
   function setConnection(nextState) {
@@ -193,6 +240,9 @@
       var uiState = captureUiState();
       state.viewModel = message.viewModel || {};
       state.formValues = state.viewModel.form ? Object.assign({}, state.viewModel.form.values || {}) : {};
+      state.gitSelectedPaths = state.viewModel.gitWorkspace && Array.isArray(state.viewModel.gitWorkspace.selectedPaths)
+        ? state.viewModel.gitWorkspace.selectedPaths.slice()
+        : [];
       render();
       restoreUiState(uiState);
       return;
@@ -238,8 +288,149 @@
     elements.help.setAttribute("aria-pressed", vm.helpVisible ? "true" : "false");
 
     renderFlows(vm);
+    renderGitWorkspace(vm);
     renderModal(vm);
     renderArtifactExplorer(vm);
+  }
+
+  function gitWorkspace(vm) {
+    var workspace = vm && vm.gitWorkspace;
+    if (!workspace || typeof workspace !== "object") {
+      return {
+        available: false,
+        changedFiles: [],
+        branches: [],
+        remotes: [],
+        selectedPaths: [],
+        commitMessage: "",
+        operation: { status: "idle" },
+      };
+    }
+    return workspace;
+  }
+
+  function renderGitWorkspace(vm) {
+    var git = gitWorkspace(vm);
+    var blocked = hasBlockingInput(vm);
+    var changedFiles = Array.isArray(git.changedFiles) ? git.changedFiles : [];
+    var branches = Array.isArray(git.branches) ? git.branches : [];
+    var operation = git.operation || { status: "idle" };
+    var isRunning = operation.status === "running";
+
+    if (typeof git.commitMessage === "string" && document.activeElement !== elements.gitCommitMessage) {
+      state.gitCommitMessage = git.commitMessage;
+      elements.gitCommitMessage.value = git.commitMessage;
+    }
+
+    elements.gitSummary.innerHTML = "";
+    var summary = document.createElement("span");
+    if (!git.available) {
+      summary.textContent = git.error || "Git workspace is unavailable.";
+    } else {
+      summary.append(
+        document.createTextNode("Branch "),
+        strong(git.detachedHead ? "detached HEAD" : (git.branch || "-")),
+        document.createTextNode(git.clean ? " | clean" : " | dirty"),
+        document.createTextNode(" | upstream " + (git.upstream || "-")),
+        document.createTextNode(" | ahead " + (git.ahead || 0) + " behind " + (git.behind || 0)),
+      );
+      if (git.lastCommit && git.lastCommit.shortHash) {
+        summary.append(document.createTextNode(" | last " + git.lastCommit.shortHash + " " + (git.lastCommit.subject || "")));
+      }
+      if (git.refreshedAt) {
+        summary.append(document.createTextNode(" | refreshed " + git.refreshedAt));
+      }
+    }
+    elements.gitSummary.append(summary);
+
+    renderGitBranches(branches, git.branch);
+    renderGitFiles(changedFiles);
+
+    elements.gitCreateBranch.disabled = blocked || isRunning || !git.available;
+    elements.gitCheckout.disabled = blocked || isRunning || !git.available || !elements.gitCheckoutSelect.value;
+    elements.gitFetch.disabled = blocked || isRunning || !git.available;
+    elements.gitPull.disabled = blocked || isRunning || !git.available;
+    elements.gitStage.disabled = blocked || isRunning || !git.available || selectedGitPaths().length === 0;
+    elements.gitUnstage.disabled = elements.gitStage.disabled;
+    elements.gitCommit.disabled = blocked || isRunning || !git.available || elements.gitCommitMessage.value.trim().length === 0;
+    elements.gitPush.disabled = blocked || isRunning || !git.available || !git.canPush;
+    elements.gitPush.title = git.canPush ? "Push current branch" : (git.pushDisabledReason || "Push is not available.");
+
+    elements.gitFeedback.className = "git-feedback";
+    if (operation.status === "error") {
+      elements.gitFeedback.classList.add("error");
+    } else if (operation.status === "success") {
+      elements.gitFeedback.classList.add("success");
+    }
+    var feedback = operation.message || git.pushDisabledReason || "";
+    var warnings = Array.isArray(git.warnings) && git.warnings.length > 0 ? " " + git.warnings.join(" ") : "";
+    elements.gitFeedback.textContent = feedback + warnings;
+  }
+
+  function strong(value) {
+    var element = document.createElement("strong");
+    element.textContent = value;
+    return element;
+  }
+
+  function renderGitBranches(branches, currentBranch) {
+    elements.gitCheckoutSelect.innerHTML = "";
+    branches.forEach(function (branch) {
+      var option = document.createElement("option");
+      option.value = branch.name;
+      option.textContent = branch.current ? branch.name + " (current)" : branch.name;
+      option.selected = branch.name === currentBranch;
+      elements.gitCheckoutSelect.append(option);
+    });
+  }
+
+  function renderGitFiles(files) {
+    elements.gitFiles.innerHTML = "";
+    if (!Array.isArray(files) || files.length === 0) {
+      var empty = document.createElement("div");
+      empty.className = "git-empty";
+      empty.textContent = "No changed files.";
+      elements.gitFiles.append(empty);
+      return;
+    }
+    files.forEach(function (file) {
+      var filePath = file.path || file.file || "";
+      var row = document.createElement("label");
+      row.className = "git-file-row";
+      row.dataset.path = filePath;
+      row.setAttribute("role", "listitem");
+      var checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.value = filePath;
+      checkbox.checked = state.gitSelectedPaths.indexOf(filePath) !== -1;
+      checkbox.addEventListener("change", function () {
+        if (checkbox.checked && state.gitSelectedPaths.indexOf(filePath) === -1) {
+          state.gitSelectedPaths.push(filePath);
+        } else if (!checkbox.checked) {
+          state.gitSelectedPaths = state.gitSelectedPaths.filter(function (item) {
+            return item !== filePath;
+          });
+        }
+        renderGitWorkspace(state.viewModel || {});
+      });
+      var type = document.createElement("span");
+      type.className = "git-file-type";
+      type.textContent = file.type || file.xy || "changed";
+      var pathText = document.createElement("span");
+      pathText.className = "git-file-path";
+      pathText.textContent = file.originalPath || file.originalFile
+        ? (file.originalPath || file.originalFile) + " -> " + filePath
+        : filePath;
+      var meta = document.createElement("span");
+      meta.className = "git-file-meta";
+      meta.textContent = (file.xy || "").trim() || (file.staged ? "staged" : "unstaged");
+      row.append(checkbox, type, pathText, meta);
+      elements.gitFiles.append(row);
+    });
+  }
+
+  function selectedGitPaths() {
+    return state.gitSelectedPaths.slice();
   }
 
   function renderProgress(vm) {
@@ -1683,6 +1874,19 @@
   elements.artifactToolbarClose.addEventListener("click", api.closeArtifactExplorer);
   elements.artifactCopyContent.addEventListener("click", copySelectedArtifactContent);
   elements.artifactCopyReference.addEventListener("click", copySelectedArtifactReference);
+  elements.gitRefresh.addEventListener("click", api.refreshGit);
+  elements.gitCreateBranch.addEventListener("click", api.createGitBranch);
+  elements.gitCheckout.addEventListener("click", api.checkoutGitBranch);
+  elements.gitFetch.addEventListener("click", api.fetchGit);
+  elements.gitPull.addEventListener("click", api.pullGit);
+  elements.gitStage.addEventListener("click", api.stageGit);
+  elements.gitUnstage.addEventListener("click", api.unstageGit);
+  elements.gitCommit.addEventListener("click", api.commitGit);
+  elements.gitPush.addEventListener("click", api.pushGit);
+  elements.gitCommitMessage.addEventListener("input", function () {
+    state.gitCommitMessage = elements.gitCommitMessage.value;
+  });
+  elements.gitCommitMessage.addEventListener("change", api.updateGitCommitMessage);
   elements.help.addEventListener("click", api.toggleHelp);
   elements.closeHelp.addEventListener("click", function () {
     api.showHelp(false);

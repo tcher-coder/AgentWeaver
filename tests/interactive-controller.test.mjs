@@ -133,6 +133,40 @@ function createProgressController() {
   });
 }
 
+function gitSnapshot(overrides = {}) {
+  return {
+    available: true,
+    repositoryRoot: "/repo",
+    branch: "main",
+    detachedHead: false,
+    clean: false,
+    upstream: null,
+    ahead: 0,
+    behind: 0,
+    lastCommit: { hash: "abc1234567", shortHash: "abc1234", subject: "Initial", authoredAt: "2026-01-01" },
+    changedFiles: [
+      { path: "--option-like.ts", file: "--option-like.ts", xy: " M", indexStatus: " ", workTreeStatus: "M", staged: false, type: "modified" },
+    ],
+    branches: [{ name: "main", current: true }],
+    remotes: [],
+    canPush: false,
+    pushDisabledReason: "No Git remote is configured.",
+    warnings: [],
+    error: null,
+    refreshedAt: "2026-01-01T00:00:00.000Z",
+    selectedPaths: [],
+    commitMessage: "",
+    operation: { status: "idle" },
+    ...overrides,
+  };
+}
+
+function createGitController(gitService) {
+  return createBusyController({
+    gitService,
+  });
+}
+
 describe("interactive controller", () => {
   it("drives flow tree expansion and pane focus through the shared model", async () => {
     const controller = createController();
@@ -822,5 +856,88 @@ describe("interactive controller", () => {
     controller.clearLog();
     assert.equal(controller.getViewModel().logText, "Log cleared.");
     controller.destroy();
+  });
+
+  it("exposes Git workspace defaults, refreshes clean snapshots, and disables no-remote push", async () => {
+    const gitService = {
+      status: async () => gitSnapshot({ clean: true, changedFiles: [] }),
+      createBranch: async () => ({ status: "success", message: "created" }),
+      checkout: async () => ({ status: "success", message: "checked out" }),
+      stage: async () => ({ status: "success", message: "staged" }),
+      unstage: async () => ({ status: "success", message: "unstaged" }),
+      commit: async () => ({ status: "success", message: "committed", commitHash: "abc1234" }),
+      fetch: async () => ({ status: "success", message: "fetched" }),
+      pullFfOnly: async () => ({ status: "success", message: "pulled" }),
+      push: async () => ({ status: "success", message: "pushed" }),
+      validateBranchName: async () => ({ ok: true }),
+    };
+    const controller = createGitController(gitService);
+
+    assert.equal(controller.getViewModel().gitWorkspace.available, false);
+    await controller.refreshGitWorkspace();
+
+    const view = controller.getViewModel();
+    assert.equal(view.gitWorkspace.available, true);
+    assert.equal(view.gitWorkspace.clean, true);
+    assert.equal(view.gitWorkspace.changedFiles.length, 0);
+    assert.equal(view.gitWorkspace.canPush, false);
+    assert.match(view.gitWorkspace.pushDisabledReason, /No Git remote/);
+  });
+
+  it("validates Git commit messages before invoking the service", async () => {
+    let commitCalls = 0;
+    const gitService = {
+      status: async () => gitSnapshot(),
+      createBranch: async () => ({ status: "success", message: "created" }),
+      checkout: async () => ({ status: "success", message: "checked out" }),
+      stage: async () => ({ status: "success", message: "staged" }),
+      unstage: async () => ({ status: "success", message: "unstaged" }),
+      commit: async () => {
+        commitCalls += 1;
+        return { status: "success", message: "committed", commitHash: "abc1234" };
+      },
+      fetch: async () => ({ status: "success", message: "fetched" }),
+      pullFfOnly: async () => ({ status: "success", message: "pulled" }),
+      push: async () => ({ status: "success", message: "pushed" }),
+      validateBranchName: async () => ({ ok: true }),
+    };
+    const controller = createGitController(gitService);
+
+    await controller.refreshGitWorkspace();
+    await controller.commitGitChanges(["--option-like.ts"], "   ");
+
+    const view = controller.getViewModel();
+    assert.equal(commitCalls, 0);
+    assert.equal(view.gitWorkspace.operation.status, "error");
+    assert.match(view.gitWorkspace.operation.message, /must not be empty/);
+  });
+
+  it("logs Git operations and refreshes the workspace after mutation", async () => {
+    const calls = [];
+    const gitService = {
+      status: async () => gitSnapshot({ clean: calls.includes("stage"), changedFiles: calls.includes("stage") ? [] : gitSnapshot().changedFiles }),
+      createBranch: async () => ({ status: "success", message: "created" }),
+      checkout: async () => ({ status: "success", message: "checked out" }),
+      stage: async (paths) => {
+        calls.push("stage");
+        assert.deepEqual(paths, ["--option-like.ts"]);
+        return { status: "success", message: "staged" };
+      },
+      unstage: async () => ({ status: "success", message: "unstaged" }),
+      commit: async () => ({ status: "success", message: "committed", commitHash: "abc1234" }),
+      fetch: async () => ({ status: "success", message: "fetched" }),
+      pullFfOnly: async () => ({ status: "success", message: "pulled" }),
+      push: async () => ({ status: "success", message: "pushed" }),
+      validateBranchName: async () => ({ ok: true }),
+    };
+    const controller = createGitController(gitService);
+
+    await controller.refreshGitWorkspace();
+    await controller.stageGitPaths(["--option-like.ts"]);
+
+    const view = controller.getViewModel();
+    assert.equal(view.gitWorkspace.clean, true);
+    assert.equal(view.gitWorkspace.operation.status, "success");
+    assert.match(view.logText, /Git stage: staged/);
   });
 });

@@ -28,6 +28,16 @@ describe("interactive web protocol", () => {
       { type: "log.clear" },
       { type: "artifactExplorer.open" },
       { type: "artifactExplorer.close", actionId: "artifact-close-1" },
+      { type: "git.refresh" },
+      { type: "git.createBranch", branchName: "feature/ag-121" },
+      { type: "git.checkout", branchName: "main" },
+      { type: "git.fetch" },
+      { type: "git.pullFfOnly" },
+      { type: "git.stage", paths: ["--option-like.ts"] },
+      { type: "git.unstage", paths: ["--option-like.ts"] },
+      { type: "git.updateCommitMessage", message: "" },
+      { type: "git.commit", paths: ["--option-like.ts"], message: "Commit message" },
+      { type: "git.push" },
       { type: "help.toggle", visible: true },
       { type: "scroll", pane: "log", delta: 1 },
       { type: "scroll", pane: "summary", offset: 0, actionId: "a-1" },
@@ -45,6 +55,12 @@ describe("interactive web protocol", () => {
     assert.throws(() => parseClientAction(JSON.stringify({ type: "artifactExplorer.toggle" })), /Unknown protocol action/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "artifactExplorer.open", actionId: "" })), /actionId must be a non-empty string/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "artifactExplorer.close", actionId: 123 })), /actionId must be a non-empty string/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "git.createBranch", branchName: "feature/new", selectedBase: "main" })), /selected base/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "git.checkout", branchName: "" })), /branchName must be a non-empty string/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "git.stage", paths: "file.txt" })), /paths must be an array/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "git.stage", paths: [""] })), /paths must be an array/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "git.updateCommitMessage", message: 123 })), /message must be a string/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "git.commit", message: "   " })), /message must be a non-empty string/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "flow.select" })), /requires index or key/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "folder.toggle", key: "" })), /key must be a non-empty string/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "form.update", values: [] })), /values must be an object/);

@@ -228,7 +228,7 @@
     elements.flowsTitle.textContent = text(vm.flowListTitle, "Flows");
     elements.description.textContent = text(vm.descriptionText, "No flow selected.");
     elements.progressTitle.textContent = text(vm.progressTitle, "Progress");
-    setTextPreservingScroll(elements.progress, text(vm.progressText, "No progress yet."));
+    renderProgress(vm);
     elements.summaryTitle.textContent = text(vm.summaryTitle, "Task Summary");
     setTextPreservingScroll(elements.summary, vm.summaryVisible === false ? "Summary is hidden." : text(vm.summaryText, "No task summary yet."));
     elements.logTitle.textContent = text(vm.logTitle, "Activity");
@@ -240,6 +240,91 @@
     renderFlows(vm);
     renderModal(vm);
     renderArtifactExplorer(vm);
+  }
+
+  function renderProgress(vm) {
+    var progress = vm && vm.progress;
+    var items = progress && Array.isArray(progress.items) ? progress.items.filter(isProgressItem) : [];
+    if (!progress || !progress.flow || items.length === 0) {
+      var fallbackText = text(vm && vm.progressText, "No progress yet.");
+      elements.progress.className = "progress-tree fallback";
+      if (elements.progress.children.length > 0) {
+        var previousFallbackScrollTop = elements.progress.scrollTop;
+        var fallbackWasPinned = previousFallbackScrollTop + elements.progress.clientHeight >= elements.progress.scrollHeight - 8;
+        elements.progress.textContent = fallbackText;
+        elements.progress.scrollTop = fallbackWasPinned ? elements.progress.scrollHeight : previousFallbackScrollTop;
+      } else {
+        setTextPreservingScroll(elements.progress, fallbackText);
+      }
+      return;
+    }
+
+    var previousScrollTop = elements.progress.scrollTop;
+    var wasPinned = previousScrollTop + elements.progress.clientHeight >= elements.progress.scrollHeight - 8;
+    elements.progress.className = "progress-tree";
+    elements.progress.innerHTML = "";
+
+    var flow = document.createElement("div");
+    flow.className = "progress-flow";
+    flow.textContent = text(progress.flow.label, progress.flow.id || "Current flow");
+    elements.progress.append(flow);
+
+    items.forEach(function (item, index) {
+      elements.progress.append(renderProgressRow(item, index));
+    });
+    elements.progress.scrollTop = wasPinned ? elements.progress.scrollHeight : previousScrollTop;
+  }
+
+  function isProgressItem(item) {
+    if (!item || typeof item !== "object") return false;
+    if (["group", "phase", "step", "termination"].indexOf(item.kind) === -1) return false;
+    if (["pending", "running", "done", "skipped"].indexOf(item.status) === -1) return false;
+    return typeof item.label === "string" && Number.isFinite(item.depth);
+  }
+
+  function renderProgressRow(item, index) {
+    var depth = Math.max(0, Math.min(12, Math.floor(item.depth)));
+    var row = document.createElement("div");
+    row.className = "progress-row kind-" + item.kind + " status-" + item.status;
+    row.dataset.kind = item.kind;
+    row.dataset.status = item.status;
+    row.dataset.depth = String(depth);
+    row.setAttribute("role", "treeitem");
+    row.setAttribute("aria-level", String(depth + 1));
+    row.setAttribute("aria-current", item.status === "running" ? "step" : "false");
+    row.style.paddingLeft = String(8 + depth * 18) + "px";
+    row.title = item.kind + ": " + item.status;
+
+    var marker = document.createElement("span");
+    marker.className = "progress-marker";
+    marker.setAttribute("aria-hidden", "true");
+    marker.textContent = progressMarker(item.status);
+
+    var body = document.createElement("span");
+    body.className = "progress-row-body";
+
+    var label = document.createElement("span");
+    label.className = "progress-label";
+    label.textContent = text(item.label, "Untitled progress item");
+    body.append(label);
+
+    if (item.kind === "termination" && typeof item.detail === "string" && item.detail.length > 0) {
+      var detail = document.createElement("span");
+      detail.className = "progress-detail";
+      detail.textContent = item.detail;
+      body.append(detail);
+    }
+
+    row.append(marker, body);
+    row.dataset.index = String(index);
+    return row;
+  }
+
+  function progressMarker(status) {
+    if (status === "done") return "✓";
+    if (status === "running") return "●";
+    if (status === "skipped") return "↷";
+    return "○";
   }
 
   function setTextPreservingScroll(element, value) {

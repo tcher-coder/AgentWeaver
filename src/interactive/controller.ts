@@ -764,6 +764,7 @@ export class InteractiveSessionController {
       })),
       selectedFlowIndex: Math.max(0, this.visibleFlowItems.findIndex((item) => item.key === this.state.selectedFlowItemKey)),
       progressTitle: this.panelTitle("Current Flow", "progress"),
+      progress: progressViewModel,
       progressText: this.renderProgress(progressViewModel),
       progressScrollOffset: this.state.progressScrollOffset,
       descriptionText: this.renderDescription(selectedItem),

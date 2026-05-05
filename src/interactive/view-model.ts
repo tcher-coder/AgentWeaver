@@ -1,4 +1,5 @@
 import type { UserInputFieldDefinition, UserInputFormDefinition, UserInputFormValues } from "../user-input.js";
+import type { ProgressViewModel } from "./types.js";
 
 export type InteractiveConfirmationAction = "resume" | "continue" | "restart" | "cancel" | "ok" | "stop";
 
@@ -54,6 +55,7 @@ export type InteractiveSessionViewModel = {
   }>;
   selectedFlowIndex: number;
   progressTitle: string;
+  progress: ProgressViewModel;
   progressText: string;
   progressScrollOffset: number;
   descriptionText: string;

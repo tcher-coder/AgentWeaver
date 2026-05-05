@@ -97,6 +97,42 @@ function createBusyController(overrides = {}) {
   });
 }
 
+function createProgressController() {
+  return new controllerModule.InteractiveSessionController({
+    scopeKey: "ag-120",
+    jiraIssueKey: "AG-120",
+    summaryText: "Existing summary",
+    cwd: process.cwd(),
+    gitBranchName: "feature/progress-tree",
+    version: "0.1.19",
+    getRunConfirmation: async () => readyToRunConfirmation(),
+    onRun: async () => {},
+    onInterrupt: async () => {},
+    onExit: () => {},
+    flows: [
+      {
+        id: "progress-flow",
+        label: "Progress Flow",
+        description: "Flow with progress rows.",
+        source: "built-in",
+        treePath: ["default", "progress-flow"],
+        phases: [
+          {
+            id: "phase_one_1",
+            repeatVars: { item: 1 },
+            steps: [{ id: "step-done" }, { id: "step-running" }],
+          },
+          {
+            id: "phase_two_1",
+            repeatVars: { item: 1 },
+            steps: [{ id: "step-pending" }, { id: "step-skipped" }],
+          },
+        ],
+      },
+    ],
+  });
+}
+
 describe("interactive controller", () => {
   it("drives flow tree expansion and pane focus through the shared model", async () => {
     const controller = createController();
@@ -128,6 +164,63 @@ describe("interactive controller", () => {
     view = controller.getViewModel();
     assert.equal(view.progressTitle, "▶ Current Flow");
 
+    controller.destroy();
+  });
+
+  it("exposes structured progress alongside the plain text progress snapshot", () => {
+    const controller = createProgressController();
+    controller.mount();
+    controller.selectFlowId("progress-flow");
+    controller.createAdapter().setFlowState({
+      flowId: "progress-flow",
+      executionState: {
+        flowKind: "demo",
+        flowVersion: 1,
+        terminated: true,
+        terminationOutcome: "success",
+        terminationReason: "completed",
+        phases: [
+          {
+            id: "phase_one_1",
+            status: "done",
+            repeatVars: { item: 1 },
+            steps: [
+              { id: "step-done", status: "done" },
+              { id: "step-running", status: "running" },
+            ],
+          },
+          {
+            id: "phase_two_1",
+            status: "pending",
+            repeatVars: { item: 1 },
+            steps: [
+              { id: "step-pending", status: "pending" },
+              { id: "step-skipped", status: "skipped" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const view = controller.getViewModel();
+    assert.equal(view.progress.flow.id, "progress-flow");
+    assert.match(view.progressText, /Progress Flow/);
+    assert.equal(view.progress.items[0].kind, "group");
+    assert.equal(view.progress.items[0].status, "pending");
+    assert.deepEqual(
+      view.progress.items.map((item) => [item.kind, item.label, item.depth, item.status]),
+      [
+        ["group", "item 1", 0, "pending"],
+        ["phase", "phase_one", 1, "done"],
+        ["step", "step-done", 2, "done"],
+        ["step", "step-running", 2, "running"],
+        ["phase", "phase_two", 1, "pending"],
+        ["step", "step-pending", 2, "pending"],
+        ["step", "step-skipped", 2, "skipped"],
+        ["termination", "Flow completed successfully", 0, "done"],
+      ],
+    );
+    assert.equal(view.progress.anchorIndex, 3);
     controller.destroy();
   });
 

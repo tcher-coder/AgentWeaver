@@ -330,7 +330,105 @@ function openViewModel(overrides = {}) {
   };
 }
 
+function progressSnapshot(items, overrides = {}) {
+  return {
+    title: "AgentWeaver",
+    header: "Progress test",
+    statusText: "State: idle",
+    flowItems: [],
+    selectedFlowIndex: 0,
+    progressTitle: "Current Flow",
+    progressText: "plain text should not drive structured rendering",
+    progress: {
+      flow: {
+        id: "progress-flow",
+        label: "Structured Progress Flow",
+      },
+      items,
+      anchorIndex: 1,
+    },
+    artifactExplorer: {
+      available: false,
+      open: false,
+      scopeKey: null,
+      runId: null,
+      status: "unavailable",
+      label: "Artifact Explorer",
+      message: "",
+    },
+    ...overrides,
+  };
+}
+
 describe("static Artifact Explorer app", () => {
+  it("renders structured progress rows with status-specific classes instead of parsing progressText", () => {
+    const harness = createHarness(() => createResponse({ scopeKey: "ag-120", items: [] }));
+    harness.sendSnapshot(progressSnapshot([
+      { kind: "group", label: "item 1", depth: 0, status: "done" },
+      { kind: "phase", label: "implement", depth: 1, status: "running" },
+      { kind: "step", label: "edit-ui", depth: 2, status: "pending" },
+      { kind: "step", label: "old-step", depth: 2, status: "skipped" },
+      { kind: "termination", label: "Flow completed successfully", detail: "Reason: completed", depth: 0, status: "done" },
+    ], {
+      progressText: "✓ parsed-done\n● parsed-running\n○ parsed-pending",
+    }));
+
+    const progress = harness.document.getElementById("progress-text");
+    const rows = progress.querySelectorAll(".progress-row");
+    assert.equal(progress.querySelector(".progress-flow").textContent, "Structured Progress Flow");
+    assert.equal(rows.length, 5);
+    assert.equal(rows[0].dataset.kind, "group");
+    assert.equal(rows[0].dataset.status, "done");
+    assert.equal(rows[0].classList.contains("status-done"), true);
+    assert.equal(rows[1].classList.contains("status-running"), true);
+    assert.equal(rows[1].getAttribute("aria-current"), "step");
+    assert.equal(rows[2].classList.contains("status-pending"), true);
+    assert.equal(rows[3].classList.contains("status-skipped"), true);
+    assert.match(rows[4].textContent, /Reason: completed/);
+    assert.doesNotMatch(progress.textContent, /parsed-running/);
+  });
+
+  it("keeps the plain text progress fallback compatible without status parsing", () => {
+    const harness = createHarness(() => createResponse({ scopeKey: "ag-120", items: [] }));
+    harness.sendSnapshot({
+      title: "AgentWeaver",
+      flowItems: [],
+      selectedFlowIndex: 0,
+      progressText: "✓ finished from text\n● active from text",
+      artifactExplorer: { available: false, open: false, status: "unavailable", label: "Artifact Explorer", message: "" },
+    });
+
+    const progress = harness.document.getElementById("progress-text");
+    assert.equal(progress.classList.contains("fallback"), true);
+    assert.equal(progress.querySelectorAll(".progress-row").length, 0);
+    assert.match(progress.textContent, /finished from text/);
+    assert.equal(progress.classList.contains("status-done"), false);
+    assert.equal(progress.classList.contains("status-running"), false);
+  });
+
+  it("updates progress row status classes across live snapshots while preserving scroll", () => {
+    const harness = createHarness(() => createResponse({ scopeKey: "ag-120", items: [] }));
+    harness.sendSnapshot(progressSnapshot([
+      { kind: "phase", label: "implement", depth: 0, status: "pending" },
+    ]));
+
+    const progress = harness.document.getElementById("progress-text");
+    progress.scrollTop = 37;
+    harness.sendSnapshot(progressSnapshot([
+      { kind: "phase", label: "implement", depth: 0, status: "running" },
+    ]));
+    let row = progress.querySelector(".progress-row");
+    assert.equal(progress.scrollTop, 37);
+    assert.equal(row.classList.contains("status-running"), true);
+
+    harness.sendSnapshot(progressSnapshot([
+      { kind: "phase", label: "implement", depth: 0, status: "done" },
+    ]));
+    row = progress.querySelector(".progress-row");
+    assert.equal(progress.scrollTop, 37);
+    assert.equal(row.classList.contains("status-done"), true);
+  });
+
   it("renders grouped metadata and auto-previews the highest-priority useful artifact", async () => {
     const catalog = {
       scopeKey: "ag-117",

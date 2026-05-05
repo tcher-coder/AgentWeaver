@@ -261,6 +261,105 @@ h2 {
   border-bottom: 1px solid var(--aw-border);
 }
 
+.progress-tree {
+  @apply m-0 grid min-h-0 content-start gap-1 overflow-auto p-2;
+  background: rgba(7, 11, 10, 0.42);
+  color: #d7eadf;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.progress-tree.fallback {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  line-height: 1.5;
+}
+
+.progress-flow {
+  @apply overflow-hidden text-ellipsis whitespace-nowrap px-2 py-1;
+  color: var(--aw-text);
+  font-weight: 800;
+}
+
+.progress-row {
+  @apply grid min-w-0 items-start gap-2 rounded-md border border-transparent px-2 py-1.5;
+  grid-template-columns: 18px minmax(0, 1fr);
+  min-height: 32px;
+}
+
+.progress-marker {
+  @apply inline-flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold;
+  border: 1px solid currentColor;
+  line-height: 1;
+}
+
+.progress-row-body {
+  @apply grid min-w-0 gap-0.5;
+}
+
+.progress-label,
+.progress-detail {
+  @apply min-w-0 overflow-hidden text-ellipsis whitespace-nowrap;
+}
+
+.progress-detail {
+  color: var(--aw-muted);
+  font-size: 11px;
+}
+
+.progress-row.kind-group .progress-label {
+  font-weight: 800;
+}
+
+.progress-row.kind-phase .progress-label {
+  font-weight: 700;
+}
+
+.progress-row.kind-step .progress-label,
+.progress-row.kind-termination .progress-label {
+  font-weight: 600;
+}
+
+.progress-row.status-done {
+  color: #9df0c2;
+  background: rgba(56, 224, 143, 0.075);
+}
+
+.progress-row.status-done .progress-marker {
+  background: rgba(56, 224, 143, 0.16);
+}
+
+.progress-row.status-running {
+  border-color: rgba(101, 216, 255, 0.56);
+  background: rgba(101, 216, 255, 0.12);
+  color: #bfefff;
+  box-shadow: inset 3px 0 0 rgba(101, 216, 255, 0.82);
+}
+
+.progress-row.status-running .progress-marker {
+  background: rgba(101, 216, 255, 0.18);
+}
+
+.progress-row.status-pending {
+  color: #c2d0c8;
+}
+
+.progress-row.status-pending .progress-marker {
+  color: var(--aw-muted);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.progress-row.status-skipped {
+  color: var(--aw-dim);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.progress-row.status-skipped .progress-marker {
+  background: rgba(255, 255, 255, 0.035);
+}
+
 .log-output {
   background:
     linear-gradient(180deg, rgba(56, 224, 143, 0.035), transparent 8rem),

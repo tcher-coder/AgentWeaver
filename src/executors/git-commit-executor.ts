@@ -23,7 +23,7 @@ export const gitCommitExecutor: ExecutorDefinition<
   defaultConfig: {},
   async execute(context: ExecutorContext, input: GitCommitExecutorInput) {
     if (input.files.length > 0) {
-      await context.runtime.runCommand(["git", "add", ...input.files], {
+      await context.runtime.runCommand(["git", "add", "--", ...input.files], {
         dryRun: context.dryRun,
         verbose: context.verbose,
         label: "git add",

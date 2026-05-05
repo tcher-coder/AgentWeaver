@@ -1,4 +1,5 @@
 import type { UserInputFieldDefinition, UserInputFormDefinition, UserInputFormValues } from "../user-input.js";
+import type { GitWorkspaceSnapshot } from "../git/git-types.js";
 import type { ProgressViewModel } from "./types.js";
 
 export type InteractiveConfirmationAction = "resume" | "continue" | "restart" | "cancel" | "ok" | "stop";
@@ -71,4 +72,5 @@ export type InteractiveSessionViewModel = {
   confirmation: InteractiveConfirmationViewModel | null;
   form: InteractiveFormViewModel | null;
   artifactExplorer: ArtifactExplorerViewModel;
+  gitWorkspace: GitWorkspaceSnapshot;
 };

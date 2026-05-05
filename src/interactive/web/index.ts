@@ -150,6 +150,7 @@ export function createWebInteractiveSession(
       ...(artifactCount !== undefined ? { artifactCount } : {}),
       open: !controller.hasActiveInput(),
     });
+    await controller.refreshGitWorkspace();
   }
 
   async function restoreArtifactExplorerFromScope(scopeKey: string): Promise<void> {
@@ -260,6 +261,46 @@ export function createWebInteractiveSession(
         controller.closeArtifactExplorer();
         return;
       }
+      if (action.type === "git.refresh") {
+        await controller.refreshGitWorkspace();
+        return;
+      }
+      if (action.type === "git.createBranch") {
+        await controller.createGitBranch(action.branchName);
+        return;
+      }
+      if (action.type === "git.checkout") {
+        await controller.checkoutGitBranch(action.branchName);
+        return;
+      }
+      if (action.type === "git.fetch") {
+        await controller.fetchGitWorkspace();
+        return;
+      }
+      if (action.type === "git.pullFfOnly") {
+        await controller.pullGitWorkspaceFfOnly();
+        return;
+      }
+      if (action.type === "git.stage") {
+        await controller.stageGitPaths(action.paths);
+        return;
+      }
+      if (action.type === "git.unstage") {
+        await controller.unstageGitPaths(action.paths);
+        return;
+      }
+      if (action.type === "git.updateCommitMessage") {
+        controller.updateGitCommitMessage(action.message);
+        return;
+      }
+      if (action.type === "git.commit") {
+        await controller.commitGitChanges(action.paths, action.message);
+        return;
+      }
+      if (action.type === "git.push") {
+        await controller.pushGitWorkspace();
+        return;
+      }
       if (action.type === "help.toggle") {
         controller.showHelp(action.visible ?? !controller.getViewModel().helpVisible);
         return;
@@ -290,7 +331,9 @@ export function createWebInteractiveSession(
         }
         server?.broadcast(snapshot());
       });
-      void startWebServer({
+      void controller.refreshGitWorkspace().catch((error) => {
+        controller.appendLog(`Git workspace refresh failed: ${(error as Error).message}`);
+      }).then(() => startWebServer({
         ...(webOptions.noOpen !== undefined ? { noOpen: webOptions.noOpen } : {}),
         ...(webOptions.host !== undefined ? { host: webOptions.host } : {}),
         ...(webOptions.auth !== undefined ? { auth: webOptions.auth } : {}),
@@ -309,7 +352,7 @@ export function createWebInteractiveSession(
         onExitRequested: () => {
           options.onExit();
         },
-      }).then((started) => {
+      })).then((started) => {
         if (shuttingDown) {
           void started.close().catch((error) => {
             process.stderr.write(`Failed to close Web UI server: ${(error as Error).message}\n`);

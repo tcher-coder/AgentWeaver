@@ -45,11 +45,33 @@
             </div>
             <div id="progress-text" class="progress-tree" role="tree" tabindex="0">No progress yet.</div>
           </section>
-          <section class="work-panel" aria-label="Task summary">
+          <section class="git-workspace" aria-label="Git Workspace">
             <div class="pane-heading">
-              <h2 id="summary-title">Task Summary</h2>
+              <h2>Git Workspace</h2>
+              <button id="git-refresh-button" type="button">Refresh</button>
             </div>
-            <pre id="summary-text" class="text-panel">No task summary yet.</pre>
+            <div class="git-body">
+              <div id="git-summary" class="git-summary">Git workspace has not been refreshed yet.</div>
+              <div class="git-actions">
+                <input id="git-branch-input" type="text" placeholder="new-branch-name" aria-label="New branch name">
+                <button id="git-create-branch-button" type="button">Create Branch</button>
+                <select id="git-checkout-select" aria-label="Checkout branch"></select>
+                <button id="git-checkout-button" type="button">Checkout</button>
+                <button id="git-fetch-button" type="button">Fetch</button>
+                <button id="git-pull-button" type="button">Pull FF</button>
+              </div>
+              <div id="git-files" class="git-files" role="list"></div>
+              <div class="git-commit-row">
+                <textarea id="git-commit-message" rows="2" placeholder="Commit message" aria-label="Commit message"></textarea>
+                <div class="git-commit-actions">
+                  <button id="git-stage-button" type="button">Stage</button>
+                  <button id="git-unstage-button" type="button">Unstage</button>
+                  <button id="git-commit-button" class="primary" type="button">Commit</button>
+                  <button id="git-push-button" type="button">Push</button>
+                </div>
+              </div>
+              <div id="git-feedback" class="git-feedback" role="status" aria-live="polite"></div>
+            </div>
           </section>
         </div>
       </section>

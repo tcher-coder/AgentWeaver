@@ -1,5 +1,6 @@
 import type { UserInputFormDefinition, UserInputResult } from "../user-input.js";
 import type { FlowLaunchAvailability, FlowLaunchMode } from "../flow-state.js";
+import type { GitService } from "../git/git-service.js";
 import type { InteractiveFlowDefinition } from "./types.js";
 
 export type InteractiveSessionOptions = {
@@ -16,6 +17,7 @@ export type InteractiveSessionOptions = {
   onRun: (flowId: string, mode: FlowLaunchMode) => Promise<void>;
   onInterrupt: (flowId: string) => Promise<void>;
   onExit: () => void;
+  gitService?: GitService;
 };
 
 export interface InteractiveSession {

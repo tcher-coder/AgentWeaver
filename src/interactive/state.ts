@@ -1,4 +1,5 @@
 import type { InteractiveSessionOptions } from "./session.js";
+import type { GitWorkspaceSnapshot } from "../git/git-types.js";
 import type { FlowStatusState, FocusPane } from "./types.js";
 import type { ArtifactExplorerViewModel } from "./view-model.js";
 import { buildFlowTree, collectInitiallyExpandedFolderKeys, computeVisibleFlowItems, makeFlowKey } from "./tree.js";
@@ -27,7 +28,33 @@ export type InteractiveSessionState = {
   logScrollOffset: number;
   helpScrollOffset: number;
   artifactExplorer: ArtifactExplorerViewModel;
+  gitWorkspace: GitWorkspaceSnapshot;
 };
+
+export function createUnavailableGitWorkspace(message = "Git workspace has not been refreshed yet."): GitWorkspaceSnapshot {
+  return {
+    available: false,
+    repositoryRoot: null,
+    branch: null,
+    detachedHead: false,
+    clean: true,
+    upstream: null,
+    ahead: 0,
+    behind: 0,
+    lastCommit: null,
+    changedFiles: [],
+    branches: [],
+    remotes: [],
+    canPush: false,
+    pushDisabledReason: "Git repository is not available.",
+    warnings: [],
+    error: message,
+    refreshedAt: null,
+    selectedPaths: [],
+    commitMessage: "",
+    operation: { status: "idle" },
+  };
+}
 
 export function createInitialInteractiveState(options: InteractiveSessionOptions): InteractiveSessionState {
   const flowTree = buildFlowTree(options.flows);
@@ -71,5 +98,6 @@ export function createInitialInteractiveState(options: InteractiveSessionOptions
       label: "Artifact Explorer",
       message: "Artifacts are available after a Web UI workflow run completes.",
     },
+    gitWorkspace: createUnavailableGitWorkspace(),
   };
 }

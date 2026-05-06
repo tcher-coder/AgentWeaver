@@ -63,6 +63,40 @@ export type GitWorkspaceSnapshot = {
   operation: GitOperationFeedback;
 };
 
+export type GitDiffMode = "head" | "staged" | "worktree";
+
+export type GitDiffRowKind = "context" | "add" | "delete" | "modify";
+
+export type GitDiffRow = {
+  kind: GitDiffRowKind;
+  leftLineNumber: number | null;
+  rightLineNumber: number | null;
+  leftText: string;
+  rightText: string;
+};
+
+export type GitDiffHunk = {
+  header: string;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  rows: GitDiffRow[];
+};
+
+export type GitFileDiff = {
+  mode: GitDiffMode;
+  path: string;
+  displayPath: string;
+  originalPath?: string;
+  binary: boolean;
+  tooLarge: boolean;
+  empty: boolean;
+  hunks: GitDiffHunk[];
+  message?: string;
+  errorCode?: string;
+};
+
 export type GitCommandRunnerOptions = {
   env?: NodeJS.ProcessEnv;
   dryRun?: boolean;
@@ -80,6 +114,7 @@ export type GitServiceOptions = {
   dryRun?: boolean;
   verbose?: boolean;
   timeoutMs?: number;
+  maxDiffBytes?: number;
   runCommand: GitCommandRunner;
 };
 
@@ -87,4 +122,3 @@ export type GitValidationResult = {
   ok: boolean;
   message?: string;
 };
-

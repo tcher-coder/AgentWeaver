@@ -667,6 +667,14 @@ export class InteractiveSessionController {
     return this.state.flowState.executionState;
   }
 
+  getGitService(): GitService {
+    return this.gitService;
+  }
+
+  getGitWorkspaceSnapshot(): GitWorkspaceSnapshot {
+    return this.state.gitWorkspace;
+  }
+
   hasActiveInput(): boolean {
     return this.confirmSession !== null || this.activeFormSession !== null;
   }

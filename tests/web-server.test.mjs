@@ -81,6 +81,32 @@ function catalogItem(scopeKey, overrides) {
   };
 }
 
+function snapshot(overrides = {}) {
+  return {
+    available: true,
+    repositoryRoot: "/repo",
+    branch: "main",
+    detachedHead: false,
+    clean: false,
+    upstream: null,
+    ahead: 0,
+    behind: 0,
+    lastCommit: null,
+    changedFiles: [{ path: "src/app.ts", file: "src/app.ts", xy: " M", indexStatus: " ", workTreeStatus: "M", staged: false, type: "modified" }],
+    branches: [],
+    remotes: [],
+    canPush: false,
+    pushDisabledReason: "No Git remote is configured.",
+    warnings: [],
+    error: null,
+    refreshedAt: "2026-01-01T00:00:00.000Z",
+    selectedPaths: [],
+    commitMessage: "",
+    operation: { status: "idle" },
+    ...overrides,
+  };
+}
+
 function manualCatalog(scopeKey, items) {
   return { scopeKey, items, groups: [{ phaseId: "unclassified", title: "Unclassified", items }] };
 }
@@ -784,6 +810,134 @@ describe("web server", () => {
       for (const socket of sockets) {
         socket.destroy();
       }
+      await server.close();
+    }
+  });
+
+  it("serves authenticated no-store Git diff API responses", async (t) => {
+    const diff = {
+      mode: "head",
+      path: "src/app.ts",
+      displayPath: "src/app.ts",
+      binary: false,
+      tooLarge: false,
+      empty: false,
+      hunks: [{ header: "@@ -1 +1 @@", oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, rows: [] }],
+    };
+    const calls = [];
+    const server = await startOrSkip(t, {
+      noOpen: true,
+      auth: AUTH,
+      gitService: {
+        diffFile: async (filePath, mode, snapshot) => {
+          calls.push({ filePath, mode, snapshot });
+          return diff;
+        },
+      },
+      getGitWorkspaceSnapshot: () => snapshot(),
+      onClientAction: () => {},
+      onClientConnected: () => {},
+      onExitRequested: () => {},
+    });
+    if (!server) return;
+    try {
+      const url = new URL("/__agentweaver/api/git/diff", server.url);
+      url.searchParams.set("path", "src/app.ts");
+      url.searchParams.set("mode", "head");
+
+      const denied = await fetch(url);
+      assert.equal(denied.status, 401);
+      assert.match(denied.headers.get("www-authenticate") ?? "", /Basic realm="AgentWeaver Web UI"/);
+
+      const allowed = await fetch(url, { headers: { authorization: basicAuthHeader() } });
+      assert.equal(allowed.status, 200);
+      assert.match(allowed.headers.get("content-type") ?? "", /application\/json; charset=utf-8/);
+      assert.equal(allowed.headers.get("cache-control"), "no-store");
+      assert.deepEqual(await allowed.json(), diff);
+      assert.equal(calls[0].filePath, "src/app.ts");
+      assert.equal(calls[0].mode, "head");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("returns clear JSON errors for Git diff API validation and provider failures", async (t) => {
+    const missingProvider = await startOrSkip(t, {
+      noOpen: true,
+      onClientAction: () => {},
+      onClientConnected: () => {},
+      onExitRequested: () => {},
+    });
+    if (!missingProvider) return;
+    try {
+      const url = new URL("/__agentweaver/api/git/diff?path=src%2Fapp.ts&mode=head", missingProvider.url);
+      const response = await fetch(url);
+      assert.equal(response.status, 503);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      assert.equal((await response.json()).code, "missing_provider");
+    } finally {
+      await missingProvider.close();
+    }
+
+    const unavailable = await startOrSkip(t, {
+      noOpen: true,
+      gitService: { diffFile: async () => { throw new Error("should not run"); } },
+      getGitWorkspaceSnapshot: () => snapshot({ available: false, repositoryRoot: null, error: "not a repo" }),
+      onClientAction: () => {},
+      onClientConnected: () => {},
+      onExitRequested: () => {},
+    });
+    if (!unavailable) return;
+    try {
+      const badMode = await fetch(new URL("/__agentweaver/api/git/diff?path=src%2Fapp.ts&mode=bad", unavailable.url));
+      assert.equal(badMode.status, 400);
+      assert.equal((await badMode.json()).code, "invalid_mode");
+
+      const missingPath = await fetch(new URL("/__agentweaver/api/git/diff?mode=head", unavailable.url));
+      assert.equal(missingPath.status, 400);
+      assert.equal((await missingPath.json()).code, "missing_path");
+
+      const unavailableRepo = await fetch(new URL("/__agentweaver/api/git/diff?path=src%2Fapp.ts&mode=head", unavailable.url));
+      assert.equal(unavailableRepo.status, 503);
+      assert.deepEqual(await unavailableRepo.json(), { code: "repository_unavailable", message: "not a repo" });
+    } finally {
+      await unavailable.close();
+    }
+  });
+
+  it("returns valid binary and too-large Git diff states with 200 responses", async (t) => {
+    const states = [
+      { binary: true, tooLarge: false, message: "Binary file diff is not displayed." },
+      { binary: false, tooLarge: true, message: "Diff is too large to display." },
+    ];
+    let index = 0;
+    const server = await startOrSkip(t, {
+      noOpen: true,
+      gitService: {
+        diffFile: async () => ({
+          mode: "head",
+          path: "src/app.ts",
+          displayPath: "src/app.ts",
+          empty: false,
+          hunks: [],
+          ...states[index++],
+        }),
+      },
+      getGitWorkspaceSnapshot: () => snapshot(),
+      onClientAction: () => {},
+      onClientConnected: () => {},
+      onExitRequested: () => {},
+    });
+    if (!server) return;
+    try {
+      const url = new URL("/__agentweaver/api/git/diff?path=src%2Fapp.ts&mode=head", server.url);
+      const binary = await fetch(url);
+      assert.equal(binary.status, 200);
+      assert.equal((await binary.json()).binary, true);
+      const large = await fetch(url);
+      assert.equal(large.status, 200);
+      assert.equal((await large.json()).tooLarge, true);
+    } finally {
       await server.close();
     }
   });

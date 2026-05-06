@@ -343,6 +343,8 @@ export function createWebInteractiveSession(
         },
         ...(webOptions.openBrowser ? { openBrowser: webOptions.openBrowser } : {}),
         getArtifactCatalog: (input) => artifactCatalogProvider(input) as ArtifactCatalog | Promise<ArtifactCatalog>,
+        gitService: controller.getGitService(),
+        getGitWorkspaceSnapshot: () => controller.getGitWorkspaceSnapshot(),
         onClientAction: (action, client) => {
           void dispatch(action, client);
         },

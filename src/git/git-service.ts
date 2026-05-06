@@ -1,10 +1,15 @@
 import process from "node:process";
+import { readFileSync, realpathSync, statSync } from "node:fs";
+import path from "node:path";
 
+import { createSyntheticAddedDiff, parseGitDiffOutput } from "./git-diff-parser.js";
 import { parsePorcelain } from "./git-status-parser.js";
 import type {
   GitBranchSummary,
   GitChangedFile,
   GitCommandRunnerOptions,
+  GitDiffMode,
+  GitFileDiff,
   GitLastCommit,
   GitOperationFeedback,
   GitRemoteSummary,
@@ -14,6 +19,8 @@ import type {
 } from "./git-types.js";
 
 const DEFAULT_REMOTE_TIMEOUT_MS = 60_000;
+const DEFAULT_MAX_DIFF_BYTES = 1024 * 1024;
+const GIT_DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--find-renames", "--unified=3"];
 
 export type GitService = ReturnType<typeof createGitService>;
 
@@ -24,6 +31,12 @@ type BranchLine = {
   ahead: number;
   behind: number;
 };
+
+export class GitDiffError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+  }
+}
 
 function unavailableSnapshot(message: string): GitWorkspaceSnapshot {
   return {
@@ -186,6 +199,75 @@ function validateChangedPaths(paths: string[], snapshot: GitWorkspaceSnapshot): 
   return { ok: true };
 }
 
+function findChangedFile(filePath: string, snapshot: GitWorkspaceSnapshot): GitChangedFile | null {
+  return snapshot.changedFiles.find((file) => file.path === filePath || file.file === filePath) ?? null;
+}
+
+function validateChangedPath(filePath: string, snapshot: GitWorkspaceSnapshot): GitChangedFile {
+  if (typeof filePath !== "string" || filePath.length === 0 || filePath.includes("\0")) {
+    throw new GitDiffError("invalid_path", "Git file path must be a non-empty string.");
+  }
+  if (!snapshot.available || !snapshot.repositoryRoot) {
+    throw new GitDiffError("repository_unavailable", snapshot.error ?? "Git repository is not available.");
+  }
+  const file = findChangedFile(filePath, snapshot);
+  if (!file) {
+    throw new GitDiffError("invalid_path", `Path is not in the current Git snapshot: ${filePath}`);
+  }
+  return file;
+}
+
+function isInsideDirectory(parent: string, candidate: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function isBinaryBuffer(buffer: Buffer): boolean {
+  return buffer.includes(0);
+}
+
+function emptyDiff(mode: GitDiffMode, file: GitChangedFile, message: string): GitFileDiff {
+  return {
+    mode,
+    path: file.path,
+    displayPath: file.path,
+    ...(file.originalPath || file.originalFile ? { originalPath: file.originalPath ?? file.originalFile } : {}),
+    binary: false,
+    tooLarge: false,
+    empty: true,
+    hunks: [],
+    message,
+  };
+}
+
+function tooLargeDiff(mode: GitDiffMode, file: GitChangedFile, message: string): GitFileDiff {
+  return {
+    mode,
+    path: file.path,
+    displayPath: file.path,
+    ...(file.originalPath || file.originalFile ? { originalPath: file.originalPath ?? file.originalFile } : {}),
+    binary: false,
+    tooLarge: true,
+    empty: false,
+    hunks: [],
+    message,
+  };
+}
+
+function binaryDiff(mode: GitDiffMode, file: GitChangedFile, message: string): GitFileDiff {
+  return {
+    mode,
+    path: file.path,
+    displayPath: file.path,
+    ...(file.originalPath || file.originalFile ? { originalPath: file.originalPath ?? file.originalFile } : {}),
+    binary: true,
+    tooLarge: false,
+    empty: false,
+    hunks: [],
+    message,
+  };
+}
+
 function extractCommitHash(output: string): string | null {
   return output.match(/\[\S+ ([0-9a-f]{7,40})\]/)?.[1] ?? null;
 }
@@ -193,6 +275,7 @@ function extractCommitHash(output: string): string | null {
 export function createGitService(options: GitServiceOptions) {
   const cwdPrefix = options.cwd ? ["-C", options.cwd] : [];
   const remoteTimeoutMs = options.timeoutMs ?? DEFAULT_REMOTE_TIMEOUT_MS;
+  const maxDiffBytes = options.maxDiffBytes ?? DEFAULT_MAX_DIFF_BYTES;
 
   async function git(args: string[], commandOptions: GitCommandRunnerOptions = {}): Promise<string> {
     return options.runCommand(["git", ...cwdPrefix, ...args], {
@@ -304,6 +387,81 @@ export function createGitService(options: GitServiceOptions) {
     } catch (error) {
       return unavailableSnapshot(errorMessage(error));
     }
+  }
+
+  async function diffFile(filePath: string, mode: GitDiffMode, snapshot: GitWorkspaceSnapshot): Promise<GitFileDiff> {
+    if (!["head", "staged", "worktree"].includes(mode)) {
+      throw new GitDiffError("invalid_mode", "Git diff mode must be head, staged, or worktree.");
+    }
+    const file = validateChangedPath(filePath, snapshot);
+    if ((file.type === "untracked" || file.xy === "??") && mode !== "staged") {
+      return readUntrackedDiff(file, mode, snapshot);
+    }
+    if ((file.type === "untracked" || file.xy === "??") && mode === "staged") {
+      return emptyDiff(mode, file, "Untracked file has no staged diff.");
+    }
+
+    const args = diffArgs(mode, file.path);
+    let output: string;
+    try {
+      output = await git(args, { label: "git diff", printFailureOutput: false });
+    } catch (error) {
+      throw new GitDiffError("git_failed", errorMessage(error));
+    }
+    if (Buffer.byteLength(output, "utf8") > maxDiffBytes) {
+      return tooLargeDiff(mode, file, "Diff is too large to display.");
+    }
+    return parseGitDiffOutput(output, {
+      mode,
+      path: file.path,
+      displayPath: file.path,
+      ...(file.originalPath || file.originalFile ? { originalPath: file.originalPath ?? file.originalFile } : {}),
+    });
+  }
+
+  function diffArgs(mode: GitDiffMode, filePath: string): string[] {
+    if (mode === "head") {
+      return ["diff", ...GIT_DIFF_FLAGS, "HEAD", "--", filePath];
+    }
+    if (mode === "staged") {
+      return ["diff", ...GIT_DIFF_FLAGS, "--cached", "--", filePath];
+    }
+    return ["diff", ...GIT_DIFF_FLAGS, "--", filePath];
+  }
+
+  function readUntrackedDiff(file: GitChangedFile, mode: GitDiffMode, snapshot: GitWorkspaceSnapshot): GitFileDiff {
+    const repositoryRoot = snapshot.repositoryRoot;
+    if (!repositoryRoot) {
+      throw new GitDiffError("repository_unavailable", "Git repository is not available.");
+    }
+    const rootRealPath = realpathSync(repositoryRoot);
+    const candidatePath = path.resolve(repositoryRoot, file.path);
+    let realPath: string;
+    try {
+      realPath = realpathSync(candidatePath);
+    } catch {
+      throw new GitDiffError("read_failed", "Untracked file could not be read.");
+    }
+    if (!isInsideDirectory(rootRealPath, realPath)) {
+      throw new GitDiffError("forbidden_path", "Untracked file path escapes the repository root.");
+    }
+    const stats = statSync(realPath);
+    if (!stats.isFile()) {
+      throw new GitDiffError("forbidden_path", "Untracked path is not a regular file.");
+    }
+    if (stats.size > maxDiffBytes) {
+      return tooLargeDiff(mode, file, "Untracked file is too large to display.");
+    }
+    const content = readFileSync(realPath);
+    if (isBinaryBuffer(content)) {
+      return binaryDiff(mode, file, "Binary untracked file diff is not displayed.");
+    }
+    return createSyntheticAddedDiff({
+      mode,
+      path: file.path,
+      displayPath: file.path,
+      content: content.toString("utf8"),
+    });
   }
 
   async function createBranch(branchName: string): Promise<GitOperationFeedback> {
@@ -428,6 +586,7 @@ export function createGitService(options: GitServiceOptions) {
   return {
     status,
     validateBranchName,
+    diffFile,
     createBranch,
     checkout,
     stage,

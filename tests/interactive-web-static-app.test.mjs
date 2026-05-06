@@ -467,6 +467,95 @@ describe("static Artifact Explorer app", () => {
     assert.equal(untrackedCheckbox.checked, false);
   });
 
+  it("opens Git Diff drawer from a changed file and maps mode controls to backend modes", async () => {
+    const diff = {
+      mode: "head",
+      path: "--option-like.ts",
+      displayPath: "--option-like.ts",
+      binary: false,
+      tooLarge: false,
+      empty: false,
+      hunks: [{
+        header: "@@ -1,1 +1,1 @@",
+        oldStart: 1,
+        oldLines: 1,
+        newStart: 1,
+        newLines: 1,
+        rows: [{ kind: "modify", leftLineNumber: 1, rightLineNumber: 1, leftText: "old", rightText: "new" }],
+      }],
+    };
+    const harness = createHarness((url) => createResponse(diff));
+    harness.sendSnapshot(progressSnapshot([], {
+      gitWorkspace: gitWorkspace(),
+    }));
+
+    harness.document.querySelector(".git-diff-open").click();
+    await flush();
+
+    assert.equal(harness.document.getElementById("git-diff-drawer").hidden, false);
+    assert.match(harness.fetchCalls[0], /\/__agentweaver\/api\/git\/diff\?path=--option-like\.ts&mode=head$/);
+    assert.match(harness.document.getElementById("git-diff-body").textContent, /old/);
+    assert.match(harness.document.getElementById("git-diff-body").textContent, /new/);
+
+    harness.document.querySelector('[data-git-diff-mode="staged"]').click();
+    await flush();
+    assert.match(harness.fetchCalls.at(-1), /mode=staged$/);
+
+    harness.document.querySelector('[data-git-diff-mode="worktree"]').click();
+    await flush();
+    assert.match(harness.fetchCalls.at(-1), /mode=worktree$/);
+
+    harness.document.getElementById("git-diff-close-button").click();
+    assert.equal(harness.document.getElementById("git-diff-drawer").hidden, true);
+  });
+
+  it("renders Git diff content with textContent and clear exceptional states", async () => {
+    const previews = [
+      {
+        mode: "head",
+        path: "new.ts",
+        displayPath: "new.ts",
+        binary: false,
+        tooLarge: false,
+        empty: false,
+        hunks: [{
+          header: "@@ -0,0 +1,1 @@",
+          oldStart: 0,
+          oldLines: 0,
+          newStart: 1,
+          newLines: 1,
+          rows: [{ kind: "add", leftLineNumber: null, rightLineNumber: 1, leftText: "", rightText: "<script>alert(1)</script>" }],
+        }],
+      },
+      { mode: "head", path: "new.ts", displayPath: "new.ts", binary: true, tooLarge: false, empty: false, hunks: [], message: "Binary file diff is not displayed." },
+      { mode: "head", path: "new.ts", displayPath: "new.ts", binary: false, tooLarge: true, empty: false, hunks: [], message: "Diff is too large to display." },
+      { mode: "head", path: "new.ts", displayPath: "new.ts", binary: false, tooLarge: false, empty: true, hunks: [], message: "No diff is available for this mode." },
+    ];
+    let index = 0;
+    const harness = createHarness(() => createResponse(previews[index++]));
+    harness.sendSnapshot(progressSnapshot([], {
+      gitWorkspace: gitWorkspace(),
+    }));
+
+    harness.document.querySelector(".git-diff-open").click();
+    await flush();
+    const body = harness.document.getElementById("git-diff-body");
+    assert.match(body.textContent, /<script>alert\(1\)<\/script>/);
+    assert.equal(body.querySelectorAll("script").length, 0);
+
+    harness.document.querySelector('[data-git-diff-mode="staged"]').click();
+    await flush();
+    assert.match(body.textContent, /Binary file diff is not displayed/);
+
+    harness.document.querySelector('[data-git-diff-mode="worktree"]').click();
+    await flush();
+    assert.match(body.textContent, /Diff is too large to display/);
+
+    harness.document.querySelector('[data-git-diff-mode="head"]').click();
+    await flush();
+    assert.match(body.textContent, /No diff is available for this mode/);
+  });
+
   it("disables Stage when selected Git files are already staged-only", () => {
     const harness = createHarness(() => createResponse({ scopeKey: "ag-123", items: [] }));
     harness.sendSnapshot(progressSnapshot([], {

@@ -19,6 +19,7 @@ import { jiraContextNode } from "./nodes/jira-context-node.js";
 import { jiraIssueCheckNode } from "./nodes/jira-issue-check-node.js";
 import { localScriptCheckNode } from "./nodes/local-script-check-node.js";
 import { llmPromptNode } from "./nodes/llm-prompt-node.js";
+import { manualJiraTaskInputNode } from "./nodes/manual-jira-task-input-node.js";
 import { opencodePromptNode } from "./nodes/opencode-prompt-node.js";
 import { planCodexNode } from "./nodes/plan-codex-node.js";
 import { playbookInventoryNode } from "./nodes/playbook-inventory-node.js";
@@ -64,6 +65,7 @@ export type BuiltInNodeKind =
   | "jira-issue-check"
   | "local-script-check"
   | "llm-prompt"
+  | "manual-jira-task-input"
   | "opencode-prompt"
   | "plan-codex"
   | "playbook-inventory"
@@ -116,6 +118,7 @@ export const BUILT_IN_NODE_KINDS = [
   "jira-issue-check",
   "local-script-check",
   "llm-prompt",
+  "manual-jira-task-input",
   "opencode-prompt",
   "plan-codex",
   "playbook-inventory",
@@ -158,6 +161,7 @@ const builtInNodes: Record<BuiltInNodeKind, AnyNodeDefinition> = {
   "jira-issue-check": jiraIssueCheckNode as unknown as AnyNodeDefinition,
   "local-script-check": localScriptCheckNode as unknown as AnyNodeDefinition,
   "llm-prompt": llmPromptNode as unknown as AnyNodeDefinition,
+  "manual-jira-task-input": manualJiraTaskInputNode as unknown as AnyNodeDefinition,
   "opencode-prompt": opencodePromptNode as unknown as AnyNodeDefinition,
   "plan-codex": planCodexNode as unknown as AnyNodeDefinition,
   "playbook-inventory": playbookInventoryNode as unknown as AnyNodeDefinition,
@@ -292,6 +296,12 @@ const builtInNodeMetadata: Record<BuiltInNodeKind, NodeContractMetadata> = {
     prompt: "required",
     requiredParams: ["labelText"],
     executors: ["codex", "opencode"],
+  },
+  "manual-jira-task-input": {
+    kind: "manual-jira-task-input",
+    version: 1,
+    prompt: "forbidden",
+    requiredParams: ["taskKey", "outputFile"],
   },
   "opencode-prompt": { kind: "opencode-prompt", version: 1, prompt: "required", requiredParams: ["labelText"] },
   "plan-codex": {

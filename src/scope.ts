@@ -146,19 +146,24 @@ export function attachJiraContext(scope: ResolvedScope, jiraRef: string): Resolv
   };
 }
 
-export function buildJiraTaskInputForm(): UserInputFormDefinition {
+export function buildJiraTaskInputForm(options: { required?: boolean } = {}): UserInputFormDefinition {
+  const required = options.required ?? true;
   return {
     formId: "jira-task-input",
     title: "Jira Task",
-    description: "Provide a Jira issue key or browse URL for a task-driven flow.",
+    description: required
+      ? "Provide a Jira issue key or browse URL for a task-driven flow."
+      : "Provide a Jira issue key or browse URL, or leave it empty to paste the task description manually.",
     submitLabel: "Continue",
     fields: [
       {
         id: "jira_ref",
         type: "text",
         label: "Jira issue key or browse URL",
-        help: "Example: DEMO-3288 or https://jira.example.com/browse/DEMO-3288",
-        required: true,
+        help: required
+          ? "Example: DEMO-3288 or https://jira.example.com/browse/DEMO-3288"
+          : "Leave empty to enter the task description manually in the next step.",
+        required,
       },
     ],
   };
@@ -171,4 +176,12 @@ export async function requestJiraContext(requestUserInput: UserInputRequester): 
     throw new TaskRunnerError("Jira issue key or browse URL is required.");
   }
   return parseJiraContext(jiraRef);
+}
+
+export async function requestOptionalJiraContext(
+  requestUserInput: UserInputRequester,
+): Promise<RequestedJiraContext | null> {
+  const result = await requestUserInput(buildJiraTaskInputForm({ required: false }));
+  const jiraRef = String(result.values.jira_ref ?? "").trim();
+  return jiraRef ? parseJiraContext(jiraRef) : null;
 }

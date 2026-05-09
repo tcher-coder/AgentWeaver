@@ -1,0 +1,70 @@
+{
+  "kind": "task-source-manual-jira-flow",
+  "version": 1,
+  "description": "Collects pasted task text when Jira access is unavailable and stores it as raw Jira task context artifacts for subsequent normalization.",
+  "catalogVisibility": "hidden",
+  "phases": [
+    {
+      "id": "source",
+      "steps": [
+        {
+          "id": "collect_manual_jira_task",
+          "node": "manual-jira-task-input",
+          "params": {
+            "taskKey": { "ref": "params.taskKey" },
+            "outputFile": {
+              "artifact": {
+                "kind": "jira-task-file",
+                "taskKey": { "ref": "params.taskKey" }
+              }
+            },
+            "attachmentsManifestFile": {
+              "artifact": {
+                "kind": "jira-attachments-manifest-file",
+                "taskKey": { "ref": "params.taskKey" }
+              }
+            },
+            "attachmentsContextFile": {
+              "artifact": {
+                "kind": "jira-attachments-context-file",
+                "taskKey": { "ref": "params.taskKey" }
+              }
+            }
+          },
+          "expect": [
+            {
+              "kind": "require-file",
+              "path": {
+                "artifact": {
+                  "kind": "jira-task-file",
+                  "taskKey": { "ref": "params.taskKey" }
+                }
+              },
+              "message": "Manual Jira task input did not produce the Jira task file."
+            },
+            {
+              "kind": "require-file",
+              "path": {
+                "artifact": {
+                  "kind": "jira-attachments-manifest-file",
+                  "taskKey": { "ref": "params.taskKey" }
+                }
+              },
+              "message": "Manual Jira task input did not produce the Jira attachments manifest file."
+            },
+            {
+              "kind": "require-file",
+              "path": {
+                "artifact": {
+                  "kind": "jira-attachments-context-file",
+                  "taskKey": { "ref": "params.taskKey" }
+                }
+              },
+              "message": "Manual Jira task input did not produce the Jira attachments context file."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

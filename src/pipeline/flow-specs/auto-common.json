@@ -1,18 +1,29 @@
 {
   "kind": "auto-flow",
   "version": 1,
-  "description": "End-to-end resumable pipeline without language-specific checks. Runs: Jira fetch → task source normalization → plan → design-review loop → implement → review loop. Planning gate requires design-review approval, or an explicit user decision to continue after the maximum revision attempts, before implementation.",
+  "description": "End-to-end resumable pipeline without language-specific checks. Runs: task source collection → task source normalization → plan → design-review loop → implement → review loop. Planning gate requires design-review approval, or an explicit user decision to continue after the maximum revision attempts, before implementation.",
   "phases": [
     {
       "id": "source",
       "steps": [
         {
           "id": "fetch_jira_source",
+          "when": { "ref": "params.jiraApiUrl" },
           "node": "flow-run",
           "params": {
             "fileName": { "const": "jira-fetch.json" },
             "labelText": { "const": "Fetching Jira task source" },
             "jiraApiUrl": { "ref": "params.jiraApiUrl" },
+            "taskKey": { "ref": "params.taskKey" }
+          }
+        },
+        {
+          "id": "collect_manual_source",
+          "when": { "not": { "ref": "params.jiraApiUrl" } },
+          "node": "flow-run",
+          "params": {
+            "fileName": { "const": "manual-jira-input.json" },
+            "labelText": { "const": "Collecting manual Jira task source" },
             "taskKey": { "ref": "params.taskKey" }
           }
         }

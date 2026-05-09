@@ -1,0 +1,670 @@
+import {
+  AUTO_FLOW_BLOCK_IDS,
+  AUTO_FLOW_SLOT_NAMES,
+  allowedAutoFlowBlocksForSlot,
+  validateAutoFlowBlockInsertion,
+  type AutoFlowBlockId,
+  type AutoFlowConfigLocation,
+  type AutoFlowSlotName,
+  type SavedAutoFlowBlock,
+  type SavedAutoFlowConfig,
+} from "../pipeline/auto-flow-config.js";
+import { getBuiltInAutoFlowBlockDefinition, listBuiltInAutoFlowBlockDefinitions } from "../pipeline/auto-flow-blocks.js";
+import { getBuiltInAutoFlowPreset } from "../pipeline/auto-flow-presets.js";
+import type { AutoFlowSelection } from "../pipeline/auto-flow-resolver.js";
+import {
+  AUTO_FLOW_SLOT_IDS,
+  type AutoFlowParameterDefinition,
+  type AutoFlowPresetId,
+  type AutoFlowSlotId,
+  type AutoFlowValidationDiagnostic,
+} from "../pipeline/auto-flow-types.js";
+import type {
+  AutoFlowAvailableBlockViewModel,
+  AutoFlowBlockViewModel,
+  AutoFlowEditorSource,
+  AutoFlowEditorViewModel,
+  AutoFlowParameterViewModel,
+  AutoFlowSlotViewModel,
+  InteractiveAutoFlowDefinition,
+} from "./types.js";
+
+const SLOT_TITLES: Record<AutoFlowSlotId, string> = {
+  source: "Source",
+  normalize: "Normalize",
+  planning: "Planning",
+  designReview: "Design review",
+  implementation: "Implementation",
+  postImplementationChecks: "Post-implementation checks",
+  review: "Review",
+  final: "Final",
+};
+
+const OPTIONAL_SLOT_IDS = new Set<AutoFlowSlotId>(AUTO_FLOW_SLOT_NAMES);
+
+const FALLBACK_BLOCK_TITLES: Record<AutoFlowBlockId, string> = {
+  "review.design-loop": "Design review loop",
+  "checks.go.linter": "Go linter loop",
+  "checks.go.tests": "Go tests loop",
+  "review.loop": "Review loop",
+};
+
+const FALLBACK_MAX_ITERATION_DEFAULTS: Partial<Record<AutoFlowBlockId, number>> = {
+  "review.design-loop": 3,
+  "checks.go.linter": 5,
+  "checks.go.tests": 5,
+  "review.loop": 5,
+};
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function isOptionalSlot(slotId: AutoFlowSlotId): slotId is AutoFlowSlotName {
+  return OPTIONAL_SLOT_IDS.has(slotId);
+}
+
+function isSavedBlockId(blockId: string): blockId is AutoFlowBlockId {
+  return (AUTO_FLOW_BLOCK_IDS as readonly string[]).includes(blockId);
+}
+
+function optionalSlotForBlock(blockId: string): AutoFlowSlotName | null {
+  for (const slotName of AUTO_FLOW_SLOT_NAMES) {
+    if (allowedAutoFlowBlocksForSlot(slotName).includes(blockId as AutoFlowBlockId)) {
+      return slotName;
+    }
+  }
+  return null;
+}
+
+function defaultOptionalBlocksForPreset(
+  presetId: AutoFlowPresetId,
+  slotId: AutoFlowSlotName,
+): SavedAutoFlowBlock[] {
+  const preset = getBuiltInAutoFlowPreset(presetId);
+  return preset.blocks
+    .filter((placement) => placement.slot === slotId && isSavedBlockId(placement.blockId))
+    .map((placement) => ({
+      id: placement.blockId as AutoFlowBlockId,
+      enabled: placement.defaultEnabled === false ? false : "auto",
+    }));
+}
+
+function coreBlockForSlot(
+  presetId: AutoFlowPresetId,
+  slotId: AutoFlowSlotId,
+  diagnostics: readonly AutoFlowValidationDiagnostic[],
+): AutoFlowBlockViewModel[] {
+  const preset = getBuiltInAutoFlowPreset(presetId);
+  const placement = preset.blocks.find((candidate) => candidate.slot === slotId && candidate.locked);
+  if (!placement) {
+    return [];
+  }
+  const definition = getBuiltInAutoFlowBlockDefinition(placement.blockId);
+  const phaseId = phaseIdForBlock(slotId, placement.blockId);
+  const blockDiagnostics = diagnosticsFor(diagnostics, { slotId, blockId: placement.blockId });
+  const status = blockDiagnostics.some((diagnostic) => (
+    diagnostic.code === "locked-block-disabled"
+    || diagnostic.code === "locked-block-removed"
+    || diagnostic.code === "missing-dependency"
+  ))
+    ? "blocked"
+    : blockDiagnostics.length > 0 ? "invalid" : "pending";
+  return [
+    {
+      blockId: placement.blockId,
+      title: definition?.title ?? placement.blockId,
+      slotId,
+      status,
+      reason: blockDiagnostics[0]?.message ?? "Locked core block.",
+      locked: true,
+      enabled: true,
+      actions: {
+        canEnable: false,
+        canDisable: false,
+        canRemove: false,
+        canEditParams: false,
+      },
+      params: [],
+      diagnostics: blockDiagnostics,
+      ...(phaseId ? { phaseId } : {}),
+    },
+  ];
+}
+
+function blockTitle(blockId: string): string {
+  return getBuiltInAutoFlowBlockDefinition(blockId)?.title
+    ?? (isSavedBlockId(blockId) ? FALLBACK_BLOCK_TITLES[blockId] : undefined)
+    ?? blockId;
+}
+
+function parameterDefinitionForBlock(blockId: AutoFlowBlockId): AutoFlowParameterDefinition | null {
+  const definition = getBuiltInAutoFlowBlockDefinition(blockId);
+  const builtInParam = definition?.params?.maxIterations;
+  if (builtInParam) {
+    return builtInParam;
+  }
+  const fallbackDefault = FALLBACK_MAX_ITERATION_DEFAULTS[blockId];
+  if (fallbackDefault === undefined) {
+    return null;
+  }
+  return {
+    type: "integer",
+    min: 1,
+    max: 5,
+    default: fallbackDefault,
+    supportedExecutableValues: [fallbackDefault],
+  };
+}
+
+function blockParams(block: SavedAutoFlowBlock): AutoFlowParameterViewModel[] {
+  const definition = parameterDefinitionForBlock(block.id);
+  if (!definition) {
+    return [];
+  }
+  return [
+    {
+      name: "maxIterations",
+      label: "maxIterations",
+      type: "integer",
+      value: block.maxIterations ?? definition.default,
+      defaultValue: definition.default,
+      min: definition.min,
+      max: definition.max,
+    },
+  ];
+}
+
+function phaseIdForBlock(slotId: AutoFlowSlotId, blockId: string): string | undefined {
+  if (blockId === "source.jira") return "source";
+  if (blockId === "normalize.task-source") return "normalize";
+  if (blockId === "planning.plan") return "plan";
+  if (blockId === "review.design-loop") return "design_review_loop";
+  if (blockId === "implementation.default") return "implement";
+  if (blockId === "review.loop") return "review-loop";
+  if (blockId === "checks.go.linter") return slotId === "final" ? "final_go_linter_loop" : "post_go_linter_loop";
+  if (blockId === "checks.go.tests") return slotId === "final" ? "final_go_tests_loop" : "post_go_tests_loop";
+  return undefined;
+}
+
+function diagnosticsFor(
+  diagnostics: readonly AutoFlowValidationDiagnostic[],
+  input: { slotId?: AutoFlowSlotId; blockId?: string; paramName?: string },
+): AutoFlowValidationDiagnostic[] {
+  return diagnostics.filter((diagnostic) => {
+    if (input.slotId && diagnostic.slotId !== undefined && diagnostic.slotId !== input.slotId) {
+      return false;
+    }
+    if (input.blockId && diagnostic.blockId !== input.blockId) {
+      return false;
+    }
+    if (input.paramName && diagnostic.paramName !== input.paramName) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function validateEditorConfig(config: SavedAutoFlowConfig): AutoFlowValidationDiagnostic[] {
+  const diagnostics: AutoFlowValidationDiagnostic[] = [];
+  for (const slotName of AUTO_FLOW_SLOT_NAMES) {
+    const slot = config.slots?.[slotName];
+    if (!slot) {
+      continue;
+    }
+    const seen = new Set<string>();
+    slot.blocks.forEach((block, index) => {
+      if (!allowedAutoFlowBlocksForSlot(slotName).includes(block.id)) {
+        diagnostics.push({
+          code: "invalid-slot",
+          message: `Auto-flow block '${block.id}' cannot be placed in slot '${slotName}'. Allowed blocks: ${allowedAutoFlowBlocksForSlot(slotName).join(", ")}.`,
+          blockId: block.id,
+          slotId: slotName,
+          allowedSlots: [slotName],
+        });
+      }
+      if (seen.has(block.id)) {
+        diagnostics.push({
+          code: "duplicate-block",
+          message: `Auto-flow block '${block.id}' is placed more than once in slot '${slotName}'.`,
+          blockId: block.id,
+          slotId: slotName,
+        });
+      }
+      seen.add(block.id);
+      const paramDefinition = parameterDefinitionForBlock(block.id);
+      if (block.maxIterations !== undefined && !paramDefinition) {
+        diagnostics.push({
+          code: "unknown-parameter",
+          message: `Auto-flow block '${block.id}' does not support parameter 'maxIterations'.`,
+          blockId: block.id,
+          slotId: slotName,
+          paramName: "maxIterations",
+          value: block.maxIterations,
+        });
+      }
+      if (block.maxIterations !== undefined && paramDefinition && !Number.isInteger(block.maxIterations)) {
+        diagnostics.push({
+          code: "invalid-parameter-type",
+          message: `Auto-flow block '${block.id}' parameter 'maxIterations' must be an integer; received ${JSON.stringify(block.maxIterations)}.`,
+          blockId: block.id,
+          slotId: slotName,
+          paramName: "maxIterations",
+          value: block.maxIterations,
+        });
+      }
+      if (
+        block.maxIterations !== undefined
+        && paramDefinition
+        && Number.isInteger(block.maxIterations)
+        && (block.maxIterations < paramDefinition.min || block.maxIterations > paramDefinition.max)
+      ) {
+        diagnostics.push({
+          code: "parameter-out-of-range",
+          message: `Auto-flow block '${block.id}' parameter 'maxIterations' must be between ${paramDefinition.min} and ${paramDefinition.max}; received ${block.maxIterations}.`,
+          blockId: block.id,
+          slotId: slotName,
+          paramName: "maxIterations",
+          value: block.maxIterations,
+        });
+      }
+      if (!isSavedBlockId(block.id)) {
+        diagnostics.push({
+          code: "unknown-block",
+          message: `Unknown auto-flow block '${block.id}' at slots.${slotName}.blocks[${index}].`,
+          blockId: block.id,
+          slotId: slotName,
+        });
+      }
+    });
+  }
+  return diagnostics;
+}
+
+function optionalBlocksForSlot(
+  config: SavedAutoFlowConfig,
+  slotId: AutoFlowSlotName,
+): Array<{ block: SavedAutoFlowBlock; statusReason: string }> {
+  const defaultBlocks = defaultOptionalBlocksForPreset(config.basePreset, slotId);
+  const configuredBlocks = config.slots?.[slotId]?.blocks;
+  if (!configuredBlocks) {
+    return defaultBlocks.map((block) => ({ block, statusReason: "Included by preset default." }));
+  }
+  const configuredIds = new Set(configuredBlocks.map((block) => block.id));
+  const blocks = configuredBlocks.map((block) => ({ block, statusReason: "Configured in saved auto-flow config." }));
+  for (const defaultBlock of defaultBlocks) {
+    if (configuredIds.has(defaultBlock.id)) {
+      continue;
+    }
+    blocks.push({
+      block: {
+        ...defaultBlock,
+        enabled: false,
+      },
+      statusReason: "Skipped because the slot override omitted this preset default block.",
+    });
+  }
+  return blocks;
+}
+
+function blockStatus(
+  block: SavedAutoFlowBlock,
+  diagnostics: readonly AutoFlowValidationDiagnostic[],
+): AutoFlowBlockViewModel["status"] {
+  if (diagnostics.length > 0) {
+    if (diagnostics.some((diagnostic) => (
+      diagnostic.code === "locked-block-disabled"
+      || diagnostic.code === "locked-block-removed"
+      || diagnostic.code === "missing-dependency"
+    ))) {
+      return "blocked";
+    }
+    return "invalid";
+  }
+  if (block.enabled === false) {
+    return "disabled";
+  }
+  return "pending";
+}
+
+function blockReason(
+  block: SavedAutoFlowBlock,
+  statusReason: string,
+  diagnostics: readonly AutoFlowValidationDiagnostic[],
+): string {
+  if (diagnostics[0]) {
+    return diagnostics[0].message;
+  }
+  if (block.enabled === false) {
+    return "Optional block is disabled.";
+  }
+  return statusReason;
+}
+
+function optionalBlockView(
+  slotId: AutoFlowSlotName,
+  block: SavedAutoFlowBlock,
+  statusReason: string,
+  diagnostics: readonly AutoFlowValidationDiagnostic[],
+): AutoFlowBlockViewModel {
+  const blockDiagnostics = diagnosticsFor(diagnostics, { slotId, blockId: block.id });
+  const params = blockParams(block);
+  const phaseId = phaseIdForBlock(slotId, block.id);
+  return {
+    blockId: block.id,
+    title: blockTitle(block.id),
+    slotId,
+    status: blockStatus(block, blockDiagnostics),
+    reason: blockReason(block, statusReason, blockDiagnostics),
+    locked: false,
+    enabled: block.enabled !== false,
+    actions: {
+      canEnable: block.enabled === false,
+      canDisable: block.enabled !== false,
+      canRemove: true,
+      canEditParams: params.length > 0,
+    },
+    params,
+    diagnostics: blockDiagnostics,
+    ...(phaseId ? { phaseId } : {}),
+  };
+}
+
+function slotStatus(blocks: readonly AutoFlowBlockViewModel[], diagnostics: readonly AutoFlowValidationDiagnostic[]): AutoFlowSlotViewModel["status"] {
+  if (diagnostics.length > 0 || blocks.some((block) => block.status === "invalid")) {
+    return "invalid";
+  }
+  if (blocks.length === 0) {
+    return "empty";
+  }
+  if (blocks.every((block) => block.status === "disabled")) {
+    return "disabled";
+  }
+  return "pending";
+}
+
+function slotReason(blocks: readonly AutoFlowBlockViewModel[], diagnostics: readonly AutoFlowValidationDiagnostic[]): string {
+  if (diagnostics[0]) {
+    return diagnostics[0].message;
+  }
+  if (blocks.length === 0) {
+    return "No blocks are configured for this optional slot.";
+  }
+  if (blocks.every((block) => block.status === "disabled")) {
+    return "All optional blocks in this slot are disabled.";
+  }
+  return "Slot is configured.";
+}
+
+function slotView(config: SavedAutoFlowConfig, slotId: AutoFlowSlotId, diagnostics: readonly AutoFlowValidationDiagnostic[]): AutoFlowSlotViewModel {
+  const slotDiagnostics = diagnosticsFor(diagnostics, { slotId });
+  const blocks = isOptionalSlot(slotId)
+    ? optionalBlocksForSlot(config, slotId).map(({ block, statusReason }) => optionalBlockView(slotId, block, statusReason, diagnostics))
+    : coreBlockForSlot(config.basePreset, slotId, diagnostics);
+  return {
+    slotId,
+    title: SLOT_TITLES[slotId],
+    status: slotStatus(blocks, slotDiagnostics),
+    reason: slotReason(blocks, slotDiagnostics),
+    blocks,
+    diagnostics: slotDiagnostics,
+  };
+}
+
+function sourceLabel(source: AutoFlowEditorSource): string {
+  if (source.type === "preset") {
+    return `preset ${source.preset}`;
+  }
+  return `${source.type} ${source.configName}`;
+}
+
+export function defaultAutoFlowConfigForPreset(
+  presetId: AutoFlowPresetId,
+  name = `preset-${presetId}`,
+): SavedAutoFlowConfig {
+  return {
+    kind: "auto-flow-config",
+    version: 1,
+    name,
+    basePreset: presetId,
+  };
+}
+
+export function createPresetAutoFlowDefinition(presetId: AutoFlowPresetId): InteractiveAutoFlowDefinition {
+  return {
+    selection: { kind: "preset", preset: presetId },
+    basePreset: presetId,
+    config: defaultAutoFlowConfigForPreset(presetId),
+    source: {
+      type: "preset",
+      preset: presetId,
+    },
+  };
+}
+
+export function createConfigAutoFlowDefinition(input: {
+  config: SavedAutoFlowConfig;
+  source: Exclude<AutoFlowEditorSource, { type: "preset" }>;
+}): InteractiveAutoFlowDefinition {
+  return {
+    selection: { kind: "config", name: input.config.name },
+    basePreset: input.config.basePreset,
+    config: cloneJson(input.config),
+    source: input.source,
+  };
+}
+
+export function buildAutoFlowEditorViewModel(
+  definition: InteractiveAutoFlowDefinition,
+  options: {
+    config?: SavedAutoFlowConfig;
+    diagnostics?: AutoFlowValidationDiagnostic[];
+    lastMessage?: string;
+    saveTarget?: AutoFlowConfigLocation;
+  } = {},
+): AutoFlowEditorViewModel {
+  const config = options.config ?? definition.config;
+  const diagnostics = options.diagnostics ?? validateEditorConfig(config);
+  const slots = AUTO_FLOW_SLOT_IDS.map((slotId) => slotView(config, slotId, diagnostics));
+  const availableBlocks: AutoFlowAvailableBlockViewModel[] = [
+    ...listBuiltInAutoFlowBlockDefinitions().filter((block) => !block.locked).map((block) => ({
+      blockId: block.id,
+      title: block.title,
+      allowedSlots: [...block.allowedSlots],
+    })),
+    {
+      blockId: "checks.go.linter",
+      title: "Go linter loop",
+      allowedSlots: ["postImplementationChecks", "final"],
+    },
+    {
+      blockId: "checks.go.tests",
+      title: "Go tests loop",
+      allowedSlots: ["postImplementationChecks", "final"],
+    },
+  ];
+  const valid = diagnostics.length === 0;
+  return {
+    selection: definition.selection,
+    basePreset: config.basePreset,
+    configName: config.name,
+    source: definition.source,
+    slots,
+    diagnostics: [...diagnostics],
+    availableBlocks,
+    status: {
+      valid,
+      canSave: valid,
+      canRun: valid,
+      saveTarget: options.saveTarget ?? "project",
+      sourceLabel: sourceLabel(definition.source),
+      ...(options.lastMessage ? { lastMessage: options.lastMessage } : {}),
+    },
+  };
+}
+
+export function autoFlowSelectionForFlowId(flowId: string): AutoFlowSelection | null {
+  if (flowId === "auto-simple") {
+    return { kind: "preset", preset: "simple" };
+  }
+  if (flowId === "auto-common") {
+    return { kind: "preset", preset: "standard" };
+  }
+  if (flowId.startsWith("auto-config:")) {
+    const name = flowId.slice("auto-config:".length);
+    if (/^[A-Za-z0-9._-]+$/.test(name)) {
+      return { kind: "config", name };
+    }
+  }
+  return null;
+}
+
+function ensureOptionalSlot(config: SavedAutoFlowConfig, slotName: AutoFlowSlotName): SavedAutoFlowBlock[] {
+  const nextSlots = {
+    ...(config.slots ?? {}),
+  };
+  const existing = nextSlots[slotName]?.blocks;
+  const blocks = existing
+    ? existing.map((block) => ({ ...block }))
+    : defaultOptionalBlocksForPreset(config.basePreset, slotName);
+  nextSlots[slotName] = { blocks };
+  config.slots = nextSlots;
+  return blocks;
+}
+
+export function setAutoFlowBlockEnabled(
+  config: SavedAutoFlowConfig,
+  blockId: string,
+  enabled: boolean,
+): { config: SavedAutoFlowConfig; diagnostics: AutoFlowValidationDiagnostic[] } {
+  const next = cloneJson(config);
+  const coreDefinition = getBuiltInAutoFlowBlockDefinition(blockId);
+  if (coreDefinition?.locked) {
+    return {
+      config: next,
+      diagnostics: [{
+        code: "locked-block-disabled",
+        message: `Locked auto-flow block '${blockId}' cannot be disabled.`,
+        blockId,
+      }],
+    };
+  }
+  const slotName = optionalSlotForBlock(blockId);
+  if (!slotName || !isSavedBlockId(blockId)) {
+    return {
+      config: next,
+      diagnostics: [{
+        code: "unknown-block",
+        message: `Unknown optional auto-flow block '${blockId}'.`,
+        blockId,
+      }],
+    };
+  }
+  const blocks = ensureOptionalSlot(next, slotName);
+  const existing = blocks.find((block) => block.id === blockId);
+  if (existing) {
+    existing.enabled = enabled ? true : false;
+  } else {
+    blocks.push({
+      id: blockId,
+      enabled: enabled ? true : false,
+    });
+  }
+  return {
+    config: next,
+    diagnostics: validateEditorConfig(next),
+  };
+}
+
+export function updateAutoFlowBlockParameter(
+  config: SavedAutoFlowConfig,
+  blockId: string,
+  paramName: string,
+  value: number,
+): { config: SavedAutoFlowConfig; diagnostics: AutoFlowValidationDiagnostic[] } {
+  const next = cloneJson(config);
+  if (paramName !== "maxIterations") {
+    return {
+      config: next,
+      diagnostics: [{
+        code: "unknown-parameter",
+        message: `Auto-flow block '${blockId}' does not support parameter '${paramName}'.`,
+        blockId,
+        paramName,
+        value,
+      }],
+    };
+  }
+  const slotName = optionalSlotForBlock(blockId);
+  if (!slotName || !isSavedBlockId(blockId)) {
+    return {
+      config: next,
+      diagnostics: [{
+        code: "unknown-block",
+        message: `Unknown optional auto-flow block '${blockId}'.`,
+        blockId,
+        paramName,
+        value,
+      }],
+    };
+  }
+  const blocks = ensureOptionalSlot(next, slotName);
+  let block = blocks.find((candidate) => candidate.id === blockId);
+  if (!block) {
+    block = {
+      id: blockId,
+      enabled: true,
+    };
+    blocks.push(block);
+  }
+  block.maxIterations = value;
+  return {
+    config: next,
+    diagnostics: validateEditorConfig(next),
+  };
+}
+
+export function insertAutoFlowBlock(
+  config: SavedAutoFlowConfig,
+  slotId: string,
+  blockId: string,
+): { config: SavedAutoFlowConfig; diagnostics: AutoFlowValidationDiagnostic[]; inserted: boolean } {
+  const next = cloneJson(config);
+  const validation = validateAutoFlowBlockInsertion(slotId, blockId);
+  if (!validation.ok) {
+    return {
+      config: next,
+      inserted: false,
+      diagnostics: [{
+        code: validation.message.startsWith("Unknown auto-flow block") ? "unknown-block" : "invalid-slot",
+        message: validation.message,
+        ...(validation.blockId ? { blockId: validation.blockId } : { blockId }),
+        ...(validation.slotName ? { slotId: validation.slotName } : { slotId }),
+      }],
+    };
+  }
+  if (!validation.slotName || !validation.blockId) {
+    return {
+      config: next,
+      inserted: false,
+      diagnostics: [{
+        code: "invalid-slot",
+        message: validation.message,
+        blockId,
+        slotId,
+      }],
+    };
+  }
+  const blocks = ensureOptionalSlot(next, validation.slotName);
+  if (!blocks.some((block) => block.id === validation.blockId)) {
+    blocks.push({
+      id: validation.blockId,
+      enabled: true,
+    });
+  }
+  return {
+    config: next,
+    inserted: true,
+    diagnostics: validateEditorConfig(next),
+  };
+}

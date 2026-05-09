@@ -42,6 +42,7 @@
     flowsTitle: document.getElementById("flows-title"),
     flows: document.getElementById("flows-list"),
     description: document.getElementById("description-text"),
+    autoFlowEditor: document.getElementById("auto-flow-editor"),
     progressTitle: document.getElementById("progress-title"),
     progress: document.getElementById("progress-text"),
     gitRefresh: document.getElementById("git-refresh-button"),
@@ -236,6 +237,21 @@
     updateGitCommitMessage: function () {
       api.send({ type: "git.updateCommitMessage", message: elements.gitCommitMessage.value });
     },
+    selectAutoFlowPreset: function (preset) {
+      api.send({ type: "autoFlow.selectPreset", preset: preset });
+    },
+    saveAutoFlow: function () {
+      api.send({ type: "autoFlow.save" });
+    },
+    toggleAutoFlowBlock: function (blockId, enabled) {
+      api.send({ type: "autoFlow.toggleBlock", blockId: blockId, enabled: enabled });
+    },
+    updateAutoFlowParam: function (blockId, paramName, value) {
+      api.send({ type: "autoFlow.updateParam", blockId: blockId, paramName: paramName, value: value });
+    },
+    insertAutoFlowBlock: function (slotId, blockId) {
+      api.send({ type: "autoFlow.insertBlock", slotId: slotId, blockId: blockId });
+    },
   };
 
   function setConnection(nextState) {
@@ -294,6 +310,7 @@
     elements.status.textContent = text(vm.statusText, "Idle");
     elements.flowsTitle.textContent = text(vm.flowListTitle, "Flows");
     elements.description.textContent = text(vm.descriptionText, "No flow selected.");
+    renderAutoFlowEditor(vm);
     elements.progressTitle.textContent = text(vm.progressTitle, "Progress");
     renderProgress(vm);
     elements.logTitle.textContent = text(vm.logTitle, "Activity");
@@ -387,6 +404,189 @@
     var element = document.createElement("strong");
     element.textContent = value;
     return element;
+  }
+
+  function renderAutoFlowEditor(vm) {
+    var model = vm && vm.autoFlow;
+    if (!elements.autoFlowEditor) return;
+    elements.autoFlowEditor.innerHTML = "";
+    if (!model || !Array.isArray(model.slots)) {
+      elements.autoFlowEditor.hidden = true;
+      return;
+    }
+    elements.autoFlowEditor.hidden = false;
+    var blocked = hasBlockingInput(vm);
+
+    var toolbar = document.createElement("div");
+    toolbar.className = "auto-flow-toolbar";
+    var simple = document.createElement("button");
+    simple.type = "button";
+    simple.textContent = "Simple";
+    simple.disabled = blocked;
+    simple.className = model.basePreset === "simple" ? "primary" : "";
+    simple.addEventListener("click", function () {
+      api.selectAutoFlowPreset("simple");
+    });
+    var standard = document.createElement("button");
+    standard.type = "button";
+    standard.textContent = "Standard";
+    standard.disabled = blocked;
+    standard.className = model.basePreset === "standard" ? "primary" : "";
+    standard.addEventListener("click", function () {
+      api.selectAutoFlowPreset("standard");
+    });
+    var save = document.createElement("button");
+    save.type = "button";
+    save.textContent = "Save";
+    save.disabled = blocked || !model.status || !model.status.canSave;
+    save.addEventListener("click", api.saveAutoFlow);
+    var status = document.createElement("span");
+    status.className = "auto-flow-status " + (model.status && model.status.valid ? "valid" : "invalid");
+    status.textContent = (model.status && model.status.valid ? "valid" : "invalid") + " | " + text(model.status && model.status.sourceLabel, model.configName || "auto-flow");
+    toolbar.append(simple, standard, save, status);
+    elements.autoFlowEditor.append(toolbar);
+
+    if (model.status && model.status.lastMessage) {
+      var message = document.createElement("div");
+      message.className = "auto-flow-message";
+      message.textContent = model.status.lastMessage;
+      elements.autoFlowEditor.append(message);
+    }
+
+    if (Array.isArray(model.diagnostics) && model.diagnostics.length > 0) {
+      var diagnostics = document.createElement("div");
+      diagnostics.className = "auto-flow-diagnostics";
+      model.diagnostics.forEach(function (diagnostic) {
+        var item = document.createElement("div");
+        item.textContent = diagnostic.message || "Invalid auto-flow configuration.";
+        diagnostics.append(item);
+      });
+      elements.autoFlowEditor.append(diagnostics);
+    }
+
+    var slots = document.createElement("div");
+    slots.className = "auto-flow-slots";
+    model.slots.forEach(function (slot) {
+      var slotRow = document.createElement("section");
+      slotRow.className = "auto-flow-slot status-" + slot.status;
+      slotRow.dataset.slotId = slot.slotId;
+      var title = document.createElement("div");
+      title.className = "auto-flow-slot-title";
+      title.append(strong(text(slot.title, slot.slotId)), document.createTextNode(" "), statusPill(slot.status));
+      var reason = document.createElement("div");
+      reason.className = "auto-flow-reason";
+      reason.textContent = text(slot.reason, "");
+      slotRow.append(title, reason);
+
+      var blockList = document.createElement("div");
+      blockList.className = "auto-flow-blocks";
+      if (!Array.isArray(slot.blocks) || slot.blocks.length === 0) {
+        var empty = document.createElement("div");
+        empty.className = "auto-flow-empty";
+        empty.textContent = "Empty slot.";
+        blockList.append(empty);
+      } else {
+        slot.blocks.forEach(function (block) {
+          blockList.append(renderAutoFlowBlock(block, blocked));
+        });
+      }
+      slotRow.append(blockList);
+      var insert = renderAutoFlowInsert(slot, model.availableBlocks || [], blocked);
+      if (insert) {
+        slotRow.append(insert);
+      }
+      slots.append(slotRow);
+    });
+    elements.autoFlowEditor.append(slots);
+  }
+
+  function statusPill(status) {
+    var pill = document.createElement("span");
+    pill.className = "auto-flow-pill status-" + status;
+    pill.textContent = status || "pending";
+    return pill;
+  }
+
+  function renderAutoFlowBlock(block, blocked) {
+    var row = document.createElement("div");
+    row.className = "auto-flow-block status-" + block.status;
+    row.dataset.blockId = block.blockId;
+    var enabled = document.createElement("input");
+    enabled.type = "checkbox";
+    enabled.checked = block.enabled !== false;
+    enabled.disabled = blocked || block.locked || !(block.actions && (block.actions.canEnable || block.actions.canDisable));
+    enabled.title = block.locked ? "Locked core block" : "Enable or disable block";
+    enabled.addEventListener("change", function () {
+      api.toggleAutoFlowBlock(block.blockId, enabled.checked);
+    });
+    var main = document.createElement("div");
+    main.className = "auto-flow-block-main";
+    var label = document.createElement("div");
+    label.className = "auto-flow-block-label";
+    label.append(strong(text(block.title, block.blockId)), document.createTextNode(" "), statusPill(block.status));
+    if (block.locked) {
+      var locked = document.createElement("span");
+      locked.className = "auto-flow-locked";
+      locked.textContent = "locked";
+      label.append(document.createTextNode(" "), locked);
+    }
+    var reason = document.createElement("div");
+    reason.className = "auto-flow-reason";
+    reason.textContent = text(block.reason, "");
+    main.append(label, reason);
+    if (Array.isArray(block.params) && block.params.length > 0) {
+      var params = document.createElement("div");
+      params.className = "auto-flow-params";
+      block.params.forEach(function (param) {
+        var field = document.createElement("label");
+        field.textContent = param.label + " ";
+        var input = document.createElement("input");
+        input.type = "number";
+        input.min = String(param.min);
+        input.max = String(param.max);
+        input.step = "1";
+        input.value = param.value === null || param.value === undefined ? "" : String(param.value);
+        input.disabled = blocked || !(block.actions && block.actions.canEditParams);
+        input.addEventListener("change", function () {
+          var next = Number(input.value);
+          if (Number.isInteger(next)) {
+            api.updateAutoFlowParam(block.blockId, param.name, next);
+          }
+        });
+        field.append(input);
+        params.append(field);
+      });
+      main.append(params);
+    }
+    row.append(enabled, main);
+    return row;
+  }
+
+  function renderAutoFlowInsert(slot, availableBlocks, blocked) {
+    var candidates = availableBlocks.filter(function (block) {
+      return Array.isArray(block.allowedSlots) && block.allowedSlots.indexOf(slot.slotId) !== -1;
+    });
+    if (candidates.length === 0) {
+      return null;
+    }
+    var container = document.createElement("div");
+    container.className = "auto-flow-insert";
+    var select = document.createElement("select");
+    candidates.forEach(function (block) {
+      var option = document.createElement("option");
+      option.value = block.blockId;
+      option.textContent = block.title || block.blockId;
+      select.append(option);
+    });
+    var button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Insert";
+    button.disabled = blocked;
+    button.addEventListener("click", function () {
+      api.insertAutoFlowBlock(slot.slotId, select.value);
+    });
+    container.append(select, button);
+    return container;
   }
 
   function renderGitBranches(branches, currentBranch) {
@@ -943,8 +1143,8 @@
 
   function isProgressItem(item) {
     if (!item || typeof item !== "object") return false;
-    if (["group", "phase", "step", "termination"].indexOf(item.kind) === -1) return false;
-    if (["pending", "running", "done", "skipped"].indexOf(item.status) === -1) return false;
+    if (["group", "phase", "step", "slot", "block", "termination"].indexOf(item.kind) === -1) return false;
+    if (["pending", "running", "done", "success", "failed", "stopped", "skipped", "waiting-user", "disabled", "blocked", "invalid", "empty"].indexOf(item.status) === -1) return false;
     return typeof item.label === "string" && Number.isFinite(item.depth);
   }
 
@@ -974,7 +1174,7 @@
     label.textContent = text(item.label, "Untitled progress item");
     body.append(label);
 
-    if (item.kind === "termination" && typeof item.detail === "string" && item.detail.length > 0) {
+    if (typeof item.detail === "string" && item.detail.length > 0) {
       var detail = document.createElement("span");
       detail.className = "progress-detail";
       detail.textContent = item.detail;
@@ -987,9 +1187,12 @@
   }
 
   function progressMarker(status) {
-    if (status === "done") return "✓";
-    if (status === "running") return "●";
+    if (status === "done" || status === "success") return "✓";
+    if (status === "failed" || status === "invalid") return "×";
+    if (status === "stopped" || status === "blocked") return "■";
+    if (status === "running" || status === "waiting-user") return "●";
     if (status === "skipped") return "↷";
+    if (status === "disabled" || status === "empty") return "·";
     return "○";
   }
 

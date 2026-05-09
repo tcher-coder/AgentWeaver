@@ -623,6 +623,103 @@ describe("static Artifact Explorer app", () => {
     assert.doesNotMatch(progress.textContent, /parsed-running/);
   });
 
+  it("renders configurable auto-flow slot rows and sends structured edit actions", () => {
+    const harness = createHarness(() => createResponse({ scopeKey: "ag-127", items: [] }));
+    harness.sendSnapshot(progressSnapshot([
+      { kind: "slot", label: "Design review", depth: 0, status: "disabled", detail: "All optional blocks in this slot are disabled.", slotId: "designReview" },
+      { kind: "block", label: "Design review loop", depth: 1, status: "disabled", detail: "Optional block is disabled.", slotId: "designReview", blockId: "review.design-loop", locked: false, enabled: false },
+      { kind: "slot", label: "Review", depth: 0, status: "invalid", detail: "Invalid maxIterations.", slotId: "review" },
+      { kind: "block", label: "Review loop", depth: 1, status: "invalid", detail: "maxIterations", slotId: "review", blockId: "review.loop", locked: false, enabled: true },
+    ], {
+      autoFlow: {
+        selection: { kind: "preset", preset: "standard" },
+        basePreset: "standard",
+        configName: "preset-standard",
+        source: { type: "preset", preset: "standard" },
+        status: {
+          valid: false,
+          canSave: false,
+          canRun: false,
+          saveTarget: "project",
+          sourceLabel: "preset standard",
+          lastMessage: "review.loop.maxIterations must be between 1 and 5; received 6.",
+        },
+        diagnostics: [{ message: "review.loop.maxIterations must be between 1 and 5; received 6." }],
+        availableBlocks: [
+          { blockId: "review.design-loop", title: "Design review loop", allowedSlots: ["designReview"] },
+          { blockId: "review.loop", title: "Review loop", allowedSlots: ["review"] },
+        ],
+        slots: [
+          {
+            slotId: "designReview",
+            title: "Design review",
+            status: "disabled",
+            reason: "All optional blocks in this slot are disabled.",
+            diagnostics: [],
+            blocks: [{
+              blockId: "review.design-loop",
+              title: "Design review loop",
+              slotId: "designReview",
+              status: "disabled",
+              reason: "Optional block is disabled.",
+              locked: false,
+              enabled: false,
+              actions: { canEnable: true, canDisable: false, canRemove: true, canEditParams: true },
+              params: [],
+              diagnostics: [],
+            }],
+          },
+          {
+            slotId: "review",
+            title: "Review",
+            status: "invalid",
+            reason: "Invalid maxIterations.",
+            diagnostics: [{ message: "review.loop.maxIterations must be between 1 and 5; received 6." }],
+            blocks: [{
+              blockId: "review.loop",
+              title: "Review loop",
+              slotId: "review",
+              status: "invalid",
+              reason: "review.loop.maxIterations must be between 1 and 5; received 6.",
+              locked: false,
+              enabled: true,
+              actions: { canEnable: false, canDisable: true, canRemove: true, canEditParams: true },
+              params: [{ name: "maxIterations", label: "maxIterations", type: "integer", value: 6, defaultValue: 5, min: 1, max: 5 }],
+              diagnostics: [{ message: "review.loop.maxIterations must be between 1 and 5; received 6." }],
+            }],
+          },
+        ],
+      },
+    }));
+
+    const progress = harness.document.getElementById("progress-text");
+    assert.equal(progress.querySelectorAll(".progress-row").filter((row) => row.dataset.kind === "slot").length, 2);
+    assert.equal(progress.querySelectorAll(".progress-row").filter((row) => row.dataset.kind === "block").length, 2);
+    assert.equal(progress.querySelector(".status-invalid").dataset.status, "invalid");
+
+    const editor = harness.document.getElementById("auto-flow-editor");
+    assert.equal(editor.hidden, false);
+    assert.match(editor.textContent, /Design review loop/);
+    assert.match(editor.textContent, /between 1 and 5/);
+    assert.equal(editor.querySelectorAll(".auto-flow-slot").length, 2);
+
+    const checkbox = editor.querySelector('[data-block-id="review.design-loop"]').querySelector("input");
+    checkbox.checked = true;
+    checkbox.dispatchEvent({ type: "change", target: checkbox });
+    assert.equal(harness.socket.sent.at(-1).type, "autoFlow.toggleBlock");
+    assert.equal(harness.socket.sent.at(-1).blockId, "review.design-loop");
+    assert.equal(harness.socket.sent.at(-1).enabled, true);
+
+    const reviewInputs = editor.querySelector('[data-block-id="review.loop"]').querySelectorAll("input");
+    const numberInput = reviewInputs[1];
+    numberInput.value = "5";
+    numberInput.dispatchEvent({ type: "change", target: numberInput });
+    assert.equal(harness.socket.sent.at(-1).type, "autoFlow.updateParam");
+    assert.equal(harness.socket.sent.at(-1).blockId, "review.loop");
+    assert.equal(harness.socket.sent.at(-1).paramName, "maxIterations");
+    assert.equal(harness.socket.sent.at(-1).value, 5);
+  });
+
   it("keeps the plain text progress fallback compatible without status parsing", () => {
     const harness = createHarness(() => createResponse({ scopeKey: "ag-120", items: [] }));
     harness.sendSnapshot({

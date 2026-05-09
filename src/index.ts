@@ -67,7 +67,7 @@ import {
   type LoadedDeclarativeFlow,
 } from "./pipeline/declarative-flows.js";
 import { runExpandedPhase } from "./pipeline/declarative-flow-runner.js";
-import type { AutoFlowPresetName } from "./pipeline/auto-flow-config.js";
+import { listAutoFlowConfigs, loadAutoFlowConfigByName, type AutoFlowPresetName } from "./pipeline/auto-flow-config.js";
 import {
   formatAutoFlowDryRunPreview,
   persistResolvedAutoFlowArtifacts,
@@ -128,6 +128,11 @@ import type { InteractiveSession } from "./interactive/session.js";
 import { createWebInteractiveSession } from "./interactive/web/index.js";
 import type { WebServerAuthConfig } from "./interactive/web/server.js";
 import type { InteractiveFlowDefinition } from "./interactive/types.js";
+import {
+  autoFlowSelectionForFlowId,
+  createConfigAutoFlowDefinition,
+  createPresetAutoFlowDefinition,
+} from "./interactive/auto-flow.js";
 import {
   bye,
   getOutputAdapter,
@@ -667,8 +672,15 @@ function scopeWithRestoredJiraContext(scope: ResolvedScope, state: FlowRunState 
 }
 
 function buildInteractiveBaseConfig(flowId: string, scope: ResolvedScope): BaseConfig {
-  return buildBaseConfig(flowId, {
+  const autoFlowSelection = autoFlowSelectionForFlowId(flowId);
+  const command = autoFlowSelection
+    ? autoFlowSelection.kind === "preset" && autoFlowSelection.preset === "simple"
+      ? "auto-simple"
+      : "auto-common"
+    : flowId;
+  return buildBaseConfig(command, {
     ...(flowId !== "instant-task" && scope.jiraRef ? { jiraRef: scope.jiraRef } : {}),
+    ...(autoFlowSelection ? { autoFlowSelection } : {}),
   });
 }
 
@@ -705,6 +717,32 @@ async function lookupInteractiveFlowResume(flowEntry: FlowCatalogEntry, currentS
   return {
     ...availability,
   };
+}
+
+async function lookupInteractiveAutoFlowResume(
+  selection: AutoFlowSelection,
+  currentScope: ResolvedScope,
+): Promise<FlowResumeLookup> {
+  const resolved = await resolveAutoFlow(selection, {
+    cwd: process.cwd(),
+    scopeKey: currentScope.scopeKey,
+  });
+  const identity = autoFlowIdentityForSelection(selection, resolved);
+  const state = loadFlowRunState(currentScope.scopeKey, identity.flowId);
+  const availability = classifyFlowLaunchAvailability(state);
+  if (state && availability.resume.available) {
+    return {
+      ...availability,
+      details: buildFlowResumeDetails(state),
+    };
+  }
+  if (state && availability.continue.available) {
+    return {
+      ...availability,
+      details: buildFlowContinueDetails(state),
+    };
+  }
+  return availability;
 }
 
 async function printAutoPhasesHelp(): Promise<void> {
@@ -1269,6 +1307,10 @@ function loadInstantTaskInputDefaults(taskKey: string): UserInputFormValues | nu
 
 function interactiveFlowDefinition(entry: FlowCatalogEntry): InteractiveFlowDefinition {
   const flow = entry.flow;
+  const autoFlowSelection = autoFlowSelectionForFlowId(entry.id);
+  const autoFlow = autoFlowSelection?.kind === "preset"
+    ? createPresetAutoFlowDefinition(autoFlowSelection.preset)
+    : null;
   return {
     id: entry.id,
     label: entry.id,
@@ -1276,6 +1318,7 @@ function interactiveFlowDefinition(entry: FlowCatalogEntry): InteractiveFlowDefi
     source: entry.source,
     treePath: [...entry.treePath],
     ...(entry.source !== "built-in" ? { sourcePath: entry.absolutePath } : {}),
+    ...(autoFlow ? { autoFlow } : {}),
     phases: flow.phases.map((phase) => ({
       id: phase.id,
       repeatVars: Object.fromEntries(
@@ -1288,8 +1331,40 @@ function interactiveFlowDefinition(entry: FlowCatalogEntry): InteractiveFlowDefi
   };
 }
 
-function interactiveFlowDefinitions(catalog: FlowCatalogEntry[]): InteractiveFlowDefinition[] {
-  return catalog.map((entry) => interactiveFlowDefinition(entry));
+function savedAutoFlowDefinitions(cwd: string): InteractiveFlowDefinition[] {
+  const definitions: InteractiveFlowDefinition[] = [];
+  for (const item of listAutoFlowConfigs(cwd)) {
+    try {
+      const loaded = loadAutoFlowConfigByName(item.name, cwd);
+      definitions.push({
+        id: `auto-config:${loaded.config.name}`,
+        label: `auto-config:${loaded.config.name}`,
+        description: `Saved configurable auto-flow config '${loaded.config.name}'.`,
+        source: "built-in",
+        treePath: ["default", "auto-configs", loaded.config.name],
+        autoFlow: createConfigAutoFlowDefinition({
+          config: loaded.config,
+          source: {
+            type: loaded.source.type === "project" ? "project-config" : "user-config",
+            configName: loaded.config.name,
+            path: loaded.source.path,
+            ...(loaded.source.shadowedUserPath ? { shadowedUserPath: loaded.source.shadowedUserPath } : {}),
+          },
+        }),
+        phases: [],
+      });
+    } catch (error) {
+      printError((error as Error).message);
+    }
+  }
+  return definitions;
+}
+
+function interactiveFlowDefinitions(catalog: FlowCatalogEntry[], cwd = process.cwd()): InteractiveFlowDefinition[] {
+  return [
+    ...catalog.map((entry) => interactiveFlowDefinition(entry)),
+    ...savedAutoFlowDefinitions(cwd),
+  ];
 }
 
 function publishFlowState(flowId: string, executionState: FlowExecutionState): void {
@@ -2657,6 +2732,10 @@ async function runInteractiveWithSessionFactory(
       flows: interactiveFlowDefinitions(flowCatalog),
       getRunConfirmation: async (flowId) => {
         refreshScopeFromGit("git scope refresh before launch confirmation");
+        const autoFlowSelection = autoFlowSelectionForFlowId(flowId);
+        if (autoFlowSelection) {
+          return await lookupInteractiveAutoFlowResume(autoFlowSelection, currentScope);
+        }
         const flowEntry = findCatalogEntry(flowId, flowCatalog);
         if (!flowEntry) {
           throw new TaskRunnerError(`Unknown flow: ${flowId}`);
@@ -2670,6 +2749,31 @@ async function runInteractiveWithSessionFactory(
         activeAbortController = abortController;
         activeFlowId = flowId;
         try {
+          const autoFlowSelection = autoFlowSelectionForFlowId(flowId);
+          if (autoFlowSelection) {
+            const previousScopeKey = currentScope.scopeKey;
+            const baseConfig = buildInteractiveBaseConfig(flowId, currentScope);
+            const nextScope = await resolveScopeForCommand(baseConfig, (form) => ui.requestUserInput(form), launchMode);
+            currentScope = nextScope;
+            ui.setScope(currentScope.scopeKey, currentScope.jiraIssueKey ?? null, currentScope.gitBranchName);
+            if (previousScopeKey !== currentScope.scopeKey || currentScope.jiraIssueKey) {
+              syncInteractiveTaskSummary(ui, currentScope, forceRefresh);
+            }
+            await executeCommand(
+              baseConfig,
+              true,
+              (form) => ui.requestUserInput(form),
+              currentScope,
+              (markdown) => ui.setSummary(markdown),
+              forceRefresh,
+              launchMode,
+              undefined,
+              undefined,
+              undefined,
+              createRuntimeServices(abortController.signal),
+            );
+            return;
+          }
           const flowEntry = findCatalogEntry(flowId, flowCatalog);
           if (!flowEntry) {
             throw new TaskRunnerError(`Unknown flow: ${flowId}`);

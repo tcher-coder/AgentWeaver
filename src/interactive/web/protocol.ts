@@ -24,6 +24,12 @@ export type ClientAction =
   | { type: "log.clear"; actionId?: string }
   | { type: "artifactExplorer.open"; actionId?: string }
   | { type: "artifactExplorer.close"; actionId?: string }
+  | { type: "autoFlow.selectPreset"; preset: "simple" | "standard"; actionId?: string }
+  | { type: "autoFlow.loadConfig"; name: string; flowId?: string; actionId?: string }
+  | { type: "autoFlow.save"; flowId?: string; name?: string; location?: "project" | "user"; actionId?: string }
+  | { type: "autoFlow.toggleBlock"; flowId?: string; blockId: string; enabled?: boolean; actionId?: string }
+  | { type: "autoFlow.updateParam"; flowId?: string; blockId: string; paramName: string; value: number; actionId?: string }
+  | { type: "autoFlow.insertBlock"; flowId?: string; slotId: string; blockId: string; actionId?: string }
   | { type: "git.refresh"; actionId?: string }
   | { type: "git.createBranch"; branchName: string; actionId?: string }
   | { type: "git.checkout"; branchName: string; actionId?: string }
@@ -53,6 +59,12 @@ const ACTION_TYPES = new Set([
   "log.clear",
   "artifactExplorer.open",
   "artifactExplorer.close",
+  "autoFlow.selectPreset",
+  "autoFlow.loadConfig",
+  "autoFlow.save",
+  "autoFlow.toggleBlock",
+  "autoFlow.updateParam",
+  "autoFlow.insertBlock",
   "git.refresh",
   "git.createBranch",
   "git.checkout",
@@ -105,6 +117,17 @@ function optionalInteger(value: Record<string, unknown>, fieldName: string): num
   const field = value[fieldName];
   if (typeof field !== "number" || !Number.isInteger(field)) {
     throw new Error(`${fieldName} must be an integer.`);
+  }
+  return field;
+}
+
+function optionalBoolean(value: Record<string, unknown>, fieldName: string): boolean | undefined {
+  if (value[fieldName] === undefined) {
+    return undefined;
+  }
+  const field = value[fieldName];
+  if (typeof field !== "boolean") {
+    throw new Error(`${fieldName} must be a boolean.`);
   }
   return field;
 }
@@ -223,6 +246,71 @@ export function parseClientAction(raw: string): ClientAction {
   if (parsed.type === "flow.interrupt") {
     const flowId = optionalNonEmptyString(parsed, "flowId");
     return { type: "flow.interrupt", ...(flowId ? { flowId } : {}), ...(actionId ? { actionId } : {}) };
+  }
+  if (parsed.type === "autoFlow.selectPreset") {
+    const preset = requireNonEmptyString(parsed, "preset");
+    if (preset !== "simple" && preset !== "standard") {
+      throw new Error("preset must be simple or standard.");
+    }
+    return { type: "autoFlow.selectPreset", preset, ...(actionId ? { actionId } : {}) };
+  }
+  if (parsed.type === "autoFlow.loadConfig") {
+    const flowId = optionalNonEmptyString(parsed, "flowId");
+    return {
+      type: "autoFlow.loadConfig",
+      name: requireNonEmptyString(parsed, "name"),
+      ...(flowId ? { flowId } : {}),
+      ...(actionId ? { actionId } : {}),
+    };
+  }
+  if (parsed.type === "autoFlow.save") {
+    const flowId = optionalNonEmptyString(parsed, "flowId");
+    const name = optionalNonEmptyString(parsed, "name");
+    const location = optionalNonEmptyString(parsed, "location");
+    if (location !== undefined && location !== "project" && location !== "user") {
+      throw new Error("location must be project or user.");
+    }
+    return {
+      type: "autoFlow.save",
+      ...(flowId ? { flowId } : {}),
+      ...(name ? { name } : {}),
+      ...(location ? { location } : {}),
+      ...(actionId ? { actionId } : {}),
+    };
+  }
+  if (parsed.type === "autoFlow.toggleBlock") {
+    const flowId = optionalNonEmptyString(parsed, "flowId");
+    const enabled = optionalBoolean(parsed, "enabled");
+    return {
+      type: "autoFlow.toggleBlock",
+      ...(flowId ? { flowId } : {}),
+      blockId: requireNonEmptyString(parsed, "blockId"),
+      ...(enabled !== undefined ? { enabled } : {}),
+      ...(actionId ? { actionId } : {}),
+    };
+  }
+  if (parsed.type === "autoFlow.updateParam") {
+    const flowId = optionalNonEmptyString(parsed, "flowId");
+    return {
+      type: "autoFlow.updateParam",
+      ...(flowId ? { flowId } : {}),
+      blockId: requireNonEmptyString(parsed, "blockId"),
+      paramName: requireNonEmptyString(parsed, "paramName"),
+      value: optionalInteger(parsed, "value") ?? (() => {
+        throw new Error("value must be an integer.");
+      })(),
+      ...(actionId ? { actionId } : {}),
+    };
+  }
+  if (parsed.type === "autoFlow.insertBlock") {
+    const flowId = optionalNonEmptyString(parsed, "flowId");
+    return {
+      type: "autoFlow.insertBlock",
+      ...(flowId ? { flowId } : {}),
+      slotId: requireNonEmptyString(parsed, "slotId"),
+      blockId: requireNonEmptyString(parsed, "blockId"),
+      ...(actionId ? { actionId } : {}),
+    };
   }
   if (parsed.type === "help.toggle") {
     if (parsed.visible !== undefined && typeof parsed.visible !== "boolean") {

@@ -28,6 +28,12 @@ describe("interactive web protocol", () => {
       { type: "log.clear" },
       { type: "artifactExplorer.open" },
       { type: "artifactExplorer.close", actionId: "artifact-close-1" },
+      { type: "autoFlow.selectPreset", preset: "standard" },
+      { type: "autoFlow.loadConfig", name: "backend-standard", flowId: "auto-common" },
+      { type: "autoFlow.save", flowId: "auto-common", name: "backend-standard", location: "project" },
+      { type: "autoFlow.toggleBlock", flowId: "auto-common", blockId: "review.design-loop", enabled: false },
+      { type: "autoFlow.updateParam", flowId: "auto-common", blockId: "review.loop", paramName: "maxIterations", value: 5 },
+      { type: "autoFlow.insertBlock", flowId: "auto-common", slotId: "designReview", blockId: "review.design-loop" },
       { type: "git.refresh" },
       { type: "git.createBranch", branchName: "feature/ag-121" },
       { type: "git.checkout", branchName: "main" },
@@ -55,6 +61,12 @@ describe("interactive web protocol", () => {
     assert.throws(() => parseClientAction(JSON.stringify({ type: "artifactExplorer.toggle" })), /Unknown protocol action/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "artifactExplorer.open", actionId: "" })), /actionId must be a non-empty string/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "artifactExplorer.close", actionId: 123 })), /actionId must be a non-empty string/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "autoFlow.selectPreset", preset: "advanced" })), /preset must be simple or standard/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "autoFlow.loadConfig", name: "" })), /name must be a non-empty string/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "autoFlow.save", location: "remote" })), /location must be project or user/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "autoFlow.toggleBlock", blockId: "review.loop", enabled: "yes" })), /enabled must be a boolean/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "autoFlow.updateParam", blockId: "review.loop", paramName: "maxIterations", value: 1.5 })), /value must be an integer/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "autoFlow.insertBlock", slotId: "", blockId: "review.loop" })), /slotId must be a non-empty string/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "git.createBranch", branchName: "feature/new", selectedBase: "main" })), /selected base/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "git.checkout", branchName: "" })), /branchName must be a non-empty string/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "git.stage", paths: "file.txt" })), /paths must be an array/);

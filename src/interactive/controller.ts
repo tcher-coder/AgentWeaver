@@ -5,6 +5,13 @@ import { createGitService, type GitService } from "../git/git-service.js";
 import { needsGitFileStage } from "../git/git-stage-selection.js";
 import type { GitChangedFile, GitOperationFeedback, GitWorkspaceSnapshot } from "../git/git-types.js";
 import { renderMarkdownToTerminal } from "../markdown.js";
+import {
+  loadAutoFlowConfigByName,
+  saveAutoFlowConfig,
+  type AutoFlowConfigLocation,
+  type SavedAutoFlowConfig,
+} from "../pipeline/auto-flow-config.js";
+import type { AutoFlowValidationDiagnostic } from "../pipeline/auto-flow-types.js";
 import type { FlowExecutionState } from "../pipeline/spec-types.js";
 import { runCommand } from "../runtime/process-runner.js";
 import { setOutputAdapter, stripAnsi, type OutputAdapter } from "../tui.js";
@@ -18,12 +25,19 @@ import {
   type UserInputFormValues,
   type UserInputResult,
 } from "../user-input.js";
+import {
+  buildAutoFlowEditorViewModel,
+  createConfigAutoFlowDefinition,
+  insertAutoFlowBlock,
+  setAutoFlowBlockEnabled,
+  updateAutoFlowBlockParameter,
+} from "./auto-flow.js";
 import { buildProgressViewModel } from "./progress.js";
 import type { InteractiveSessionOptions } from "./session.js";
 import { selectHeaderLabel } from "./selectors.js";
 import { createInitialInteractiveState, type InteractiveSessionState } from "./state.js";
 import { buildFlowTree, collectInitiallyExpandedFolderKeys, computeVisibleFlowItems, makeFlowKey, makeFolderKey } from "./tree.js";
-import type { FocusPane, FlowTreeNode, InteractiveFlowDefinition, VisibleFlowTreeItem } from "./types.js";
+import type { AutoFlowEditorViewModel, FocusPane, FlowTreeNode, InteractiveAutoFlowDefinition, InteractiveFlowDefinition, ProgressDisplayStatus, VisibleFlowTreeItem } from "./types.js";
 import type {
   ArtifactExplorerStatus,
   InteractiveConfirmationAction,
@@ -72,6 +86,14 @@ type ConfirmSession = {
   };
   details?: string | null;
   selectedAction: InteractiveConfirmationAction;
+};
+
+type AutoFlowEditorSessionState = {
+  definition: InteractiveAutoFlowDefinition;
+  config: SavedAutoFlowConfig;
+  diagnostics: AutoFlowValidationDiagnostic[];
+  saveTarget: AutoFlowConfigLocation;
+  lastMessage?: string;
 };
 
 const HELP_TEXT = renderMarkdownToTerminal(
@@ -183,6 +205,7 @@ export class InteractiveSessionController {
   private readonly flowMap: Map<string, InteractiveFlowDefinition>;
   private readonly flowTree: FlowTreeNode[];
   private readonly expandedFlowFolders = new Set<string>();
+  private readonly autoFlowEditors = new Map<string, AutoFlowEditorSessionState>();
   private visibleFlowItems: VisibleFlowTreeItem[];
   private readonly state: InteractiveSessionState;
   private readonly logLines: string[] = [];
@@ -203,6 +226,17 @@ export class InteractiveSessionController {
 
     this.state = createInitialInteractiveState(options);
     this.flowMap = new Map(options.flows.map((flow) => [flow.id, flow]));
+    for (const flow of options.flows) {
+      if (!flow.autoFlow) {
+        continue;
+      }
+      this.autoFlowEditors.set(flow.id, {
+        definition: flow.autoFlow,
+        config: JSON.parse(JSON.stringify(flow.autoFlow.config)) as SavedAutoFlowConfig,
+        diagnostics: [],
+        saveTarget: "project",
+      });
+    }
     this.flowTree = buildFlowTree(options.flows);
     collectInitiallyExpandedFolderKeys(this.flowTree).forEach((key) => this.expandedFlowFolders.add(key));
     this.visibleFlowItems = computeVisibleFlowItems(this.flowTree, this.expandedFlowFolders);
@@ -669,6 +703,130 @@ export class InteractiveSessionController {
     return this.state.gitWorkspace;
   }
 
+  getAutoFlowEditor(flowId = this.state.selectedFlowId): AutoFlowEditorViewModel | null {
+    return this.autoFlowViewForFlow(flowId);
+  }
+
+  selectAutoFlowPreset(preset: "simple" | "standard"): void {
+    const flowId = preset === "simple" ? "auto-simple" : "auto-common";
+    this.selectFlowId(flowId);
+  }
+
+  loadAutoFlowConfig(name: string, flowId = this.state.selectedFlowId): void {
+    const loaded = loadAutoFlowConfigByName(name, this.options.cwd);
+    const source = {
+      type: loaded.source.type === "project" ? "project-config" as const : "user-config" as const,
+      configName: loaded.config.name,
+      path: loaded.source.path,
+      ...(loaded.source.shadowedUserPath ? { shadowedUserPath: loaded.source.shadowedUserPath } : {}),
+    };
+    const definition = createConfigAutoFlowDefinition({
+      config: loaded.config,
+      source,
+    });
+    const targetFlowId = this.flowMap.has(`auto-config:${loaded.config.name}`)
+      ? `auto-config:${loaded.config.name}`
+      : flowId;
+    if (!this.autoFlowEditors.has(targetFlowId)) {
+      throw new Error(`Flow '${targetFlowId}' is not a configurable auto-flow entry.`);
+    }
+    this.autoFlowEditors.set(targetFlowId, {
+      definition,
+      config: JSON.parse(JSON.stringify(loaded.config)) as SavedAutoFlowConfig,
+      diagnostics: [],
+      saveTarget: loaded.source.type,
+      lastMessage: `Loaded auto-flow config '${loaded.config.name}'.`,
+    });
+    this.selectFlowId(targetFlowId);
+    this.emitChange();
+  }
+
+  toggleAutoFlowBlock(flowId: string | undefined, blockId: string, enabled?: boolean): void {
+    const targetFlowId = flowId ?? this.state.selectedFlowId;
+    const editor = this.requireAutoFlowEditor(targetFlowId);
+    const view = this.autoFlowViewForFlow(targetFlowId);
+    const currentBlock = view?.slots.flatMap((slot) => slot.blocks).find((block) => block.blockId === blockId);
+    const nextEnabled = enabled ?? !(currentBlock?.enabled ?? true);
+    const result = setAutoFlowBlockEnabled(editor.config, blockId, nextEnabled);
+    this.autoFlowEditors.set(targetFlowId, {
+      ...editor,
+      config: result.config,
+      diagnostics: result.diagnostics,
+      lastMessage: result.diagnostics.length > 0
+        ? result.diagnostics[0]?.message ?? `Auto-flow block '${blockId}' could not be updated.`
+        : `${nextEnabled ? "Enabled" : "Disabled"} auto-flow block '${blockId}'.`,
+    });
+    this.emitChange();
+    if (result.diagnostics.length > 0) {
+      throw new TaskRunnerError(result.diagnostics[0]?.message ?? `Auto-flow block '${blockId}' could not be updated.`);
+    }
+  }
+
+  updateAutoFlowParameter(flowId: string | undefined, blockId: string, paramName: string, value: number): void {
+    const targetFlowId = flowId ?? this.state.selectedFlowId;
+    const editor = this.requireAutoFlowEditor(targetFlowId);
+    const result = updateAutoFlowBlockParameter(editor.config, blockId, paramName, value);
+    this.autoFlowEditors.set(targetFlowId, {
+      ...editor,
+      config: result.config,
+      diagnostics: result.diagnostics,
+      lastMessage: result.diagnostics.length > 0
+        ? result.diagnostics[0]?.message ?? `Auto-flow block '${blockId}' parameter '${paramName}' is invalid.`
+        : `Updated '${blockId}.${paramName}' to ${value}.`,
+    });
+    this.emitChange();
+  }
+
+  insertAutoFlowBlock(flowId: string | undefined, slotId: string, blockId: string): void {
+    const targetFlowId = flowId ?? this.state.selectedFlowId;
+    const editor = this.requireAutoFlowEditor(targetFlowId);
+    const result = insertAutoFlowBlock(editor.config, slotId, blockId);
+    this.autoFlowEditors.set(targetFlowId, {
+      ...editor,
+      config: result.config,
+      diagnostics: result.diagnostics,
+      lastMessage: result.diagnostics.length > 0
+        ? result.diagnostics[0]?.message ?? `Auto-flow block '${blockId}' could not be inserted into '${slotId}'.`
+        : `Inserted auto-flow block '${blockId}' into '${slotId}'.`,
+    });
+    this.emitChange();
+    if (!result.inserted || result.diagnostics.length > 0) {
+      throw new TaskRunnerError(result.diagnostics[0]?.message ?? `Auto-flow block '${blockId}' could not be inserted into '${slotId}'.`);
+    }
+  }
+
+  saveAutoFlowConfig(flowId?: string, name?: string, location?: AutoFlowConfigLocation): void {
+    const targetFlowId = flowId ?? this.state.selectedFlowId;
+    const editor = this.requireAutoFlowEditor(targetFlowId);
+    const view = this.autoFlowViewForFlow(targetFlowId);
+    if (view && !view.status.canSave) {
+      const message = view.diagnostics[0]?.message ?? "Auto-flow config has validation errors and cannot be saved.";
+      this.autoFlowEditors.set(targetFlowId, {
+        ...editor,
+        lastMessage: message,
+      });
+      this.emitChange();
+      throw new TaskRunnerError(message);
+    }
+    const config = {
+      ...editor.config,
+      ...(name ? { name } : {}),
+    };
+    const result = saveAutoFlowConfig(config, {
+      cwd: this.options.cwd,
+      location: location ?? editor.saveTarget,
+    });
+    this.autoFlowEditors.set(targetFlowId, {
+      ...editor,
+      config: result.config,
+      diagnostics: [],
+      saveTarget: result.source.type,
+      lastMessage: `Saved auto-flow config '${result.config.name}' to ${result.source.path}.`,
+    });
+    this.appendLog(`Saved auto-flow config '${result.config.name}' to ${result.source.path}.`);
+    this.emitChange();
+  }
+
   hasActiveInput(): boolean {
     return this.confirmSession !== null || this.activeFormSession !== null;
   }
@@ -867,15 +1025,18 @@ export class InteractiveSessionController {
   getViewModel(layout?: { formContentWidth?: number }): InteractiveSessionViewModel {
     const selectedItem = this.selectedFlowTreeItem();
     const activeFlowId = this.activeFlowId();
-    const selectedFlow = selectedItem?.kind === "flow" ? selectedItem.flow : null;
-    const progressFlow = this.state.busy ? this.flowMap.get(activeFlowId) ?? null : selectedFlow;
+    const selectedFlow = this.flowWithAutoFlowEditor(selectedItem?.kind === "flow" ? selectedItem.flow : null);
+    const progressFlow = this.flowWithAutoFlowEditor(this.state.busy ? this.flowMap.get(activeFlowId) ?? null : selectedFlow);
     const progressState =
       progressFlow && this.state.flowState.flowId === progressFlow.id
         ? this.state.flowState.executionState
         : progressFlow && this.state.currentFlowId === progressFlow.id
           ? this.state.flowState.executionState
           : null;
-    const progressViewModel = buildProgressViewModel(progressFlow, progressState);
+    const progressViewModel = buildProgressViewModel(progressFlow, progressState, {
+      failedFlowId: this.state.failedFlowId,
+      waitingForUserInput: this.activeFormSession !== null,
+    });
     const helpText = `${HELP_TEXT}\n\nAvailable flows:\n${this.options.flows.map((flow) => `- ${flow.treePath.join("/")}`).join("\n")}`;
 
     return {
@@ -897,6 +1058,7 @@ export class InteractiveSessionController {
       selectedFlowIndex: Math.max(0, this.visibleFlowItems.findIndex((item) => item.key === this.state.selectedFlowItemKey)),
       progressTitle: this.panelTitle("Current Flow", "progress"),
       progress: progressViewModel,
+      autoFlow: selectedFlow?.autoFlow ? this.autoFlowViewForFlow(selectedFlow.id) : null,
       progressText: this.renderProgress(progressViewModel),
       progressScrollOffset: this.state.progressScrollOffset,
       descriptionText: this.renderDescription(selectedItem),
@@ -953,6 +1115,53 @@ export class InteractiveSessionController {
     for (const listener of this.listeners) {
       listener(event);
     }
+  }
+
+  private requireAutoFlowEditor(flowId: string): AutoFlowEditorSessionState {
+    const editor = this.autoFlowEditors.get(flowId);
+    if (!editor) {
+      throw new Error(`Flow '${flowId}' is not a configurable auto-flow entry.`);
+    }
+    return editor;
+  }
+
+  private flowWithAutoFlowEditor(flow: InteractiveFlowDefinition | null): InteractiveFlowDefinition | null {
+    if (!flow?.autoFlow) {
+      return flow;
+    }
+    const editor = this.autoFlowEditors.get(flow.id);
+    if (!editor) {
+      return flow;
+    }
+    return {
+      ...flow,
+      autoFlow: {
+        ...editor.definition,
+        config: JSON.parse(JSON.stringify(editor.config)) as SavedAutoFlowConfig,
+        ...(editor.diagnostics.length > 0 ? { diagnostics: editor.diagnostics } : {}),
+        ...(editor.lastMessage ? { lastMessage: editor.lastMessage } : {}),
+      },
+    };
+  }
+
+  private autoFlowViewForFlow(flowId: string): AutoFlowEditorViewModel | null {
+    const flow = this.flowMap.get(flowId);
+    const editor = this.autoFlowEditors.get(flowId);
+    if (!flow?.autoFlow || !editor) {
+      return null;
+    }
+    return buildAutoFlowEditorViewModel(
+      {
+        ...editor.definition,
+        config: editor.config,
+      },
+      {
+        config: editor.config,
+        ...(editor.diagnostics.length > 0 ? { diagnostics: editor.diagnostics } : {}),
+        saveTarget: editor.saveTarget,
+        ...(editor.lastMessage ? { lastMessage: editor.lastMessage } : {}),
+      },
+    );
   }
 
   private createAdapter(): OutputAdapter {
@@ -1040,8 +1249,34 @@ export class InteractiveSessionController {
       ].join("\n");
     }
 
-    const { flow } = selectedItem;
+    const flow = this.flowWithAutoFlowEditor(selectedItem.flow) ?? selectedItem.flow;
     const description = flow.description?.trim() || "No description available for this flow.";
+    if (flow.autoFlow) {
+      const autoFlow = this.autoFlowViewForFlow(flow.id);
+      const diagnostics = autoFlow?.diagnostics ?? [];
+      const slotLines = autoFlow?.slots.map((slot) => {
+        const blockText = slot.blocks.length === 0
+          ? "empty"
+          : slot.blocks.map((block) => `${block.title} [${block.status}]`).join(", ");
+        return `- ${slot.title}: ${blockText}`;
+      }) ?? [];
+      const diagnosticLines = diagnostics.length > 0
+        ? ["", "Validation:", ...diagnostics.map((diagnostic) => `- ${diagnostic.message}`)]
+        : [];
+      const statusLine = autoFlow
+        ? `Config status: ${autoFlow.status.valid ? "valid" : "invalid"} (${autoFlow.status.sourceLabel})`
+        : "Config status: unavailable";
+      return renderMarkdownToTerminal(stripAnsi([
+        description,
+        "",
+        statusLine,
+        autoFlow?.status.lastMessage ? `Last action: ${autoFlow.status.lastMessage}` : "",
+        "",
+        "Slots:",
+        ...slotLines,
+        ...diagnosticLines,
+      ].filter((line) => line.length > 0).join("\n")));
+    }
     const details = [
       `Path: ${flow.treePath.join("/")}`,
       `Source: ${flow.source === "project-local" ? "project-local" : flow.source === "global" ? "global" : "built-in"}`,
@@ -1059,13 +1294,16 @@ export class InteractiveSessionController {
     const lines: string[] = [progressViewModel.flow.label, ""];
     for (const item of progressViewModel.items) {
       if (item.kind === "termination") {
-        const symbol = item.status === "done" ? "✓" : "■";
+        const symbol = item.status === "done" || item.status === "success" ? "✓" : item.status === "failed" ? "×" : "■";
         lines.push(`${symbol} ${item.label}`);
         lines.push(item.detail);
         continue;
       }
       const indent = "  ".repeat(item.depth);
       lines.push(`${indent}${this.symbolForStatus(progressViewModel.flow.id, item.status)} ${item.label}`);
+      if ((item.kind === "slot" || item.kind === "block") && item.detail && item.status !== "pending" && item.status !== "success") {
+        lines.push(`${indent}  ${item.detail}`);
+      }
     }
     return lines.join("\n").trimEnd();
   }
@@ -1397,6 +1635,20 @@ export class InteractiveSessionController {
     if (!selectedItem || selectedItem.kind !== "flow") {
       return;
     }
+    const autoFlow = this.autoFlowViewForFlow(selectedItem.flow.id);
+    if (autoFlow && !autoFlow.status.canRun) {
+      const message = autoFlow.diagnostics[0]?.message ?? "Auto-flow config has validation errors and cannot be run.";
+      const editor = this.autoFlowEditors.get(selectedItem.flow.id);
+      if (editor) {
+        this.autoFlowEditors.set(selectedItem.flow.id, {
+          ...editor,
+          lastMessage: message,
+        });
+      }
+      this.appendLog(message);
+      this.emitChange();
+      return;
+    }
     const confirmation = await this.options.getRunConfirmation(selectedItem.flow.id);
     if (this.state.busy || this.confirmSession) {
       return;
@@ -1593,15 +1845,24 @@ export class InteractiveSessionController {
 
   private symbolForStatus(
     flowId: string,
-    status: "pending" | "running" | "done" | "skipped",
+    status: ProgressDisplayStatus,
   ): string {
-    if (status === "done") {
+    if (status === "done" || status === "success") {
       return "✓";
+    }
+    if (status === "failed" || status === "invalid") {
+      return "×";
+    }
+    if (status === "stopped" || status === "blocked") {
+      return "■";
+    }
+    if (status === "disabled" || status === "empty") {
+      return "·";
     }
     if (status === "skipped") {
       return "·";
     }
-    if (status === "running") {
+    if (status === "running" || status === "waiting-user") {
       if (this.state.failedFlowId === flowId && !this.state.busy) {
         return "×";
       }

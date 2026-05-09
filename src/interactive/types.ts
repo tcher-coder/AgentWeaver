@@ -1,4 +1,28 @@
 import type { FlowExecutionState } from "../pipeline/spec-types.js";
+import type { AutoFlowConfigLocation, SavedAutoFlowConfig } from "../pipeline/auto-flow-config.js";
+import type { AutoFlowSelection } from "../pipeline/auto-flow-resolver.js";
+import type { AutoFlowPresetId, AutoFlowSlotId, AutoFlowValidationDiagnostic } from "../pipeline/auto-flow-types.js";
+
+export type AutoFlowEditorSource =
+  | {
+      type: "preset";
+      preset: AutoFlowPresetId;
+    }
+  | {
+      type: "project-config" | "user-config";
+      configName: string;
+      path: string;
+      shadowedUserPath?: string;
+    };
+
+export type InteractiveAutoFlowDefinition = {
+  selection: AutoFlowSelection;
+  basePreset: AutoFlowPresetId;
+  config: SavedAutoFlowConfig;
+  source: AutoFlowEditorSource;
+  diagnostics?: AutoFlowValidationDiagnostic[];
+  lastMessage?: string;
+};
 
 export type InteractiveFlowDefinition = {
   id: string;
@@ -7,6 +31,7 @@ export type InteractiveFlowDefinition = {
   source: "built-in" | "global" | "project-local";
   treePath: string[];
   sourcePath?: string;
+  autoFlow?: InteractiveAutoFlowDefinition;
   phases: Array<{
     id: string;
     repeatVars: Record<string, string | number | boolean | null>;
@@ -19,6 +44,87 @@ export type InteractiveFlowDefinition = {
 export type FocusPane = "flows" | "progress" | "summary" | "log";
 
 export type FlowStatus = "pending" | "running" | "done" | "skipped";
+
+export type AutoFlowProgressStatus =
+  | "pending"
+  | "running"
+  | "success"
+  | "failed"
+  | "stopped"
+  | "skipped"
+  | "waiting-user"
+  | "disabled"
+  | "blocked"
+  | "invalid"
+  | "empty";
+
+export type ProgressDisplayStatus = FlowStatus | AutoFlowProgressStatus;
+
+export type AutoFlowParameterViewModel = {
+  name: string;
+  label: string;
+  type: "integer";
+  value: number | null;
+  defaultValue: number;
+  min: number;
+  max: number;
+};
+
+export type AutoFlowBlockActions = {
+  canEnable: boolean;
+  canDisable: boolean;
+  canRemove: boolean;
+  canEditParams: boolean;
+};
+
+export type AutoFlowBlockViewModel = {
+  blockId: string;
+  title: string;
+  slotId: AutoFlowSlotId;
+  status: AutoFlowProgressStatus;
+  reason: string;
+  locked: boolean;
+  enabled: boolean;
+  actions: AutoFlowBlockActions;
+  params: AutoFlowParameterViewModel[];
+  diagnostics: AutoFlowValidationDiagnostic[];
+  phaseId?: string;
+};
+
+export type AutoFlowSlotViewModel = {
+  slotId: AutoFlowSlotId;
+  title: string;
+  status: AutoFlowProgressStatus;
+  reason: string;
+  blocks: AutoFlowBlockViewModel[];
+  diagnostics: AutoFlowValidationDiagnostic[];
+};
+
+export type AutoFlowAvailableBlockViewModel = {
+  blockId: string;
+  title: string;
+  allowedSlots: AutoFlowSlotId[];
+};
+
+export type AutoFlowConfigStatus = {
+  valid: boolean;
+  canSave: boolean;
+  canRun: boolean;
+  saveTarget: AutoFlowConfigLocation;
+  sourceLabel: string;
+  lastMessage?: string;
+};
+
+export type AutoFlowEditorViewModel = {
+  selection: AutoFlowSelection;
+  basePreset: AutoFlowPresetId;
+  configName: string;
+  source: AutoFlowEditorSource;
+  slots: AutoFlowSlotViewModel[];
+  diagnostics: AutoFlowValidationDiagnostic[];
+  availableBlocks: AutoFlowAvailableBlockViewModel[];
+  status: AutoFlowConfigStatus;
+};
 
 export type FlowStatusState = {
   flowId: string | null;
@@ -92,11 +198,30 @@ export type ProgressViewModelItem =
       status: FlowStatus;
     }
   | {
+      kind: "slot";
+      label: string;
+      depth: number;
+      status: AutoFlowProgressStatus;
+      detail?: string;
+      slotId: AutoFlowSlotId;
+    }
+  | {
+      kind: "block";
+      label: string;
+      depth: number;
+      status: AutoFlowProgressStatus;
+      detail?: string;
+      slotId: AutoFlowSlotId;
+      blockId: string;
+      locked: boolean;
+      enabled: boolean;
+    }
+  | {
       kind: "termination";
       label: string;
       detail: string;
       depth: number;
-      status: "done" | "running";
+      status: "done" | "running" | "success" | "stopped" | "failed";
     };
 
 export type ProgressViewModel = {

@@ -261,6 +261,30 @@ export function createWebInteractiveSession(
         controller.closeArtifactExplorer();
         return;
       }
+      if (action.type === "autoFlow.selectPreset") {
+        controller.selectAutoFlowPreset(action.preset);
+        return;
+      }
+      if (action.type === "autoFlow.loadConfig") {
+        controller.loadAutoFlowConfig(action.name, action.flowId);
+        return;
+      }
+      if (action.type === "autoFlow.save") {
+        controller.saveAutoFlowConfig(action.flowId, action.name, action.location);
+        return;
+      }
+      if (action.type === "autoFlow.toggleBlock") {
+        controller.toggleAutoFlowBlock(action.flowId, action.blockId, action.enabled);
+        return;
+      }
+      if (action.type === "autoFlow.updateParam") {
+        controller.updateAutoFlowParameter(action.flowId, action.blockId, action.paramName, action.value);
+        return;
+      }
+      if (action.type === "autoFlow.insertBlock") {
+        controller.insertAutoFlowBlock(action.flowId, action.slotId, action.blockId);
+        return;
+      }
       if (action.type === "git.refresh") {
         await controller.refreshGitWorkspace();
         return;

@@ -192,7 +192,7 @@ h2 {
 
 .details-pane {
   gap: 10px;
-  grid-template-rows: auto minmax(76px, 0.18fr) minmax(0, 1fr);
+  grid-template-rows: auto minmax(76px, 0.18fr) auto minmax(0, 1fr);
 }
 
 .split-panels {
@@ -359,6 +359,137 @@ h2 {
 
 .progress-row.status-skipped .progress-marker {
   background: rgba(255, 255, 255, 0.035);
+}
+
+.progress-row.status-success {
+  color: #9df0c2;
+  background: rgba(56, 224, 143, 0.075);
+}
+
+.progress-row.status-success .progress-marker {
+  background: rgba(56, 224, 143, 0.16);
+}
+
+.progress-row.status-waiting-user,
+.progress-row.status-stopped,
+.progress-row.status-blocked {
+  border-color: rgba(242, 201, 76, 0.58);
+  background: rgba(242, 201, 76, 0.12);
+  color: #ffe49a;
+}
+
+.progress-row.status-failed,
+.progress-row.status-invalid {
+  border-color: rgba(255, 107, 107, 0.66);
+  background: rgba(255, 107, 107, 0.12);
+  color: #ffb3b3;
+}
+
+.progress-row.status-disabled,
+.progress-row.status-empty {
+  color: var(--aw-dim);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.auto-flow-editor {
+  @apply grid gap-2 overflow-auto px-3 pb-2;
+  max-height: 260px;
+  border-bottom: 1px solid var(--aw-border);
+}
+
+.auto-flow-toolbar,
+.auto-flow-block,
+.auto-flow-insert,
+.auto-flow-params {
+  @apply flex flex-wrap items-center gap-2;
+}
+
+.auto-flow-toolbar {
+  @apply pt-2;
+}
+
+.auto-flow-status,
+.auto-flow-pill,
+.auto-flow-locked {
+  @apply inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-xs font-bold;
+}
+
+.auto-flow-status.valid,
+.auto-flow-pill.status-success,
+.auto-flow-pill.status-running {
+  color: var(--aw-accent-strong);
+  border-color: rgba(56, 224, 143, 0.68);
+  background: rgba(56, 224, 143, 0.14);
+}
+
+.auto-flow-status.invalid,
+.auto-flow-pill.status-invalid,
+.auto-flow-pill.status-failed {
+  color: #ffb3b3;
+  border-color: rgba(255, 107, 107, 0.66);
+  background: rgba(255, 107, 107, 0.12);
+}
+
+.auto-flow-pill.status-disabled,
+.auto-flow-pill.status-empty,
+.auto-flow-locked {
+  color: var(--aw-dim);
+  border-color: var(--aw-border);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.auto-flow-message,
+.auto-flow-reason,
+.auto-flow-empty {
+  color: var(--aw-muted);
+  font-size: 12px;
+}
+
+.auto-flow-diagnostics {
+  @apply grid gap-1 rounded-md border p-2;
+  color: #ffb3b3;
+  border-color: rgba(255, 107, 107, 0.5);
+  background: rgba(255, 107, 107, 0.1);
+  font-size: 12px;
+}
+
+.auto-flow-slots {
+  @apply grid gap-2;
+}
+
+.auto-flow-slot {
+  @apply grid gap-1 rounded-md border p-2;
+  border-color: var(--aw-border);
+  background: rgba(7, 11, 10, 0.42);
+}
+
+.auto-flow-slot-title,
+.auto-flow-block-label {
+  @apply flex flex-wrap items-center gap-2;
+}
+
+.auto-flow-blocks {
+  @apply grid gap-1;
+}
+
+.auto-flow-block {
+  @apply rounded-md border p-2;
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.auto-flow-block-main {
+  @apply grid min-w-0 gap-1;
+}
+
+.auto-flow-params input,
+.auto-flow-insert select {
+  min-height: 30px;
+  border-radius: var(--radius-md);
+  padding: 4px 8px;
+  border: 1px solid var(--aw-border-strong);
+  color: var(--aw-text);
+  background: #070b0a;
 }
 
 .git-body {

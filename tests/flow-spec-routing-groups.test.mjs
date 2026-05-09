@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -8,6 +8,8 @@ const distRoot = path.resolve(process.cwd(), "dist");
 const { builtInCommandFlowFile, flowRoutingGroups, isBuiltInCommandFlowId, loadInteractiveFlowCatalog } = await import(
   pathToFileURL(path.join(distRoot, "pipeline/flow-catalog.js")).href
 );
+const { loadDeclarativeFlow } = await import(pathToFileURL(path.join(distRoot, "pipeline/declarative-flows.js")).href);
+const { listBuiltInFlowSpecFiles } = await import(pathToFileURL(path.join(distRoot, "pipeline/spec-loader.js")).href);
 
 const allowedGroups = new Set([
   "planning",
@@ -72,9 +74,11 @@ describe("flow spec routing groups", () => {
     assert.equal(entryIds.has("plan"), true);
   });
 
-  it("annotates every targeted built-in llm-prompt step with an allowed routing group", () => {
+  it("annotates every targeted built-in llm-prompt step with an allowed routing group", async () => {
     for (const relativePath of targetedSpecs) {
-      const spec = JSON.parse(readFileSync(path.join(distRoot, "pipeline/flow-specs", relativePath), "utf8"));
+      const spec = relativePath === "auto-common.json"
+        ? await loadDeclarativeFlow({ source: "built-in", fileName: relativePath })
+        : JSON.parse(readFileSync(path.join(distRoot, "pipeline/flow-specs", relativePath), "utf8"));
       const steps = collectLlmPromptSteps(spec);
       assert.ok(steps.length > 0, `${relativePath} should contain llm-prompt steps`);
       for (const step of steps) {
@@ -120,5 +124,18 @@ describe("flow spec routing groups", () => {
         `missing built-in flow file mapping for ${entry.id}`,
       );
     }
+  });
+
+  it("packages required physical specs while auto-simple and auto-common remain virtual", () => {
+    const builtInFiles = listBuiltInFlowSpecFiles();
+
+    assert.equal(builtInFiles.filter((fileName) => fileName === "auto-simple.json").length, 1);
+    assert.equal(builtInFiles.filter((fileName) => fileName === "auto-common.json").length, 1);
+    assert.equal(existsSync(path.join(distRoot, "pipeline/flow-specs/auto-simple.json")), false);
+    assert.equal(existsSync(path.join(distRoot, "pipeline/flow-specs/auto-common.json")), false);
+    assert.equal(existsSync(path.join(distRoot, "pipeline/flow-specs/review/review-loop.json")), true);
+    assert.equal(existsSync(path.join(distRoot, "pipeline/flow-specs/design-review/design-review-loop.json")), true);
+    assert.equal(existsSync(path.join(distRoot, "structured-artifact-schemas.json")), true);
+    assert.equal(existsSync(path.join(distRoot, "interactive/web/static/index.html")), true);
   });
 });

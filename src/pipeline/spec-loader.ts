@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 
 import { TaskRunnerError } from "../errors.js";
 import { agentweaverConfigDir } from "../runtime/env-loader.js";
+import { resolveBuiltInAutoFlowSpecByFileName } from "./auto-flow-resolver.js";
+import { VIRTUAL_BUILT_IN_AUTO_FLOW_FILE_NAMES } from "./auto-flow-presets.js";
 import type { DeclarativeFlowSpec } from "./spec-types.js";
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -35,12 +37,14 @@ export function globalFlowSpecsDir(): string {
 }
 
 export function listBuiltInFlowSpecFiles(): string[] {
+  const files = new Set<string>(VIRTUAL_BUILT_IN_AUTO_FLOW_FILE_NAMES);
   if (!existsSync(BUILT_IN_FLOW_SPECS_DIR)) {
-    return [];
+    return [...files].sort((left, right) => left.localeCompare(right));
   }
-  return collectJsonFilesRecursively(BUILT_IN_FLOW_SPECS_DIR)
-    .map((filePath) => path.relative(BUILT_IN_FLOW_SPECS_DIR, filePath))
-    .sort((left, right) => left.localeCompare(right));
+  for (const filePath of collectJsonFilesRecursively(BUILT_IN_FLOW_SPECS_DIR)) {
+    files.add(path.relative(BUILT_IN_FLOW_SPECS_DIR, filePath));
+  }
+  return [...files].sort((left, right) => left.localeCompare(right));
 }
 
 function collectJsonFilesRecursively(directory: string): string[] {
@@ -76,6 +80,12 @@ export function listGlobalFlowSpecFiles(): string[] {
 }
 
 export function loadFlowSpecSync(source: FlowSpecSource): DeclarativeFlowSpec {
+  if (source.source === "built-in") {
+    const resolvedAutoFlowSpec = resolveBuiltInAutoFlowSpecByFileName(source.fileName);
+    if (resolvedAutoFlowSpec) {
+      return resolvedAutoFlowSpec;
+    }
+  }
   return parseFlowSpec(source.source === "built-in" ? resolveBuiltInFlowSpecPath(source.fileName) : source.filePath);
 }
 

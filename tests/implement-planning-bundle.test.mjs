@@ -12,13 +12,14 @@ const { resolveLatestPlanningBundle } = await import(
 const { resolveValue } = await import(
   pathToFileURL(path.join(distRoot, "pipeline/value-resolver.js")).href
 );
+const { loadDeclarativeFlow } = await import(
+  pathToFileURL(path.join(distRoot, "pipeline/declarative-flows.js")).href
+);
 
 const implementFlowSpec = JSON.parse(
   readFileSync(path.join(distRoot, "pipeline/flow-specs/implement.json"), "utf8"),
 );
-const autoCommonFlowSpec = JSON.parse(
-  readFileSync(path.join(distRoot, "pipeline/flow-specs/auto-common.json"), "utf8"),
-);
+const autoCommonFlowSpec = await loadDeclarativeFlow({ source: "built-in", fileName: "auto-common.json" });
 const autoGolangFlowSpec = JSON.parse(
   readFileSync(path.join(distRoot, "pipeline/flow-specs/auto-golang.json"), "utf8"),
 );

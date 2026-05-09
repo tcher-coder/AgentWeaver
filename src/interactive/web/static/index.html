@@ -44,6 +44,7 @@
           <section class="work-panel" aria-label="Progress">
             <div class="pane-heading">
               <h2 id="progress-title">Progress</h2>
+              <span id="progress-flow-label" class="progress-flow-label" hidden></span>
             </div>
             <div id="progress-text" class="progress-tree" role="tree" tabindex="0">No progress yet.</div>
           </section>
@@ -82,7 +83,13 @@
       <section class="log-pane" aria-label="Activity log">
         <div class="pane-heading">
           <h2 id="log-title">Activity</h2>
-          <button id="clear-log-button" type="button">Clear Log</button>
+          <div class="log-actions">
+            <label class="log-autoscroll">
+              <input id="log-autoscroll-toggle" type="checkbox" checked>
+              <span>Auto-scroll</span>
+            </label>
+            <button id="clear-log-button" type="button">Clear Log</button>
+          </div>
         </div>
         <pre id="log-text" class="text-panel log-output"></pre>
       </section>

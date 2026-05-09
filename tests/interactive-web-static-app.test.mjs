@@ -429,14 +429,17 @@ describe("static Artifact Explorer app", () => {
     const css = readFileSync(path.resolve("src/interactive/web/static/styles.input.css"), "utf8");
     assert.match(html, /id="theme-toggle-button"/);
     assert.match(html, /id="auto-flow-resizer"/);
+    assert.match(html, /id="log-autoscroll-toggle"/);
     assert.match(css, /:root\[data-theme="dark"\]/);
     const appSource = readFileSync(path.resolve("src/interactive/web/static/app.js"), "utf8");
     assert.match(appSource, /agentweaver_web_auto_flow_height/);
     assert.match(appSource, /AUTO_FLOW_HEIGHT_DEFAULT\s*=\s*520/);
     assert.match(appSource, /agentweaver_web_workspace_split/);
+    assert.match(appSource, /agentweaver_web_log_autoscroll/);
     assert.match(css, /\.auto-flow-toolbar\s*\{[\s\S]*position:\s*sticky/);
     assert.match(css, /\.auto-flow-editor\s*\{[\s\S]*height:\s*min\(56vh,\s*520px\)/);
     assert.match(css, /\.auto-flow-resizer\s*\{[\s\S]*cursor:\s*row-resize/);
+    assert.match(css, /\.log-autoscroll\s*\{[\s\S]*font-size:\s*12px/);
     assert.match(css, /\.git-file-type\s*\{[\s\S]*font-size:\s*9px/);
 
     const harness = createHarness(() => createResponse({ scopeKey: "ag-theme", items: [] }));
@@ -446,6 +449,24 @@ describe("static Artifact Explorer app", () => {
     harness.document.getElementById("theme-toggle-button").click();
     assert.equal(harness.document.body.getAttribute("data-theme"), "dark");
     assert.equal(harness.document.getElementById("theme-toggle-label").textContent, "Dark");
+  });
+
+  it("keeps Activity pinned to the bottom when auto-scroll is enabled", () => {
+    const harness = createHarness(() => createResponse({ scopeKey: "ag-log", items: [] }));
+    const log = harness.document.getElementById("log-text");
+    const toggle = harness.document.getElementById("log-autoscroll-toggle");
+
+    log.scrollHeight = 720;
+    harness.sendSnapshot(progressSnapshot([], { logText: "line 1\nline 2" }));
+    assert.equal(toggle.checked, true);
+    assert.equal(log.scrollTop, 720);
+
+    toggle.checked = false;
+    toggle.dispatchEvent({ type: "change", target: toggle });
+    log.scrollTop = 25;
+    log.scrollHeight = 900;
+    harness.sendSnapshot(progressSnapshot([], { logText: "line 1\nline 2\nline 3" }));
+    assert.equal(log.scrollTop, 25);
   });
 
   it("renders Git Workspace dirty state and sends typed Git actions", () => {
@@ -654,7 +675,8 @@ describe("static Artifact Explorer app", () => {
 
     const progress = harness.document.getElementById("progress-text");
     const rows = progress.querySelectorAll(".progress-row");
-    assert.equal(progress.querySelector(".progress-flow").textContent, "Structured Progress Flow");
+    assert.equal(harness.document.getElementById("progress-flow-label").textContent, "Structured Progress Flow");
+    assert.equal(progress.querySelector(".progress-flow"), null);
     assert.equal(rows.length, 5);
     assert.equal(rows[0].dataset.kind, "group");
     assert.equal(rows[0].dataset.status, "done");

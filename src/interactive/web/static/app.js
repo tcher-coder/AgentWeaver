@@ -12,6 +12,8 @@
   var WORKSPACE_SPLIT_DEFAULT = 36;
   var WORKSPACE_SPLIT_MIN = 24;
   var WORKSPACE_SPLIT_MAX = 58;
+  var LOG_AUTOSCROLL_STORAGE_KEY = "agentweaver.web.logAutoscroll";
+  var LOG_AUTOSCROLL_COOKIE_NAME = "agentweaver_web_log_autoscroll";
   var autoFlowResizeDrag = null;
   var workspaceResizeDrag = null;
 
@@ -21,6 +23,7 @@
     theme: loadThemePreference(),
     autoFlowHeight: loadAutoFlowHeightPreference(),
     workspaceSplit: loadWorkspaceSplitPreference(),
+    logAutoscroll: loadLogAutoscrollPreference(),
     formValues: {},
     modalSignature: null,
     artifacts: {
@@ -74,6 +77,7 @@
     splitPanels: document.getElementById("split-panels"),
     workspaceResizer: document.getElementById("workspace-resizer"),
     progressTitle: document.getElementById("progress-title"),
+    progressFlowLabel: document.getElementById("progress-flow-label"),
     progress: document.getElementById("progress-text"),
     gitRefresh: document.getElementById("git-refresh-button"),
     gitSummary: document.getElementById("git-summary"),
@@ -102,6 +106,7 @@
     gitDiffBody: document.getElementById("git-diff-body"),
     logTitle: document.getElementById("log-title"),
     log: document.getElementById("log-text"),
+    logAutoscroll: document.getElementById("log-autoscroll-toggle"),
     clearLog: document.getElementById("clear-log-button"),
     artifactOpen: document.getElementById("artifact-open-button"),
     artifactDrawer: document.getElementById("artifact-drawer"),
@@ -625,6 +630,83 @@
     persistWorkspaceSplit(state.workspaceSplit);
   }
 
+  function loadLogAutoscrollPreference() {
+    var storage = themeStorage();
+    if (storage) {
+      var stored = storage.getItem(LOG_AUTOSCROLL_STORAGE_KEY);
+      if (stored === "1" || stored === "0") {
+        return stored === "1";
+      }
+    }
+    var cookieValue = readLogAutoscrollCookie();
+    if (cookieValue === "1" || cookieValue === "0") {
+      return cookieValue === "1";
+    }
+    return true;
+  }
+
+  function persistLogAutoscroll(enabled) {
+    var value = enabled ? "1" : "0";
+    var storage = themeStorage();
+    if (storage) {
+      try {
+        storage.setItem(LOG_AUTOSCROLL_STORAGE_KEY, value);
+      } catch {
+        // Ignore storage failures; cookie persistence may still work.
+      }
+    }
+    writeLogAutoscrollCookie(value);
+  }
+
+  function readLogAutoscrollCookie() {
+    if (typeof document === "undefined" || typeof document.cookie !== "string") {
+      return null;
+    }
+    var prefix = LOG_AUTOSCROLL_COOKIE_NAME + "=";
+    var match = document.cookie.split(";").map(function (part) {
+      return part.trim();
+    }).find(function (part) {
+      return part.indexOf(prefix) === 0;
+    });
+    if (!match) {
+      return null;
+    }
+    try {
+      return decodeURIComponent(match.slice(prefix.length));
+    } catch {
+      return null;
+    }
+  }
+
+  function writeLogAutoscrollCookie(value) {
+    if (typeof document === "undefined") {
+      return;
+    }
+    try {
+      document.cookie = LOG_AUTOSCROLL_COOKIE_NAME + "=" + encodeURIComponent(value) + "; Max-Age=31536000; Path=/; SameSite=Lax";
+    } catch {
+      // Ignore cookie failures; localStorage may still persist the setting.
+    }
+  }
+
+  function applyLogAutoscroll(enabled) {
+    state.logAutoscroll = Boolean(enabled);
+    if (elements.logAutoscroll) {
+      elements.logAutoscroll.checked = state.logAutoscroll;
+    }
+    if (state.logAutoscroll) {
+      scrollLogToBottom();
+    }
+  }
+
+  function scrollLogToBottom() {
+    if (!elements.log) {
+      return;
+    }
+    elements.log.scrollTop = elements.log.scrollHeight;
+    rememberScrollOffset("log", elements.log.scrollTop);
+  }
+
   function actionId() {
     return "web-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
   }
@@ -879,9 +961,8 @@
     if (!lines) return;
     var wasPinned = elements.log.scrollTop + elements.log.clientHeight >= elements.log.scrollHeight - 8;
     elements.log.textContent += (elements.log.textContent ? "\n" : "") + lines;
-    if (wasPinned) {
-      elements.log.scrollTop = elements.log.scrollHeight;
-      rememberScrollOffset("log", elements.log.scrollTop);
+    if (state.logAutoscroll || wasPinned) {
+      scrollLogToBottom();
     }
   }
 
@@ -895,7 +976,7 @@
     elements.progressTitle.textContent = text(vm.progressTitle, "Progress");
     renderProgress(vm);
     elements.logTitle.textContent = text(vm.logTitle, "Activity");
-    setTextPreservingScroll(elements.log, text(vm.logText, ""));
+    setTextPreservingScroll(elements.log, text(vm.logText, ""), state.logAutoscroll);
     elements.helpText.textContent = text(vm.helpText, "No help is available.");
     elements.helpPanel.hidden = !vm.helpVisible;
     elements.help.setAttribute("aria-pressed", vm.helpVisible ? "true" : "false");
@@ -1751,6 +1832,7 @@
   function renderProgress(vm) {
     var progress = vm && vm.progress;
     var items = progress && Array.isArray(progress.items) ? progress.items.filter(isProgressItem) : [];
+    renderProgressFlowLabel(progress && progress.flow ? text(progress.flow.label, progress.flow.id || "") : "");
     if (!progress || !progress.flow || items.length === 0) {
       var fallbackText = text(vm && vm.progressText, "No progress yet.");
       elements.progress.className = "progress-tree fallback";
@@ -1770,15 +1852,19 @@
     elements.progress.className = "progress-tree";
     elements.progress.innerHTML = "";
 
-    var flow = document.createElement("div");
-    flow.className = "progress-flow";
-    flow.textContent = text(progress.flow.label, progress.flow.id || "Current flow");
-    elements.progress.append(flow);
-
     items.forEach(function (item, index) {
       elements.progress.append(renderProgressRow(item, index));
     });
     elements.progress.scrollTop = wasPinned ? elements.progress.scrollHeight : previousScrollTop;
+  }
+
+  function renderProgressFlowLabel(label) {
+    if (!elements.progressFlowLabel) {
+      return;
+    }
+    var value = text(label, "");
+    elements.progressFlowLabel.textContent = value;
+    elements.progressFlowLabel.hidden = value.length === 0;
   }
 
   function isProgressItem(item) {
@@ -1836,14 +1922,17 @@
     return "○";
   }
 
-  function setTextPreservingScroll(element, value) {
+  function setTextPreservingScroll(element, value, forceBottom) {
     if (element.textContent === value) {
+      if (forceBottom) {
+        element.scrollTop = element.scrollHeight;
+      }
       return;
     }
     var previousScrollTop = element.scrollTop;
     var wasPinned = previousScrollTop + element.clientHeight >= element.scrollHeight - 8;
     element.textContent = value;
-    element.scrollTop = wasPinned ? element.scrollHeight : previousScrollTop;
+    element.scrollTop = forceBottom || wasPinned ? element.scrollHeight : previousScrollTop;
   }
 
   function captureUiState() {
@@ -1874,7 +1963,7 @@
   function restoreUiState(uiState) {
     if (!uiState) return;
     elements.progress.scrollTop = uiState.progressScrollTop;
-    elements.log.scrollTop = uiState.logScrollTop;
+    elements.log.scrollTop = state.logAutoscroll ? elements.log.scrollHeight : uiState.logScrollTop;
     elements.helpText.scrollTop = uiState.helpScrollTop;
     elements.modalRoot.scrollTop = uiState.modalScrollTop;
     var modalBody = currentModalBody();
@@ -3211,6 +3300,13 @@
     elements.workspaceResizer.addEventListener("pointerdown", beginWorkspaceResize);
     elements.workspaceResizer.addEventListener("dblclick", resetWorkspaceSplit);
     elements.workspaceResizer.addEventListener("keydown", handleWorkspaceResizerKeydown);
+  }
+  applyLogAutoscroll(state.logAutoscroll);
+  if (elements.logAutoscroll) {
+    elements.logAutoscroll.addEventListener("change", function () {
+      applyLogAutoscroll(elements.logAutoscroll.checked);
+      persistLogAutoscroll(state.logAutoscroll);
+    });
   }
   elements.run.addEventListener("click", api.openRunConfirm);
   elements.interrupt.addEventListener("click", api.openInterruptConfirm);

@@ -1,10 +1,11 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import YAML from "yaml";
 
 import { TaskRunnerError } from "../errors.js";
 import { agentweaverConfigDir } from "../runtime/env-loader.js";
+import { getBuiltInAutoFlowBlockDefinition } from "./auto-flow-blocks.js";
 
 export const AUTO_FLOW_PRESETS = ["simple", "standard"] as const;
 export type AutoFlowPresetName = (typeof AUTO_FLOW_PRESETS)[number];
@@ -58,6 +59,31 @@ export type LoadedAutoFlowConfig = {
   rawYaml: string;
   normalizedYaml: string;
   source: AutoFlowConfigSource;
+};
+
+export type AutoFlowConfigListItem = {
+  name: string;
+  projectPath?: string;
+  userPath?: string;
+  selectedSource: AutoFlowConfigLocation;
+};
+
+export type SaveAutoFlowConfigOptions = {
+  cwd?: string;
+  location?: AutoFlowConfigLocation;
+};
+
+export type SavedAutoFlowConfigWriteResult = {
+  config: SavedAutoFlowConfig;
+  normalizedYaml: string;
+  source: AutoFlowConfigSource;
+};
+
+export type AutoFlowBlockInsertionValidation = {
+  ok: boolean;
+  message: string;
+  slotName?: AutoFlowSlotName;
+  blockId?: AutoFlowBlockId;
 };
 
 const SLOT_BLOCKS: Record<AutoFlowSlotName, readonly AutoFlowBlockId[]> = {
@@ -131,6 +157,27 @@ function isEnabled(value: unknown): value is AutoFlowBlockEnabled {
   return value === true || value === false || value === "auto";
 }
 
+function parameterBoundsForBlock(
+  blockId: AutoFlowBlockId,
+  paramName: string,
+): { min: number; max: number } | null {
+  const definition = getBuiltInAutoFlowBlockDefinition(blockId);
+  const paramDefinition = definition?.params?.[paramName];
+  if (paramDefinition?.type === "integer") {
+    return {
+      min: paramDefinition.min,
+      max: paramDefinition.max,
+    };
+  }
+  if (paramName === "maxIterations" && ITERATIVE_BLOCKS.has(blockId)) {
+    return {
+      min: 1,
+      max: 5,
+    };
+  }
+  return null;
+}
+
 function validateBlock(
   rawBlock: unknown,
   slotName: AutoFlowSlotName,
@@ -168,6 +215,15 @@ function validateBlock(
     configName,
     configPath,
     `${objectPath}.maxIterations is not supported by block '${blockId}'`,
+  );
+  const maxIterationBounds = parameterBoundsForBlock(blockId, "maxIterations");
+  assertConfig(
+    maxIterations === undefined
+      || !maxIterationBounds
+      || (Number(maxIterations) >= maxIterationBounds.min && Number(maxIterations) <= maxIterationBounds.max),
+    configName,
+    configPath,
+    `${objectPath}.maxIterations for block '${blockId}' must be between ${maxIterationBounds?.min ?? 1} and ${maxIterationBounds?.max ?? 5}; received ${Number(maxIterations)}`,
   );
 
   return {
@@ -242,6 +298,36 @@ export function autoFlowConfigSearchPaths(name: string, cwd = process.cwd()): { 
   };
 }
 
+function configNamesInDir(dirPath: string): string[] {
+  if (!existsSync(dirPath)) {
+    return [];
+  }
+  return readdirSync(dirPath, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /\.ya?ml$/i.test(entry.name))
+    .map((entry) => entry.name.replace(/\.ya?ml$/i, ""))
+    .filter((name) => /^[A-Za-z0-9._-]+$/.test(name));
+}
+
+export function listAutoFlowConfigs(cwd = process.cwd()): AutoFlowConfigListItem[] {
+  const projectDir = path.join(cwd, ".agentweaver", "flow-configs");
+  const userDir = path.join(agentweaverConfigDir(), "flow-configs");
+  const names = new Set([...configNamesInDir(projectDir), ...configNamesInDir(userDir)]);
+  return [...names]
+    .sort((left, right) => left.localeCompare(right))
+    .map((name) => {
+      const projectPath = projectAutoFlowConfigPath(name, cwd);
+      const userPath = userAutoFlowConfigPath(name);
+      const hasProject = existsSync(projectPath);
+      const hasUser = existsSync(userPath);
+      return {
+        name,
+        ...(hasProject ? { projectPath } : {}),
+        ...(hasUser ? { userPath } : {}),
+        selectedSource: hasProject ? "project" : "user",
+      };
+    });
+}
+
 export function loadAutoFlowConfigByName(name: string, cwd = process.cwd()): LoadedAutoFlowConfig {
   const requestedName = name.trim();
   validateConfigNameForPath(requestedName);
@@ -272,5 +358,72 @@ export function loadAutoFlowConfigByName(name: string, cwd = process.cwd()): Loa
       path: selectedPath,
       ...(projectExists && userExists ? { shadowedUserPath: userPath } : {}),
     },
+  };
+}
+
+function writeTextAtomic(filePath: string, content: string): void {
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  writeFileSync(tempPath, content, "utf8");
+  renameSync(tempPath, filePath);
+}
+
+export function saveAutoFlowConfig(
+  config: SavedAutoFlowConfig,
+  options: SaveAutoFlowConfigOptions = {},
+): SavedAutoFlowConfigWriteResult {
+  const cwd = options.cwd ?? process.cwd();
+  const location = options.location ?? "project";
+  validateConfigNameForPath(config.name);
+  const configPath = location === "project"
+    ? projectAutoFlowConfigPath(config.name, cwd)
+    : userAutoFlowConfigPath(config.name);
+  const normalizedConfig = validateAutoFlowConfigValue(config, config.name, configPath);
+  const normalizedYaml = normalizeAutoFlowConfigYaml(normalizedConfig);
+  writeTextAtomic(configPath, normalizedYaml);
+  return {
+    config: normalizedConfig,
+    normalizedYaml,
+    source: {
+      type: location,
+      path: configPath,
+    },
+  };
+}
+
+export function allowedAutoFlowBlocksForSlot(slotName: AutoFlowSlotName): readonly AutoFlowBlockId[] {
+  return SLOT_BLOCKS[slotName];
+}
+
+export function validateAutoFlowBlockInsertion(
+  slotName: string,
+  blockId: string,
+): AutoFlowBlockInsertionValidation {
+  if (!isSlotName(slotName)) {
+    return {
+      ok: false,
+      message: `Unknown auto-flow slot '${slotName}'.`,
+    };
+  }
+  if (!isBlockId(blockId)) {
+    return {
+      ok: false,
+      message: `Unknown auto-flow block '${blockId}'.`,
+      slotName,
+    };
+  }
+  if (!SLOT_BLOCKS[slotName].includes(blockId)) {
+    return {
+      ok: false,
+      message: `Auto-flow block '${blockId}' cannot be inserted into slot '${slotName}'. Allowed blocks: ${SLOT_BLOCKS[slotName].join(", ")}.`,
+      slotName,
+      blockId,
+    };
+  }
+  return {
+    ok: true,
+    message: `Auto-flow block '${blockId}' can be inserted into slot '${slotName}'.`,
+    slotName,
+    blockId,
   };
 }

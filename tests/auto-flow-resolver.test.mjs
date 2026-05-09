@@ -152,4 +152,25 @@ describe("auto flow resolver", () => {
     assert.equal(resolved.document.phases.some((phase) => phase.id === "design_review_loop"), false);
     assert.ok(resolved.summary.skippedBlocks.some((block) => block.blockId === "review.design-loop"));
   });
+
+  it("rejects saved configs with review.loop.maxIterations above five", async () => {
+    writeProjectConfig("invalid-review-loop", [
+      "kind: auto-flow-config",
+      "version: 1",
+      "name: invalid-review-loop",
+      "basePreset: standard",
+      "slots:",
+      "  review:",
+      "    blocks:",
+      "      - id: review.loop",
+      "        enabled: true",
+      "        maxIterations: 6",
+      "",
+    ].join("\n"));
+
+    await assert.rejects(
+      () => resolveAutoFlow({ kind: "config", name: "invalid-review-loop" }, { cwd: tempDir, scopeKey: "ag-123@test" }),
+      /maxIterations for block 'review\.loop' must be between 1 and 5; received 6/,
+    );
+  });
 });

@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 const distRoot = path.resolve(process.cwd(), "dist");
 const {
   loadAutoFlowConfigByName,
+  saveAutoFlowConfig,
   validateAutoFlowConfigValue,
 } = await import(pathToFileURL(path.join(distRoot, "pipeline/auto-flow-config.js")).href);
 
@@ -130,6 +131,29 @@ describe("auto flow config loading", () => {
         },
       }, "backend-standard", "bad.yaml"),
       /backend-standard.*unknown slot 'unknownSlot'/,
+    );
+  });
+
+  it("rejects maxIterations values above metadata bounds before save or run", () => {
+    const invalid = {
+      kind: "auto-flow-config",
+      version: 1,
+      name: "backend-standard",
+      basePreset: "standard",
+      slots: {
+        review: {
+          blocks: [{ id: "review.loop", enabled: true, maxIterations: 6 }],
+        },
+      },
+    };
+
+    assert.throws(
+      () => validateAutoFlowConfigValue(invalid, "backend-standard", "bad.yaml"),
+      /maxIterations for block 'review\.loop' must be between 1 and 5; received 6/,
+    );
+    assert.throws(
+      () => saveAutoFlowConfig(invalid, { cwd: tempDir, location: "project" }),
+      /maxIterations for block 'review\.loop' must be between 1 and 5; received 6/,
     );
   });
 });

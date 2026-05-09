@@ -1,8 +1,13 @@
 import type { FlowExecutionState } from "../pipeline/spec-types.js";
+import { buildAutoFlowEditorViewModel } from "./auto-flow.js";
 import type {
+  AutoFlowBlockViewModel,
+  AutoFlowProgressStatus,
+  AutoFlowSlotViewModel,
   FlowStatus,
   GroupedPhaseItem,
   InteractiveFlowDefinition,
+  ProgressDisplayStatus,
   ProgressViewModel,
   ProgressViewModelItem,
 } from "./types.js";
@@ -197,6 +202,10 @@ export function visiblePhaseItems(
 export function buildProgressViewModel(
   flow: InteractiveFlowDefinition | null,
   flowState: FlowExecutionState | null,
+  options: {
+    failedFlowId?: string | null;
+    waitingForUserInput?: boolean;
+  } = {},
 ): ProgressViewModel {
   if (!flow) {
     return {
@@ -204,6 +213,10 @@ export function buildProgressViewModel(
       items: [],
       anchorIndex: null,
     };
+  }
+
+  if (flow.autoFlow) {
+    return buildAutoFlowProgressViewModel(flow, flowState, options);
   }
 
   const items: ProgressViewModelItem[] = [];
@@ -308,5 +321,232 @@ export function buildProgressViewModel(
     flow,
     items,
     anchorIndex,
+  };
+}
+
+function phaseOrder(flow: InteractiveFlowDefinition): Map<string, number> {
+  return new Map(flow.phases.map((phase, index) => [phase.id, index]));
+}
+
+function stoppedPhaseId(flowState: FlowExecutionState | null): string | null {
+  const terminationReason = flowState?.terminationReason ?? "";
+  const match = /^Stopped by ([^:]+):/.exec(terminationReason);
+  return match?.[1] ?? null;
+}
+
+function mapRuntimeStatus(status: FlowStatus): AutoFlowProgressStatus {
+  if (status === "done") {
+    return "success";
+  }
+  return status;
+}
+
+function lastRuntimeBlockId(
+  slots: readonly AutoFlowSlotViewModel[],
+  flow: InteractiveFlowDefinition,
+  flowState: FlowExecutionState | null,
+): string | null {
+  const order = phaseOrder(flow);
+  let result: { blockId: string; phaseIndex: number } | null = null;
+  for (const slot of slots) {
+    for (const block of slot.blocks) {
+      if (!block.phaseId) {
+        continue;
+      }
+      const phaseState = flowState?.phases.find((phase) => phase.id === block.phaseId);
+      if (!phaseState || phaseState.status === "pending" || phaseState.status === "skipped") {
+        continue;
+      }
+      const phaseIndex = order.get(block.phaseId) ?? -1;
+      if (!result || phaseIndex >= result.phaseIndex) {
+        result = { blockId: block.blockId, phaseIndex };
+      }
+    }
+  }
+  return result?.blockId ?? null;
+}
+
+function runtimeStatusForBlock(
+  block: AutoFlowBlockViewModel,
+  input: {
+    flow: InteractiveFlowDefinition;
+    flowState: FlowExecutionState | null;
+    failedFlowId?: string | null;
+    waitingForUserInput?: boolean;
+    fallbackFailedBlockId: string | null;
+  },
+): AutoFlowProgressStatus {
+  if (block.status === "invalid" || block.status === "disabled" || block.status === "blocked" || block.status === "empty") {
+    return block.status;
+  }
+  if (!block.phaseId) {
+    return block.status;
+  }
+  const phaseState = input.flowState?.phases.find((phase) => phase.id === block.phaseId) ?? null;
+  const failed = input.failedFlowId === input.flow.id;
+  if (failed && (phaseState?.status === "running" || input.fallbackFailedBlockId === block.blockId)) {
+    return "failed";
+  }
+  if (input.waitingForUserInput && phaseState?.status === "running") {
+    return "waiting-user";
+  }
+  const stoppedId = input.flowState?.terminationOutcome === "stopped" ? stoppedPhaseId(input.flowState) : null;
+  if (stoppedId && stoppedId === block.phaseId) {
+    return "stopped";
+  }
+  if (phaseState) {
+    return mapRuntimeStatus(phaseState.status);
+  }
+  if (input.flowState?.terminated && stoppedId) {
+    const order = phaseOrder(input.flow);
+    const stoppedIndex = order.get(stoppedId) ?? -1;
+    const currentIndex = order.get(block.phaseId) ?? -1;
+    if (stoppedIndex >= 0 && currentIndex > stoppedIndex) {
+      return "skipped";
+    }
+  }
+  return block.status;
+}
+
+function aggregateSlotStatus(
+  slot: AutoFlowSlotViewModel,
+  blockStatuses: readonly AutoFlowProgressStatus[],
+): AutoFlowProgressStatus {
+  if (slot.status === "invalid" || blockStatuses.some((status) => status === "invalid")) {
+    return "invalid";
+  }
+  if (slot.blocks.length === 0) {
+    return "empty";
+  }
+  for (const status of ["failed", "stopped", "waiting-user", "running"] as const) {
+    if (blockStatuses.includes(status)) {
+      return status;
+    }
+  }
+  if (blockStatuses.every((status) => status === "disabled")) {
+    return "disabled";
+  }
+  const executableStatuses = blockStatuses.filter((status) => status !== "disabled");
+  if (executableStatuses.length > 0 && executableStatuses.every((status) => status === "success" || status === "skipped")) {
+    return executableStatuses.every((status) => status === "skipped") ? "skipped" : "success";
+  }
+  if (blockStatuses.some((status) => status === "blocked")) {
+    return "blocked";
+  }
+  return "pending";
+}
+
+function rememberProgressAnchor(
+  items: readonly ProgressViewModelItem[],
+  status: ProgressDisplayStatus,
+  state: { anchorIndex: number | null; sawExecutedItem: boolean },
+): void {
+  if (status === "running" || status === "waiting-user" || status === "failed" || status === "stopped" || status === "invalid") {
+    state.anchorIndex = items.length;
+    state.sawExecutedItem = true;
+    return;
+  }
+  if (status === "done" || status === "success" || status === "skipped" || status === "disabled") {
+    state.sawExecutedItem = true;
+    return;
+  }
+  if (status === "pending" && state.sawExecutedItem && state.anchorIndex === null) {
+    state.anchorIndex = items.length;
+  }
+}
+
+function buildAutoFlowProgressViewModel(
+  flow: InteractiveFlowDefinition,
+  flowState: FlowExecutionState | null,
+  options: {
+    failedFlowId?: string | null;
+    waitingForUserInput?: boolean;
+  },
+): ProgressViewModel {
+  if (!flow.autoFlow) {
+    return {
+      flow,
+      items: [],
+      anchorIndex: null,
+    };
+  }
+  const editor = buildAutoFlowEditorViewModel(flow.autoFlow, {
+    ...(flow.autoFlow.diagnostics && flow.autoFlow.diagnostics.length > 0 ? { diagnostics: flow.autoFlow.diagnostics } : {}),
+    ...(flow.autoFlow.lastMessage ? { lastMessage: flow.autoFlow.lastMessage } : {}),
+  });
+  const items: ProgressViewModelItem[] = [];
+  const anchorState = { anchorIndex: null as number | null, sawExecutedItem: false };
+  const fallbackFailedBlockId = options.failedFlowId === flow.id
+    ? lastRuntimeBlockId(editor.slots, flow, flowState)
+    : null;
+
+  for (const slot of editor.slots) {
+    const blockRows = slot.blocks.map((block) => ({
+      block,
+      status: runtimeStatusForBlock(block, {
+        flow,
+        flowState,
+        ...(options.failedFlowId !== undefined ? { failedFlowId: options.failedFlowId } : {}),
+        ...(options.waitingForUserInput !== undefined ? { waitingForUserInput: options.waitingForUserInput } : {}),
+        fallbackFailedBlockId,
+      }),
+    }));
+    const status = aggregateSlotStatus(slot, blockRows.map((row) => row.status));
+    rememberProgressAnchor(items, status, anchorState);
+    items.push({
+      kind: "slot",
+      label: slot.title,
+      depth: 0,
+      status,
+      detail: slot.reason,
+      slotId: slot.slotId,
+    });
+    for (const { block, status: blockRuntimeStatus } of blockRows) {
+      rememberProgressAnchor(items, blockRuntimeStatus, anchorState);
+      items.push({
+        kind: "block",
+        label: block.title,
+        depth: 1,
+        status: blockRuntimeStatus,
+        detail: block.reason,
+        slotId: block.slotId,
+        blockId: block.blockId,
+        locked: block.locked,
+        enabled: block.enabled,
+      });
+      for (const diagnostic of block.diagnostics) {
+        rememberProgressAnchor(items, "invalid", anchorState);
+        const detail = diagnostic.paramName ? `${diagnostic.blockId ?? "flow"}.${diagnostic.paramName}` : diagnostic.blockId;
+        items.push({
+          kind: "block",
+          label: diagnostic.message,
+          depth: 2,
+          status: "invalid",
+          ...(detail ? { detail } : {}),
+          slotId: block.slotId,
+          blockId: block.blockId,
+          locked: block.locked,
+          enabled: block.enabled,
+        });
+      }
+    }
+  }
+
+  if (flowState?.terminated) {
+    const terminationOutcome = flowState.terminationOutcome ?? "success";
+    const status = terminationOutcome === "stopped" ? "stopped" : "success";
+    items.push({
+      kind: "termination",
+      label: terminationOutcome === "stopped" ? "Flow stopped before completion" : "Flow completed successfully",
+      detail: `Reason: ${flowState.terminationReason ?? "flow terminated"}`,
+      depth: 0,
+      status,
+    });
+  }
+
+  return {
+    flow,
+    items,
+    anchorIndex: anchorState.anchorIndex,
   };
 }

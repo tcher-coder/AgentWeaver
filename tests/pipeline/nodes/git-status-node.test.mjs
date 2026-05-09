@@ -194,6 +194,9 @@ describe("gitCommitExecutor", () => {
           resolveCmd: (commandName) => commandName,
           runCommand: async (argv) => {
             commands.push(argv);
+            if (argv[0] === "git" && argv[1] === "status") {
+              return porcelain;
+            }
             if (argv[0] === "git" && argv[1] === "commit") {
               return "[main abc1234] commit spaced file\n 1 file changed, 1 insertion(+)\n";
             }
@@ -211,8 +214,46 @@ describe("gitCommitExecutor", () => {
     assert.match(result.output, /commit spaced file/);
     assert.match(result.commitHash ?? "", /^[0-9a-f]{7,40}$/);
     assert.deepStrictEqual(commands, [
-      ["git", "add", "--", "file with spaces.txt"],
-      ["git", "commit", "-m", "commit spaced file"],
+      ["git", "status", "--porcelain", "--", "file with spaces.txt"],
+      ["git", "add", "-A", "--", "file with spaces.txt"],
+      ["git", "commit", "-m", "commit spaced file", "--", "file with spaces.txt"],
+    ]);
+  });
+
+  it("commits a selected staged deletion without running git add on the missing file", async () => {
+    const commands = [];
+
+    await gitCommitExecutor.execute(
+      {
+        cwd: process.cwd(),
+        env: process.env,
+        ui: {},
+        dryRun: false,
+        verbose: false,
+        runtime: {
+          resolveCmd: (commandName) => commandName,
+          runCommand: async (argv) => {
+            commands.push(argv);
+            if (argv[0] === "git" && argv[1] === "status") {
+              return "D  deleted.ts\n";
+            }
+            if (argv[0] === "git" && argv[1] === "commit") {
+              return "[main abc1234] delete file\n 1 file changed, 1 deletion(-)\n";
+            }
+            return "";
+          },
+        },
+      },
+      {
+        message: "delete file",
+        files: ["deleted.ts"],
+      },
+      {},
+    );
+
+    assert.deepStrictEqual(commands, [
+      ["git", "status", "--porcelain", "--", "deleted.ts"],
+      ["git", "commit", "-m", "delete file", "--", "deleted.ts"],
     ]);
   });
 });

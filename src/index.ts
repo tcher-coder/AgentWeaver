@@ -59,8 +59,22 @@ import {
 import { summarizeBuildFailure as summarizeBuildFailureViaPipeline } from "./pipeline/build-failure-summary.js";
 import { runNodeChecks } from "./pipeline/checks.js";
 import { createPipelineContext } from "./pipeline/context.js";
-import { collectFlowRoutingGroups, loadDeclarativeFlow, type DeclarativeFlowRef } from "./pipeline/declarative-flows.js";
+import {
+  collectFlowRoutingGroups,
+  loadDeclarativeFlow,
+  type DeclarativeFlowRef,
+  type InMemoryDeclarativeFlows,
+  type LoadedDeclarativeFlow,
+} from "./pipeline/declarative-flows.js";
 import { runExpandedPhase } from "./pipeline/declarative-flow-runner.js";
+import type { AutoFlowPresetName } from "./pipeline/auto-flow-config.js";
+import {
+  formatAutoFlowDryRunPreview,
+  persistResolvedAutoFlowArtifacts,
+  resolveAutoFlow,
+  type AutoFlowSelection,
+  type ResolvedAutoFlow,
+} from "./pipeline/auto-flow-resolver.js";
 import {
   builtInCommandFlowFile,
   findCatalogEntry,
@@ -205,9 +219,11 @@ type BaseConfig = {
   autoFromPhase?: string | null;
   mdLang?: "en" | "ru" | null;
   dryRun: boolean;
+  dryRunFlow: boolean;
   verbose: boolean;
   doctorArgs?: string[];
   acceptPlaybookDraft?: boolean;
+  autoFlowSelection?: AutoFlowSelection;
 
 };
 
@@ -232,6 +248,7 @@ type ParsedArgs = {
   scopeName?: string;
   reviewBlockingSeverities?: ReviewSeverity[];
   dry: boolean;
+  dryRunFlow: boolean;
   verbose: boolean;
   prompt?: string;
   autoFromPhase?: string;
@@ -240,6 +257,7 @@ type ParsedArgs = {
   doctorArgs?: string[];
   launchMode?: FlowLaunchMode;
   acceptPlaybookDraft?: boolean;
+  autoFlowSelection?: AutoFlowSelection;
   webNoOpen?: boolean;
   webHost?: string;
 };
@@ -350,7 +368,7 @@ function usage(): string {
   agentweaver review-loop [--dry] [--verbose] [--prompt <text>] [--scope <name>] [--blocking-severities <list>] [<jira-browse-url|jira-issue-key>]
   agentweaver run-go-tests-loop [--dry] [--verbose] [--prompt <text>] [--scope <name>] [<jira-browse-url|jira-issue-key>]
   agentweaver run-go-linter-loop [--dry] [--verbose] [--prompt <text>] [--scope <name>] [<jira-browse-url|jira-issue-key>]
-  agentweaver auto [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] [<jira-browse-url|jira-issue-key>]
+  agentweaver auto [--preset <simple|standard>|--config <name>] [--dry-run-flow] [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] [<jira-browse-url|jira-issue-key>]
   agentweaver auto --help-phases
   agentweaver auto-golang [--dry] [--verbose] [--prompt <text>] [<jira-browse-url|jira-issue-key>]
   agentweaver auto-golang [--dry] [--verbose] [--prompt <text>] --from <phase> [<jira-browse-url|jira-issue-key>]
@@ -375,6 +393,9 @@ Flags:
   --host          Web command only: bind Web UI to this host (default: 127.0.0.1)
   --listen-all    Web command only: bind Web UI to 0.0.0.0
   --dry           Fetch or collect task context, but print codex/opencode commands instead of executing them
+  --preset        Auto command only: resolve the simple or standard preset (default: standard)
+  --config        Auto command only: load .agentweaver/flow-configs/<name>.yaml or ~/.agentweaver/flow-configs/<name>.yaml
+  --dry-run-flow  Auto command only: validate and preview flow resolution without running workflow steps or writing resolver artifacts
   --verbose       Show live stdout/stderr of launched commands
   --scope         Explicit workflow scope name for non-Jira runs except instant-task
   --prompt        Extra prompt text appended to the base prompt
@@ -404,7 +425,10 @@ Optional environment variables:
   ${WEB_AUTH_PASSWORD_ENV}  Web UI Basic auth password; required for external Web UI binding
 
 Notes:
-  - auto-golang, auto-common-guided, auto-common, and auto-simple ask for Jira input when Jira is not passed as an argument; leave it empty to paste the task description manually in the next step. task-describe can also work from a manual task description without Jira.
+  - agentweaver auto defaults to --preset standard, equivalent to auto-common. Use --dry-run-flow to inspect the resolved preset or saved config before execution.
+  - Saved auto flow configs are YAML files named .agentweaver/flow-configs/<name>.yaml or ~/.agentweaver/flow-configs/<name>.yaml; project configs take precedence over user configs.
+  - Successful configurable auto runs write flow-config.yaml, resolved-flow.json, and resolved-flow-summary.json under the current scope .artifacts directory. --dry-run-flow writes none of them.
+  - auto-golang, auto-common-guided, auto-common, auto-simple, and configurable auto ask for Jira input when Jira is not passed as an argument; leave it empty to paste the task description manually in the next step. task-describe can also work from a manual task description without Jira.
   - agentweaver web binds to 127.0.0.1 by default on an operating-system-assigned port and does not require auth unless Web UI credentials are configured.
   - External Web UI binding through --listen-all, --host 0.0.0.0, --host ::, non-loopback IPs, or hostnames other than localhost requires ${WEB_AUTH_USERNAME_ENV} and ${WEB_AUTH_PASSWORD_ENV}.
   - Web UI Basic auth over plain HTTP is suitable only on trusted networks; use TLS termination or a reverse proxy on untrusted networks.
@@ -717,9 +741,11 @@ function buildBaseConfig(
     autoFromPhase?: string | null;
     mdLang?: "en" | "ru" | null;
     dryRun?: boolean;
+    dryRunFlow?: boolean;
     verbose?: boolean;
     doctorArgs?: string[];
     acceptPlaybookDraft?: boolean;
+    autoFlowSelection?: AutoFlowSelection;
   } = {},
 ): BaseConfig {
   return {
@@ -732,9 +758,11 @@ function buildBaseConfig(
     autoFromPhase: options.autoFromPhase ?? null,
     mdLang: options.mdLang ?? null,
     dryRun: options.dryRun ?? false,
+    dryRunFlow: options.dryRunFlow ?? false,
     verbose: options.verbose ?? false,
     ...(options.doctorArgs !== undefined ? { doctorArgs: options.doctorArgs } : {}),
     ...(options.acceptPlaybookDraft !== undefined ? { acceptPlaybookDraft: options.acceptPlaybookDraft } : {}),
+    ...(options.autoFlowSelection !== undefined ? { autoFlowSelection: options.autoFlowSelection } : {}),
   };
 }
 
@@ -927,9 +955,17 @@ async function checkPrerequisites(
   launchProfile?: ResolvedLaunchProfile,
   executionRouting?: ResolvedExecutionRouting,
 ): Promise<void> {
+  const groups = await commandRoutingGroupsForPrerequisiteChecks(config.command, process.cwd());
+  await checkPrerequisitesForRoutingGroups(groups, launchProfile, executionRouting);
+}
+
+async function checkPrerequisitesForRoutingGroups(
+  groups: ExecutionRoutingGroup[],
+  launchProfile?: ResolvedLaunchProfile,
+  executionRouting?: ResolvedExecutionRouting,
+): Promise<void> {
   const registryContext = await createPipelineRegistryContext(process.cwd());
   const routing = routingForPrerequisites(launchProfile, executionRouting);
-  const groups = await commandRoutingGroupsForPrerequisiteChecks(config.command, process.cwd());
   for (const executor of executorsForRoutingGroups(routing, groups)) {
     resolveExecutorPrerequisite(executor, registryContext);
   }
@@ -941,6 +977,25 @@ async function checkAutoPrerequisites(
   executionRouting?: ResolvedExecutionRouting,
 ): Promise<void> {
   await checkPrerequisites(config, launchProfile, executionRouting);
+}
+
+async function checkResolvedAutoPrerequisites(
+  resolved: ResolvedAutoFlow,
+  launchProfile?: ResolvedLaunchProfile,
+  executionRouting?: ResolvedExecutionRouting,
+): Promise<void> {
+  const groups = resolved.execution.kind === "built-in"
+    ? await collectFlowRoutingGroups(
+      await loadDeclarativeFlow({ source: "built-in", fileName: resolved.execution.specFile }),
+      process.cwd(),
+    )
+    : await collectFlowRoutingGroups(
+      resolved.execution.flow,
+      process.cwd(),
+      new Set<string>(),
+      { inMemoryFlows: resolved.execution.inMemoryFlows },
+    );
+  await checkPrerequisitesForRoutingGroups(groups, launchProfile, executionRouting);
 }
 
 function autoFlowParams(config: Config, forceRefreshSummary = false): Record<string, unknown> {
@@ -1114,9 +1169,9 @@ function findCurrentFlowExecutionStep(state: FlowRunState): string | null {
   return null;
 }
 
-async function runDeclarativeFlowByRef(
+async function runLoadedDeclarativeFlow(
   flowId: string,
-  flowRef: DeclarativeFlowRef,
+  flow: LoadedDeclarativeFlow,
   config: Config,
   flowParams: Record<string, unknown>,
   overrides: DeclarativeFlowOverrides = {},
@@ -1124,6 +1179,7 @@ async function runDeclarativeFlowByRef(
   setSummary?: (markdown: string) => void,
   launchMode: FlowLaunchMode = "restart",
   runtime: RuntimeServices = runtimeServices,
+  inMemoryFlows?: InMemoryDeclarativeFlows,
 ): Promise<void> {
   const context = await createPipelineContext({
     issueKey: config.taskKey,
@@ -1135,8 +1191,8 @@ async function runDeclarativeFlowByRef(
     ...(setSummary ? { setSummary } : {}),
     requestUserInput,
     ...(overrides.executionRouting ? { executionRouting: overrides.executionRouting } : {}),
+    ...(inMemoryFlows ? { inMemoryFlows } : {}),
   });
-  const flow = await loadDeclarativeFlow(flowRef);
   const initialExecutionState: FlowExecutionState = {
     flowKind: flow.kind,
     flowVersion: flow.version,
@@ -1152,7 +1208,7 @@ async function runDeclarativeFlowByRef(
     await validateDeclarativeFlowResumeState(
       {
         id: flowId,
-        source: flow.source,
+        source: flow.source === "generated" ? "built-in" : flow.source,
         fileName: flow.fileName,
         absolutePath: flow.absolutePath,
         treePath: [],
@@ -1244,6 +1300,31 @@ async function runDeclarativeFlowByRef(
     saveFlowRunState(state);
     throw error;
   }
+}
+
+async function runDeclarativeFlowByRef(
+  flowId: string,
+  flowRef: DeclarativeFlowRef,
+  config: Config,
+  flowParams: Record<string, unknown>,
+  overrides: DeclarativeFlowOverrides = {},
+  requestUserInput: UserInputRequester = requestUserInputInTerminal,
+  setSummary?: (markdown: string) => void,
+  launchMode: FlowLaunchMode = "restart",
+  runtime: RuntimeServices = runtimeServices,
+): Promise<void> {
+  const flow = await loadDeclarativeFlow(flowRef);
+  await runLoadedDeclarativeFlow(
+    flowId,
+    flow,
+    config,
+    flowParams,
+    overrides,
+    requestUserInput,
+    setSummary,
+    launchMode,
+    runtime,
+  );
 }
 
 async function runDeclarativeFlowBySpecFile(
@@ -1475,9 +1556,64 @@ async function executeCommand(
     : launchProfile
       ? { launchProfile }
       : {};
+  const resolvedConfigurableAuto = config.autoFlowSelection
+    ? await resolveAutoFlow(config.autoFlowSelection, {
+      cwd: process.cwd(),
+      scopeKey: config.scope.scopeKey,
+    })
+    : null;
+  if (resolvedConfigurableAuto) {
+    config.command = resolvedConfigurableAuto.document.selectedCommand;
+    if (config.dryRunFlow) {
+      writeStdoutSync(formatAutoFlowDryRunPreview(resolvedConfigurableAuto));
+      return false;
+    }
+  }
   const launchMode = config.command === "auto-status" || config.command === "auto-reset"
     ? "restart"
     : await chooseLaunchMode(config.command, config.scope.scopeKey, explicitLaunchMode, requestUserInput);
+  if (resolvedConfigurableAuto) {
+    syncJiraEnv(config);
+    await checkResolvedAutoPrerequisites(resolvedConfigurableAuto, launchProfile, executionRouting);
+    if (launchMode === "restart") {
+      const existingStateForRestart = loadFlowRunState(config.scope.scopeKey, config.command);
+      if (existingStateForRestart && SCOPE_ARCHIVING_RESTART_FLOW_IDS.has(config.command)) {
+        archiveActiveAttempt(config.scope.scopeKey);
+      }
+      resetFlowRunState(config.scope.scopeKey, config.command);
+    }
+    persistResolvedAutoFlowArtifacts(config.scope.scopeKey, resolvedConfigurableAuto);
+    if (resolvedConfigurableAuto.execution.kind === "built-in") {
+      await runDeclarativeFlowBySpecFile(
+        resolvedConfigurableAuto.execution.specFile,
+        config,
+        autoFlowParams(config, forceRefreshSummary),
+        flowOverrides,
+        requestUserInput,
+        setSummary,
+        launchMode,
+        runtime,
+      );
+    } else {
+      const mergedFlowParams = {
+        ...defaultDeclarativeFlowParams(config, false, flowOverrides),
+        ...autoFlowParams(config, forceRefreshSummary),
+      };
+      await runLoadedDeclarativeFlow(
+        config.command,
+        resolvedConfigurableAuto.execution.flow,
+        config,
+        withCanonicalReviewLoopParams(resolvedConfigurableAuto.execution.flow.kind, mergedFlowParams),
+        flowOverrides,
+        requestUserInput,
+        setSummary,
+        launchMode,
+        runtime,
+        resolvedConfigurableAuto.execution.inMemoryFlows,
+      );
+    }
+    return false;
+  }
   if (config.command === "instant-task") {
     await checkPrerequisites(config, launchProfile, executionRouting);
     const hasPersistedInstantTaskState = loadFlowRunState(config.scope.scopeKey, "instant-task") !== null;
@@ -2058,9 +2194,10 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
     writeStderrSync(`${usage()}\n`);
     process.exit(1);
   }
-  const command = rawCommand === "auto" ? "auto-common" : rawCommand;
+  const isConfigurableAutoCommand = rawCommand === "auto";
 
   let dry = false;
+  let dryRunFlow = false;
   let verbose = false;
   let prompt: string | undefined;
   let autoFromPhase: string | undefined;
@@ -2071,9 +2208,28 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
   let mdLang: "en" | "ru" | undefined;
   let launchMode: FlowLaunchMode | undefined;
   let acceptPlaybookDraft = false;
+  let autoPreset: AutoFlowPresetName | undefined;
+  let autoConfigName: string | undefined;
   let webNoOpen = process.env.AGENTWEAVER_WEB_NO_OPEN === "1";
   let webHost: string | undefined;
   const doctorArgs: string[] = [];
+
+  const readRequiredValue = (flag: string, index: number): string => {
+    const value = argv[index + 1]?.trim();
+    if (!value || value.startsWith("-")) {
+      writeStderrSync(`Error: ${flag} requires a value.\n`);
+      process.exit(1);
+    }
+    return value;
+  };
+
+  const parsePresetValue = (value: string): AutoFlowPresetName => {
+    if (value === "simple" || value === "standard") {
+      return value;
+    }
+    writeStderrSync("Error: --preset accepts only 'simple' or 'standard'.\n");
+    process.exit(1);
+  };
 
   for (let index = 1; index < argv.length; index += 1) {
     const token = argv[index] ?? "";
@@ -2085,6 +2241,58 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
       verbose = true;
       continue;
     }
+    if (token === "--dry-run-flow") {
+      if (!isConfigurableAutoCommand) {
+        writeStderrSync("Error: --dry-run-flow is only supported after the auto command.\n");
+        process.exit(1);
+      }
+      dryRunFlow = true;
+      continue;
+    }
+    if (token === "--preset") {
+      if (!isConfigurableAutoCommand) {
+        writeStderrSync("Error: --preset is only supported after the auto command.\n");
+        process.exit(1);
+      }
+      autoPreset = parsePresetValue(readRequiredValue("--preset", index));
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("--preset=")) {
+      if (!isConfigurableAutoCommand) {
+        writeStderrSync("Error: --preset is only supported after the auto command.\n");
+        process.exit(1);
+      }
+      const value = token.slice("--preset=".length).trim();
+      if (!value) {
+        writeStderrSync("Error: --preset requires a value.\n");
+        process.exit(1);
+      }
+      autoPreset = parsePresetValue(value);
+      continue;
+    }
+    if (token === "--config") {
+      if (!isConfigurableAutoCommand) {
+        writeStderrSync("Error: --config is only supported after the auto command.\n");
+        process.exit(1);
+      }
+      autoConfigName = readRequiredValue("--config", index);
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("--config=")) {
+      if (!isConfigurableAutoCommand) {
+        writeStderrSync("Error: --config is only supported after the auto command.\n");
+        process.exit(1);
+      }
+      const value = token.slice("--config=".length).trim();
+      if (!value) {
+        writeStderrSync("Error: --config requires a value.\n");
+        process.exit(1);
+      }
+      autoConfigName = value;
+      continue;
+    }
     if (token === "--help-phases") {
       helpPhases = true;
       continue;
@@ -2094,7 +2302,7 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
       continue;
     }
     if (token === "--no-open") {
-      if (command !== "web") {
+      if (rawCommand !== "web") {
         writeStderrSync("Error: --no-open is only supported after the web command.\n");
         process.exit(1);
       }
@@ -2102,7 +2310,7 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
       continue;
     }
     if (token === "--listen-all") {
-      if (command !== "web") {
+      if (rawCommand !== "web") {
         writeStderrSync("Error: --listen-all is only supported after the web command.\n");
         process.exit(1);
       }
@@ -2110,7 +2318,7 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
       continue;
     }
     if (token === "--host") {
-      if (command !== "web") {
+      if (rawCommand !== "web") {
         writeStderrSync("Error: --host is only supported after the web command.\n");
         process.exit(1);
       }
@@ -2124,7 +2332,7 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
       continue;
     }
     if (token.startsWith("--host=")) {
-      if (command !== "web") {
+      if (rawCommand !== "web") {
         writeStderrSync("Error: --host is only supported after the web command.\n");
         process.exit(1);
       }
@@ -2189,12 +2397,28 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
       }
       continue;
     }
-    if (command === "doctor") {
+    if (rawCommand === "doctor") {
       doctorArgs.push(token);
     } else {
       jiraRef = token;
     }
   }
+
+  if (autoPreset && autoConfigName) {
+    writeStderrSync("Error: --preset and --config are mutually exclusive.\n");
+    process.exit(1);
+  }
+
+  const autoFlowSelection: AutoFlowSelection | undefined = isConfigurableAutoCommand
+    ? autoConfigName
+      ? { kind: "config", name: autoConfigName }
+      : { kind: "preset", preset: autoPreset ?? "standard" }
+    : undefined;
+  const command = isConfigurableAutoCommand
+    ? autoFlowSelection?.kind === "preset" && autoFlowSelection.preset === "simple"
+      ? "auto-simple"
+      : "auto-common"
+    : rawCommand;
 
   if (command === "auto-golang" && helpPhases) {
     await printAutoPhasesHelp();
@@ -2212,6 +2436,7 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
   return {
     command: command as CommandName,
     dry,
+    dryRunFlow,
     verbose,
     helpPhases,
     ...(jiraRef !== undefined ? { jiraRef } : {}),
@@ -2223,6 +2448,7 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
     ...(doctorArgs.length > 0 ? { doctorArgs } : {}),
     ...(launchMode !== undefined ? { launchMode } : {}),
     ...(acceptPlaybookDraft ? { acceptPlaybookDraft } : {}),
+    ...(autoFlowSelection !== undefined ? { autoFlowSelection } : {}),
     ...(command === "web" ? { webNoOpen } : {}),
     ...(command === "web" && webHost !== undefined ? { webHost } : {}),
   };
@@ -2237,9 +2463,11 @@ function buildConfigFromArgs(args: ParsedArgs): BaseConfig {
     ...(args.autoFromPhase !== undefined ? { autoFromPhase: args.autoFromPhase } : {}),
     ...(args.mdLang !== undefined ? { mdLang: args.mdLang } : {}),
     dryRun: args.dry,
+    dryRunFlow: args.dryRunFlow,
     verbose: args.verbose,
     ...(args.doctorArgs !== undefined ? { doctorArgs: args.doctorArgs } : {}),
     ...(args.acceptPlaybookDraft !== undefined ? { acceptPlaybookDraft: args.acceptPlaybookDraft } : {}),
+    ...(args.autoFlowSelection !== undefined ? { autoFlowSelection: args.autoFlowSelection } : {}),
   });
 }
 

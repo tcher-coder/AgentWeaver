@@ -29,6 +29,15 @@
       diff: null,
       requestId: 0,
     },
+    scrollSync: {
+      suppress: false,
+      releaseTimer: null,
+      sentOffsets: {
+        progress: null,
+        log: null,
+        help: null,
+      },
+    },
   };
 
   var elements = {
@@ -41,7 +50,6 @@
     help: document.getElementById("help-button"),
     flowsTitle: document.getElementById("flows-title"),
     flows: document.getElementById("flows-list"),
-    description: document.getElementById("description-text"),
     autoFlowEditor: document.getElementById("auto-flow-editor"),
     progressTitle: document.getElementById("progress-title"),
     progress: document.getElementById("progress-text"),
@@ -104,6 +112,55 @@
 
   function actionId() {
     return "web-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+  }
+
+  function controlId(prefix) {
+    var parts = Array.prototype.slice.call(arguments, 1).map(function (part) {
+      return String(part || "")
+        .trim()
+        .replace(/[^A-Za-z0-9_-]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "value";
+    });
+    return [prefix].concat(parts).join("-");
+  }
+
+  function roundedScrollTop(element) {
+    return Math.round(Number(element.scrollTop) || 0);
+  }
+
+  function rememberScrollOffset(pane, offset) {
+    if (state.scrollSync.sentOffsets[pane] !== undefined) {
+      state.scrollSync.sentOffsets[pane] = Math.round(Number(offset) || 0);
+    }
+  }
+
+  function rememberCurrentScrollOffsets() {
+    rememberScrollOffset("progress", elements.progress ? elements.progress.scrollTop : 0);
+    rememberScrollOffset("log", elements.log ? elements.log.scrollTop : 0);
+    rememberScrollOffset("help", elements.helpText ? elements.helpText.scrollTop : 0);
+  }
+
+  function releaseScrollSuppressionSoon() {
+    if (state.scrollSync.releaseTimer) {
+      clearTimeout(state.scrollSync.releaseTimer);
+    }
+    state.scrollSync.releaseTimer = setTimeout(function () {
+      state.scrollSync.suppress = false;
+      state.scrollSync.releaseTimer = null;
+      rememberCurrentScrollOffsets();
+    }, 0);
+  }
+
+  function sendScrollPane(pane, element) {
+    if (state.scrollSync.suppress) {
+      return;
+    }
+    var offset = roundedScrollTop(element);
+    if (state.scrollSync.sentOffsets[pane] === offset) {
+      return;
+    }
+    rememberScrollOffset(pane, offset);
+    api.scrollPane(pane, offset);
   }
 
   function selectedFlow() {
@@ -243,14 +300,20 @@
     saveAutoFlow: function () {
       api.send({ type: "autoFlow.save" });
     },
-    toggleAutoFlowBlock: function (blockId, enabled) {
-      api.send({ type: "autoFlow.toggleBlock", blockId: blockId, enabled: enabled });
+    resetAutoFlow: function () {
+      api.send({ type: "autoFlow.reset" });
     },
-    updateAutoFlowParam: function (blockId, paramName, value) {
-      api.send({ type: "autoFlow.updateParam", blockId: blockId, paramName: paramName, value: value });
+    toggleAutoFlowBlock: function (slotId, blockId, enabled) {
+      api.send({ type: "autoFlow.toggleBlock", slotId: slotId, blockId: blockId, enabled: enabled });
+    },
+    updateAutoFlowParam: function (slotId, blockId, paramName, value) {
+      api.send({ type: "autoFlow.updateParam", slotId: slotId, blockId: blockId, paramName: paramName, value: value });
     },
     insertAutoFlowBlock: function (slotId, blockId) {
       api.send({ type: "autoFlow.insertBlock", slotId: slotId, blockId: blockId });
+    },
+    removeAutoFlowBlock: function (slotId, blockId) {
+      api.send({ type: "autoFlow.removeBlock", slotId: slotId, blockId: blockId });
     },
   };
 
@@ -276,8 +339,11 @@
       state.gitSelectedPaths = state.viewModel.gitWorkspace && Array.isArray(state.viewModel.gitWorkspace.selectedPaths)
         ? state.viewModel.gitWorkspace.selectedPaths.slice()
         : [];
+      state.scrollSync.suppress = true;
       render();
       restoreUiState(uiState);
+      rememberCurrentScrollOffsets();
+      releaseScrollSuppressionSoon();
       return;
     }
     if (message.type === "log.append") {
@@ -300,6 +366,7 @@
     elements.log.textContent += (elements.log.textContent ? "\n" : "") + lines;
     if (wasPinned) {
       elements.log.scrollTop = elements.log.scrollHeight;
+      rememberScrollOffset("log", elements.log.scrollTop);
     }
   }
 
@@ -309,7 +376,6 @@
     elements.header.textContent = text(vm.header, "Local operator console");
     elements.status.textContent = text(vm.statusText, "Idle");
     elements.flowsTitle.textContent = text(vm.flowListTitle, "Flows");
-    elements.description.textContent = text(vm.descriptionText, "No flow selected.");
     renderAutoFlowEditor(vm);
     elements.progressTitle.textContent = text(vm.progressTitle, "Progress");
     renderProgress(vm);
@@ -440,10 +506,16 @@
     save.textContent = "Save";
     save.disabled = blocked || !model.status || !model.status.canSave;
     save.addEventListener("click", api.saveAutoFlow);
+    var reset = document.createElement("button");
+    reset.type = "button";
+    reset.textContent = "Reset";
+    reset.disabled = blocked || !model.status || !model.status.canReset;
+    reset.title = "Discard unsaved auto-flow edits";
+    reset.addEventListener("click", api.resetAutoFlow);
     var status = document.createElement("span");
     status.className = "auto-flow-status " + (model.status && model.status.valid ? "valid" : "invalid");
     status.textContent = (model.status && model.status.valid ? "valid" : "invalid") + " | " + text(model.status && model.status.sourceLabel, model.configName || "auto-flow");
-    toolbar.append(simple, standard, save, status);
+    toolbar.append(simple, standard, save, reset, status);
     elements.autoFlowEditor.append(toolbar);
 
     if (model.status && model.status.lastMessage) {
@@ -511,13 +583,16 @@
     var row = document.createElement("div");
     row.className = "auto-flow-block status-" + block.status;
     row.dataset.blockId = block.blockId;
+    row.dataset.slotId = block.slotId;
     var enabled = document.createElement("input");
     enabled.type = "checkbox";
+    enabled.id = controlId("auto-flow-enabled", block.slotId, block.blockId);
+    enabled.name = enabled.id;
     enabled.checked = block.enabled !== false;
     enabled.disabled = blocked || block.locked || !(block.actions && (block.actions.canEnable || block.actions.canDisable));
     enabled.title = block.locked ? "Locked core block" : "Enable or disable block";
     enabled.addEventListener("change", function () {
-      api.toggleAutoFlowBlock(block.blockId, enabled.checked);
+      api.toggleAutoFlowBlock(block.slotId, block.blockId, enabled.checked);
     });
     var main = document.createElement("div");
     main.className = "auto-flow-block-main";
@@ -542,6 +617,8 @@
         field.textContent = param.label + " ";
         var input = document.createElement("input");
         input.type = "number";
+        input.id = controlId("auto-flow-param", block.slotId, block.blockId, param.name);
+        input.name = input.id;
         input.min = String(param.min);
         input.max = String(param.max);
         input.step = "1";
@@ -550,7 +627,7 @@
         input.addEventListener("change", function () {
           var next = Number(input.value);
           if (Number.isInteger(next)) {
-            api.updateAutoFlowParam(block.blockId, param.name, next);
+            api.updateAutoFlowParam(block.slotId, block.blockId, param.name, next);
           }
         });
         field.append(input);
@@ -559,12 +636,32 @@
       main.append(params);
     }
     row.append(enabled, main);
+    if (block.actions && block.actions.canRemove) {
+      var remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "danger";
+      remove.textContent = "Delete";
+      remove.disabled = blocked;
+      remove.title = "Remove block from this slot";
+      remove.addEventListener("click", function (event) {
+        if (event && typeof event.preventDefault === "function") {
+          event.preventDefault();
+        }
+        api.removeAutoFlowBlock(block.slotId, block.blockId);
+      });
+      row.append(remove);
+    }
     return row;
   }
 
   function renderAutoFlowInsert(slot, availableBlocks, blocked) {
+    var configured = new Set((Array.isArray(slot.blocks) ? slot.blocks : []).map(function (block) {
+      return block.blockId;
+    }));
     var candidates = availableBlocks.filter(function (block) {
-      return Array.isArray(block.allowedSlots) && block.allowedSlots.indexOf(slot.slotId) !== -1;
+      return Array.isArray(block.allowedSlots)
+        && block.allowedSlots.indexOf(slot.slotId) !== -1
+        && !configured.has(block.blockId);
     });
     if (candidates.length === 0) {
       return null;
@@ -572,6 +669,15 @@
     var container = document.createElement("div");
     container.className = "auto-flow-insert";
     var select = document.createElement("select");
+    select.id = controlId("auto-flow-insert", slot.slotId);
+    select.name = select.id;
+    select.value = "";
+    var placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Add block...";
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    select.append(placeholder);
     candidates.forEach(function (block) {
       var option = document.createElement("option");
       option.value = block.blockId;
@@ -581,8 +687,17 @@
     var button = document.createElement("button");
     button.type = "button";
     button.textContent = "Insert";
-    button.disabled = blocked;
-    button.addEventListener("click", function () {
+    button.disabled = blocked || !select.value;
+    select.addEventListener("change", function () {
+      button.disabled = blocked || !select.value;
+    });
+    button.addEventListener("click", function (event) {
+      if (event && typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+      if (!select.value) {
+        return;
+      }
       api.insertAutoFlowBlock(slot.slotId, select.value);
     });
     container.append(select, button);
@@ -698,6 +813,8 @@
 
     var checkbox = document.createElement("input");
     checkbox.type = "checkbox";
+    checkbox.id = controlId("git-select", node.kind, node.rootKey, node.path || node.label || node.name);
+    checkbox.name = checkbox.id;
     checkbox.checked = checked;
     checkbox.indeterminate = indeterminate;
     checkbox.disabled = paths.length === 0;
@@ -2425,6 +2542,8 @@
       checkRow.className = "check-row";
       var checkbox = document.createElement("input");
       checkbox.type = "checkbox";
+      checkbox.id = "field-" + field.id;
+      checkbox.name = field.id;
       checkbox.dataset.fieldId = field.id;
       checkbox.dataset.fieldType = field.type;
       checkbox.checked = currentValue(field) === true;
@@ -2442,6 +2561,7 @@
         var input = document.createElement(field.multiline ? "textarea" : "input");
         input.id = "field-" + field.id;
         if (!field.multiline) input.type = "text";
+        input.name = field.id;
         if (field.placeholder) input.placeholder = field.placeholder;
         if (field.rows) input.rows = field.rows;
         input.dataset.fieldId = field.id;
@@ -2477,6 +2597,7 @@
       var input = document.createElement("input");
       input.type = "radio";
       input.name = "field-" + field.id;
+      input.id = controlId("field", field.id, option.value);
       input.value = option.value;
       input.dataset.fieldId = field.id;
       input.dataset.fieldType = field.type;
@@ -2507,6 +2628,8 @@
       label.className = "field-option";
       var input = document.createElement("input");
       input.type = "checkbox";
+      input.id = controlId("field", field.id, option.value);
+      input.name = field.id;
       input.value = option.value;
       input.dataset.fieldId = field.id;
       input.dataset.fieldType = field.type;
@@ -2576,13 +2699,13 @@
   });
   elements.clearLog.addEventListener("click", api.clearLog);
   elements.progress.addEventListener("scroll", function () {
-    api.scrollPane("progress", Math.round(elements.progress.scrollTop));
+    sendScrollPane("progress", elements.progress);
   });
   elements.log.addEventListener("scroll", function () {
-    api.scrollPane("log", Math.round(elements.log.scrollTop));
+    sendScrollPane("log", elements.log);
   });
   elements.helpText.addEventListener("scroll", function () {
-    api.scrollPane("help", Math.round(elements.helpText.scrollTop));
+    sendScrollPane("help", elements.helpText);
   });
 
   api.connect();

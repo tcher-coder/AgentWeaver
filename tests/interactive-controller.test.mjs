@@ -377,6 +377,26 @@ describe("interactive controller", () => {
     controller.destroy();
   });
 
+  it("resets auto-flow edits to the last saved editor baseline", () => {
+    const controller = createAutoFlowController();
+    controller.mount();
+    controller.selectFlowId("auto-common");
+
+    assert.equal(controller.getViewModel().autoFlow.status.canReset, false);
+    controller.toggleAutoFlowBlock("auto-common", "review.design-loop", false);
+
+    let view = controller.getViewModel();
+    assert.equal(view.autoFlow.status.canReset, true);
+    assert.equal(view.autoFlow.slots.find((slot) => slot.slotId === "designReview").blocks[0].enabled, false);
+
+    controller.resetAutoFlowConfig("auto-common");
+    view = controller.getViewModel();
+    assert.equal(view.autoFlow.status.canReset, false);
+    assert.equal(view.autoFlow.status.lastMessage, "Reset auto-flow changes.");
+    assert.equal(view.autoFlow.slots.find((slot) => slot.slotId === "designReview").blocks[0].enabled, true);
+    controller.destroy();
+  });
+
   it("renders shared form state independently from blessed widgets", async () => {
     const controller = createController();
     const request = controller.requestUserInput({
@@ -974,6 +994,31 @@ describe("interactive controller", () => {
     controller.appendLog("before clear");
     controller.clearLog();
     assert.equal(controller.getViewModel().logText, "Log cleared.");
+    controller.destroy();
+  });
+
+  it("does not emit render events for unchanged scroll offsets", () => {
+    const controller = createController();
+    controller.mount();
+    let renders = 0;
+    const unsubscribe = controller.subscribe((event) => {
+      if (event.type === "render") {
+        renders += 1;
+      }
+    });
+
+    controller.setScrollOffset("help", 999);
+    assert.equal(renders, 1);
+    const offset = controller.getViewModel().helpScrollOffset;
+
+    controller.setScrollOffset("help", offset);
+    controller.scrollPane("help", { delta: 0 });
+    assert.equal(renders, 1);
+
+    controller.scrollPane("help", { delta: -999 });
+    assert.equal(renders, 2);
+
+    unsubscribe();
     controller.destroy();
   });
 

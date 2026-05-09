@@ -29,6 +29,7 @@ import {
   buildAutoFlowEditorViewModel,
   createConfigAutoFlowDefinition,
   insertAutoFlowBlock,
+  removeAutoFlowBlock,
   setAutoFlowBlockEnabled,
   updateAutoFlowBlockParameter,
 } from "./auto-flow.js";
@@ -120,6 +121,10 @@ const LOG_FLUSH_INTERVAL_MS = 120;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function cloneSavedAutoFlowConfig(config: SavedAutoFlowConfig): SavedAutoFlowConfig {
+  return JSON.parse(JSON.stringify(config)) as SavedAutoFlowConfig;
 }
 
 function isPrintableCharacter(ch: string, key: Keypress): boolean {
@@ -232,7 +237,7 @@ export class InteractiveSessionController {
       }
       this.autoFlowEditors.set(flow.id, {
         definition: flow.autoFlow,
-        config: JSON.parse(JSON.stringify(flow.autoFlow.config)) as SavedAutoFlowConfig,
+        config: cloneSavedAutoFlowConfig(flow.autoFlow.config),
         diagnostics: [],
         saveTarget: "project",
       });
@@ -732,7 +737,7 @@ export class InteractiveSessionController {
     }
     this.autoFlowEditors.set(targetFlowId, {
       definition,
-      config: JSON.parse(JSON.stringify(loaded.config)) as SavedAutoFlowConfig,
+      config: cloneSavedAutoFlowConfig(loaded.config),
       diagnostics: [],
       saveTarget: loaded.source.type,
       lastMessage: `Loaded auto-flow config '${loaded.config.name}'.`,
@@ -741,20 +746,22 @@ export class InteractiveSessionController {
     this.emitChange();
   }
 
-  toggleAutoFlowBlock(flowId: string | undefined, blockId: string, enabled?: boolean): void {
+  toggleAutoFlowBlock(flowId: string | undefined, blockId: string, enabled?: boolean, slotId?: string): void {
     const targetFlowId = flowId ?? this.state.selectedFlowId;
     const editor = this.requireAutoFlowEditor(targetFlowId);
     const view = this.autoFlowViewForFlow(targetFlowId);
-    const currentBlock = view?.slots.flatMap((slot) => slot.blocks).find((block) => block.blockId === blockId);
+    const currentBlock = view?.slots.flatMap((slot) => slot.blocks).find((block) => (
+      block.blockId === blockId && (slotId === undefined || block.slotId === slotId)
+    ));
     const nextEnabled = enabled ?? !(currentBlock?.enabled ?? true);
-    const result = setAutoFlowBlockEnabled(editor.config, blockId, nextEnabled);
+    const result = setAutoFlowBlockEnabled(editor.config, blockId, nextEnabled, slotId);
     this.autoFlowEditors.set(targetFlowId, {
       ...editor,
       config: result.config,
       diagnostics: result.diagnostics,
       lastMessage: result.diagnostics.length > 0
         ? result.diagnostics[0]?.message ?? `Auto-flow block '${blockId}' could not be updated.`
-        : `${nextEnabled ? "Enabled" : "Disabled"} auto-flow block '${blockId}'.`,
+        : `${nextEnabled ? "Enabled" : "Disabled"} auto-flow block '${blockId}'${slotId ? ` in '${slotId}'` : ""}.`,
     });
     this.emitChange();
     if (result.diagnostics.length > 0) {
@@ -762,17 +769,17 @@ export class InteractiveSessionController {
     }
   }
 
-  updateAutoFlowParameter(flowId: string | undefined, blockId: string, paramName: string, value: number): void {
+  updateAutoFlowParameter(flowId: string | undefined, blockId: string, paramName: string, value: number, slotId?: string): void {
     const targetFlowId = flowId ?? this.state.selectedFlowId;
     const editor = this.requireAutoFlowEditor(targetFlowId);
-    const result = updateAutoFlowBlockParameter(editor.config, blockId, paramName, value);
+    const result = updateAutoFlowBlockParameter(editor.config, blockId, paramName, value, slotId);
     this.autoFlowEditors.set(targetFlowId, {
       ...editor,
       config: result.config,
       diagnostics: result.diagnostics,
       lastMessage: result.diagnostics.length > 0
         ? result.diagnostics[0]?.message ?? `Auto-flow block '${blockId}' parameter '${paramName}' is invalid.`
-        : `Updated '${blockId}.${paramName}' to ${value}.`,
+        : `Updated '${blockId}.${paramName}'${slotId ? ` in '${slotId}'` : ""} to ${value}.`,
     });
     this.emitChange();
   }
@@ -793,6 +800,36 @@ export class InteractiveSessionController {
     if (!result.inserted || result.diagnostics.length > 0) {
       throw new TaskRunnerError(result.diagnostics[0]?.message ?? `Auto-flow block '${blockId}' could not be inserted into '${slotId}'.`);
     }
+  }
+
+  removeAutoFlowBlock(flowId: string | undefined, slotId: string, blockId: string): void {
+    const targetFlowId = flowId ?? this.state.selectedFlowId;
+    const editor = this.requireAutoFlowEditor(targetFlowId);
+    const result = removeAutoFlowBlock(editor.config, slotId, blockId);
+    this.autoFlowEditors.set(targetFlowId, {
+      ...editor,
+      config: result.config,
+      diagnostics: result.diagnostics,
+      lastMessage: result.diagnostics.length > 0
+        ? result.diagnostics[0]?.message ?? `Auto-flow block '${blockId}' could not be removed from '${slotId}'.`
+        : `Removed auto-flow block '${blockId}' from '${slotId}'.`,
+    });
+    this.emitChange();
+    if (!result.removed || result.diagnostics.length > 0) {
+      throw new TaskRunnerError(result.diagnostics[0]?.message ?? `Auto-flow block '${blockId}' could not be removed from '${slotId}'.`);
+    }
+  }
+
+  resetAutoFlowConfig(flowId?: string): void {
+    const targetFlowId = flowId ?? this.state.selectedFlowId;
+    const editor = this.requireAutoFlowEditor(targetFlowId);
+    this.autoFlowEditors.set(targetFlowId, {
+      ...editor,
+      config: cloneSavedAutoFlowConfig(editor.definition.config),
+      diagnostics: [],
+      lastMessage: "Reset auto-flow changes.",
+    });
+    this.emitChange();
   }
 
   saveAutoFlowConfig(flowId?: string, name?: string, location?: AutoFlowConfigLocation): void {
@@ -818,6 +855,10 @@ export class InteractiveSessionController {
     });
     this.autoFlowEditors.set(targetFlowId, {
       ...editor,
+      definition: {
+        ...editor.definition,
+        config: cloneSavedAutoFlowConfig(result.config),
+      },
       config: result.config,
       diagnostics: [],
       saveTarget: result.source.type,
@@ -1137,7 +1178,7 @@ export class InteractiveSessionController {
       ...flow,
       autoFlow: {
         ...editor.definition,
-        config: JSON.parse(JSON.stringify(editor.config)) as SavedAutoFlowConfig,
+        config: cloneSavedAutoFlowConfig(editor.config),
         ...(editor.diagnostics.length > 0 ? { diagnostics: editor.diagnostics } : {}),
         ...(editor.lastMessage ? { lastMessage: editor.lastMessage } : {}),
       },
@@ -1151,10 +1192,7 @@ export class InteractiveSessionController {
       return null;
     }
     return buildAutoFlowEditorViewModel(
-      {
-        ...editor.definition,
-        config: editor.config,
-      },
+      editor.definition,
       {
         config: editor.config,
         ...(editor.diagnostics.length > 0 ? { diagnostics: editor.diagnostics } : {}),
@@ -1897,6 +1935,9 @@ export class InteractiveSessionController {
 
   private applyScrollOffset(panel: "progress" | "summary" | "log" | "help", value: number, maxOffset: number): void {
     const next = clamp(value, 0, maxOffset);
+    if (this.scrollOffsetFor(panel) === next) {
+      return;
+    }
     if (panel === "progress") {
       this.state.progressScrollOffset = next;
     } else if (panel === "summary") {

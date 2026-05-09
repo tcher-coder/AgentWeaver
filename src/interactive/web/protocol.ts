@@ -27,9 +27,11 @@ export type ClientAction =
   | { type: "autoFlow.selectPreset"; preset: "simple" | "standard"; actionId?: string }
   | { type: "autoFlow.loadConfig"; name: string; flowId?: string; actionId?: string }
   | { type: "autoFlow.save"; flowId?: string; name?: string; location?: "project" | "user"; actionId?: string }
-  | { type: "autoFlow.toggleBlock"; flowId?: string; blockId: string; enabled?: boolean; actionId?: string }
-  | { type: "autoFlow.updateParam"; flowId?: string; blockId: string; paramName: string; value: number; actionId?: string }
+  | { type: "autoFlow.reset"; flowId?: string; actionId?: string }
+  | { type: "autoFlow.toggleBlock"; flowId?: string; slotId?: string; blockId: string; enabled?: boolean; actionId?: string }
+  | { type: "autoFlow.updateParam"; flowId?: string; slotId?: string; blockId: string; paramName: string; value: number; actionId?: string }
   | { type: "autoFlow.insertBlock"; flowId?: string; slotId: string; blockId: string; actionId?: string }
+  | { type: "autoFlow.removeBlock"; flowId?: string; slotId: string; blockId: string; actionId?: string }
   | { type: "git.refresh"; actionId?: string }
   | { type: "git.createBranch"; branchName: string; actionId?: string }
   | { type: "git.checkout"; branchName: string; actionId?: string }
@@ -62,9 +64,11 @@ const ACTION_TYPES = new Set([
   "autoFlow.selectPreset",
   "autoFlow.loadConfig",
   "autoFlow.save",
+  "autoFlow.reset",
   "autoFlow.toggleBlock",
   "autoFlow.updateParam",
   "autoFlow.insertBlock",
+  "autoFlow.removeBlock",
   "git.refresh",
   "git.createBranch",
   "git.checkout",
@@ -278,12 +282,18 @@ export function parseClientAction(raw: string): ClientAction {
       ...(actionId ? { actionId } : {}),
     };
   }
+  if (parsed.type === "autoFlow.reset") {
+    const flowId = optionalNonEmptyString(parsed, "flowId");
+    return { type: "autoFlow.reset", ...(flowId ? { flowId } : {}), ...(actionId ? { actionId } : {}) };
+  }
   if (parsed.type === "autoFlow.toggleBlock") {
     const flowId = optionalNonEmptyString(parsed, "flowId");
+    const slotId = optionalNonEmptyString(parsed, "slotId");
     const enabled = optionalBoolean(parsed, "enabled");
     return {
       type: "autoFlow.toggleBlock",
       ...(flowId ? { flowId } : {}),
+      ...(slotId ? { slotId } : {}),
       blockId: requireNonEmptyString(parsed, "blockId"),
       ...(enabled !== undefined ? { enabled } : {}),
       ...(actionId ? { actionId } : {}),
@@ -291,9 +301,11 @@ export function parseClientAction(raw: string): ClientAction {
   }
   if (parsed.type === "autoFlow.updateParam") {
     const flowId = optionalNonEmptyString(parsed, "flowId");
+    const slotId = optionalNonEmptyString(parsed, "slotId");
     return {
       type: "autoFlow.updateParam",
       ...(flowId ? { flowId } : {}),
+      ...(slotId ? { slotId } : {}),
       blockId: requireNonEmptyString(parsed, "blockId"),
       paramName: requireNonEmptyString(parsed, "paramName"),
       value: optionalInteger(parsed, "value") ?? (() => {
@@ -306,6 +318,16 @@ export function parseClientAction(raw: string): ClientAction {
     const flowId = optionalNonEmptyString(parsed, "flowId");
     return {
       type: "autoFlow.insertBlock",
+      ...(flowId ? { flowId } : {}),
+      slotId: requireNonEmptyString(parsed, "slotId"),
+      blockId: requireNonEmptyString(parsed, "blockId"),
+      ...(actionId ? { actionId } : {}),
+    };
+  }
+  if (parsed.type === "autoFlow.removeBlock") {
+    const flowId = optionalNonEmptyString(parsed, "flowId");
+    return {
+      type: "autoFlow.removeBlock",
       ...(flowId ? { flowId } : {}),
       slotId: requireNonEmptyString(parsed, "slotId"),
       blockId: requireNonEmptyString(parsed, "blockId"),

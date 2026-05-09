@@ -98,6 +98,7 @@ describe("interactive auto-flow model", () => {
     const definition = autoFlowModule.createPresetAutoFlowDefinition("simple");
     const model = autoFlowModule.buildAutoFlowEditorViewModel(definition);
 
+    assert.equal(model.status.canReset, false);
     assert.deepEqual(model.slots.map((slot) => slot.slotId), [
       "source",
       "normalize",
@@ -119,6 +120,7 @@ describe("interactive auto-flow model", () => {
     const definition = autoFlowModule.createPresetAutoFlowDefinition("standard");
     const model = autoFlowModule.buildAutoFlowEditorViewModel(definition);
 
+    assert.equal(model.status.canReset, false);
     assert.equal(model.slots.find((slot) => slot.slotId === "designReview").blocks[0].blockId, "review.design-loop");
     assert.equal(model.slots.find((slot) => slot.slotId === "review").blocks[0].blockId, "review.loop");
 
@@ -145,7 +147,38 @@ describe("interactive auto-flow model", () => {
     });
     assert.equal(model.status.canRun, false);
     assert.equal(model.status.canSave, false);
+    assert.equal(model.status.canReset, true);
     assert.match(model.diagnostics[0].message, /between 1 and 5; received 6/);
     assert.equal(model.slots.find((slot) => slot.slotId === "review").blocks[0].status, "invalid");
+  });
+
+  it("edits and removes repeated optional block ids by slot", () => {
+    const definition = autoFlowModule.createPresetAutoFlowDefinition("standard");
+    const config = {
+      ...definition.config,
+      slots: {
+        postImplementationChecks: {
+          blocks: [{ id: "checks.go.linter", enabled: true, maxIterations: 5 }],
+        },
+        final: {
+          blocks: [{ id: "checks.go.linter", enabled: true, maxIterations: 5 }],
+        },
+      },
+    };
+
+    const disabledFinal = autoFlowModule.setAutoFlowBlockEnabled(config, "checks.go.linter", false, "final");
+    assert.equal(disabledFinal.diagnostics.length, 0);
+    assert.equal(disabledFinal.config.slots.postImplementationChecks.blocks[0].enabled, true);
+    assert.equal(disabledFinal.config.slots.final.blocks[0].enabled, false);
+
+    const updatedFinal = autoFlowModule.updateAutoFlowBlockParameter(disabledFinal.config, "checks.go.linter", "maxIterations", 4, "final");
+    assert.equal(updatedFinal.diagnostics.length, 0);
+    assert.equal(updatedFinal.config.slots.postImplementationChecks.blocks[0].maxIterations, 5);
+    assert.equal(updatedFinal.config.slots.final.blocks[0].maxIterations, 4);
+
+    const removedFinal = autoFlowModule.removeAutoFlowBlock(updatedFinal.config, "final", "checks.go.linter");
+    assert.equal(removedFinal.removed, true);
+    assert.equal(removedFinal.config.slots.postImplementationChecks.blocks.some((block) => block.id === "checks.go.linter"), true);
+    assert.equal(removedFinal.config.slots.final.blocks.some((block) => block.id === "checks.go.linter"), false);
   });
 });

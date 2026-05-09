@@ -273,16 +273,24 @@ export function createWebInteractiveSession(
         controller.saveAutoFlowConfig(action.flowId, action.name, action.location);
         return;
       }
+      if (action.type === "autoFlow.reset") {
+        controller.resetAutoFlowConfig(action.flowId);
+        return;
+      }
       if (action.type === "autoFlow.toggleBlock") {
-        controller.toggleAutoFlowBlock(action.flowId, action.blockId, action.enabled);
+        controller.toggleAutoFlowBlock(action.flowId, action.blockId, action.enabled, action.slotId);
         return;
       }
       if (action.type === "autoFlow.updateParam") {
-        controller.updateAutoFlowParameter(action.flowId, action.blockId, action.paramName, action.value);
+        controller.updateAutoFlowParameter(action.flowId, action.blockId, action.paramName, action.value, action.slotId);
         return;
       }
       if (action.type === "autoFlow.insertBlock") {
         controller.insertAutoFlowBlock(action.flowId, action.slotId, action.blockId);
+        return;
+      }
+      if (action.type === "autoFlow.removeBlock") {
+        controller.removeAutoFlowBlock(action.flowId, action.slotId, action.blockId);
         return;
       }
       if (action.type === "git.refresh") {

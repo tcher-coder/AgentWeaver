@@ -109,6 +109,7 @@ export type AutoFlowAvailableBlockViewModel = {
 export type AutoFlowConfigStatus = {
   valid: boolean;
   canSave: boolean;
+  canReset: boolean;
   canRun: boolean;
   saveTarget: AutoFlowConfigLocation;
   sourceLabel: string;

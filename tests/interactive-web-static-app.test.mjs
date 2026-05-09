@@ -389,9 +389,22 @@ function gitWorkspace(overrides = {}) {
   };
 }
 
+function assertFormControlsAreIdentifiable(root) {
+  const controls = [
+    ...root.querySelectorAll("input"),
+    ...root.querySelectorAll("select"),
+    ...root.querySelectorAll("textarea"),
+  ];
+  assert.ok(controls.length > 0);
+  for (const control of controls) {
+    assert.ok(control.id || control.name, `${control.tagName} control is missing id/name`);
+  }
+}
+
 describe("static Artifact Explorer app", () => {
   it("places Git Workspace where Task Summary used to render", () => {
     const html = readFileSync(path.resolve("src/interactive/web/static/index.html"), "utf8");
+    const css = readFileSync(path.resolve("src/interactive/web/static/styles.input.css"), "utf8");
     const splitStart = html.indexOf('<div class="split-panels">');
     const splitEnd = html.indexOf('<section class="log-pane"', splitStart);
     assert.notEqual(splitStart, -1);
@@ -399,10 +412,13 @@ describe("static Artifact Explorer app", () => {
     const splitPanels = html.slice(splitStart, splitEnd);
 
     assert.doesNotMatch(html, /Task Summary|Task summary|summary-text|summary-title/);
+    assert.doesNotMatch(html, /Flow Details|description-text/);
     assert.match(splitPanels, /aria-label="Progress"/);
     assert.match(splitPanels, /aria-label="Git Workspace"/);
     assert.doesNotMatch(splitPanels, /aria-label="Task summary"/);
     assert.ok(splitPanels.indexOf('aria-label="Progress"') < splitPanels.indexOf('aria-label="Git Workspace"'));
+    assert.match(css, /\.details-pane\s*\{[\s\S]*grid-template-rows:\s*auto minmax\(0, 1fr\)/);
+    assert.match(css, /\.split-panels\s*\{[\s\S]*grid-row:\s*2/);
   });
 
   it("renders Git Workspace dirty state and sends typed Git actions", () => {
@@ -416,6 +432,7 @@ describe("static Artifact Explorer app", () => {
     assert.equal(harness.document.querySelectorAll(".git-file-row").length, 2);
     assert.match(harness.document.getElementById("git-files").textContent, /--option-like\.ts/);
     assert.match(harness.document.getElementById("git-files").textContent, /old\.ts -> new\.ts/);
+    assertFormControlsAreIdentifiable(harness.document);
 
     const checkbox = harness.document.querySelector('[data-path="--option-like.ts"]').querySelector("input");
     checkbox.checked = true;
@@ -639,6 +656,7 @@ describe("static Artifact Explorer app", () => {
         status: {
           valid: false,
           canSave: false,
+          canReset: true,
           canRun: false,
           saveTarget: "project",
           sourceLabel: "preset standard",
@@ -648,6 +666,8 @@ describe("static Artifact Explorer app", () => {
         availableBlocks: [
           { blockId: "review.design-loop", title: "Design review loop", allowedSlots: ["designReview"] },
           { blockId: "review.loop", title: "Review loop", allowedSlots: ["review"] },
+          { blockId: "checks.go.linter", title: "Go linter loop", allowedSlots: ["postImplementationChecks", "final"] },
+          { blockId: "checks.go.tests", title: "Go tests loop", allowedSlots: ["postImplementationChecks", "final"] },
         ],
         slots: [
           {
@@ -688,6 +708,25 @@ describe("static Artifact Explorer app", () => {
               diagnostics: [{ message: "review.loop.maxIterations must be between 1 and 5; received 6." }],
             }],
           },
+          {
+            slotId: "final",
+            title: "Final",
+            status: "pending",
+            reason: "Slot is configured.",
+            diagnostics: [],
+            blocks: [{
+              blockId: "checks.go.linter",
+              title: "Go linter loop",
+              slotId: "final",
+              status: "pending",
+              reason: "Configured in saved auto-flow config.",
+              locked: false,
+              enabled: true,
+              actions: { canEnable: false, canDisable: true, canRemove: true, canEditParams: true },
+              params: [{ name: "maxIterations", label: "maxIterations", type: "integer", value: 5, defaultValue: 5, min: 1, max: 5 }],
+              diagnostics: [],
+            }],
+          },
         ],
       },
     }));
@@ -699,14 +738,23 @@ describe("static Artifact Explorer app", () => {
 
     const editor = harness.document.getElementById("auto-flow-editor");
     assert.equal(editor.hidden, false);
+    assert.equal(harness.document.byId.has("description-text"), false);
+    assertFormControlsAreIdentifiable(editor);
     assert.match(editor.textContent, /Design review loop/);
     assert.match(editor.textContent, /between 1 and 5/);
-    assert.equal(editor.querySelectorAll(".auto-flow-slot").length, 2);
+    assert.equal(editor.querySelectorAll(".auto-flow-slot").length, 3);
+
+    const resetButton = editor.querySelectorAll("button").find((button) => button.textContent === "Reset");
+    assert.ok(resetButton);
+    assert.equal(resetButton.disabled, false);
+    resetButton.click();
+    assert.equal(harness.socket.sent.at(-1).type, "autoFlow.reset");
 
     const checkbox = editor.querySelector('[data-block-id="review.design-loop"]').querySelector("input");
     checkbox.checked = true;
     checkbox.dispatchEvent({ type: "change", target: checkbox });
     assert.equal(harness.socket.sent.at(-1).type, "autoFlow.toggleBlock");
+    assert.equal(harness.socket.sent.at(-1).slotId, "designReview");
     assert.equal(harness.socket.sent.at(-1).blockId, "review.design-loop");
     assert.equal(harness.socket.sent.at(-1).enabled, true);
 
@@ -715,9 +763,36 @@ describe("static Artifact Explorer app", () => {
     numberInput.value = "5";
     numberInput.dispatchEvent({ type: "change", target: numberInput });
     assert.equal(harness.socket.sent.at(-1).type, "autoFlow.updateParam");
+    assert.equal(harness.socket.sent.at(-1).slotId, "review");
     assert.equal(harness.socket.sent.at(-1).blockId, "review.loop");
     assert.equal(harness.socket.sent.at(-1).paramName, "maxIterations");
     assert.equal(harness.socket.sent.at(-1).value, 5);
+
+    const deleteButton = editor.querySelector('[data-block-id="review.loop"]').querySelectorAll("button")
+      .find((button) => button.textContent === "Delete");
+    assert.ok(deleteButton);
+    deleteButton.click();
+    assert.equal(deleteButton.disabled, false);
+    assert.equal(harness.socket.sent.at(-1).type, "autoFlow.removeBlock");
+    assert.equal(harness.socket.sent.at(-1).slotId, "review");
+    assert.equal(harness.socket.sent.at(-1).blockId, "review.loop");
+
+    const finalSlot = editor.querySelector('[data-slot-id="final"]');
+    const insertSelect = finalSlot.querySelector(".auto-flow-insert").querySelector("select");
+    const insertOptions = insertSelect.querySelectorAll("option").map((option) => option.textContent);
+    assert.deepEqual(insertOptions, ["Add block...", "Go tests loop"]);
+    assert.equal(insertSelect.querySelectorAll("option").some((option) => option.value === "checks.go.linter"), false);
+    const insertButton = finalSlot.querySelector(".auto-flow-insert").querySelector("button");
+    assert.equal(insertButton.disabled, true);
+    insertSelect.value = "checks.go.tests";
+    insertSelect.dispatchEvent({ type: "change", target: insertSelect });
+    assert.equal(insertButton.disabled, false);
+    insertButton.click();
+    assert.equal(insertButton.disabled, false);
+    assert.equal(insertSelect.disabled, false);
+    assert.equal(harness.socket.sent.at(-1).type, "autoFlow.insertBlock");
+    assert.equal(harness.socket.sent.at(-1).slotId, "final");
+    assert.equal(harness.socket.sent.at(-1).blockId, "checks.go.tests");
   });
 
   it("keeps the plain text progress fallback compatible without status parsing", () => {
@@ -759,6 +834,36 @@ describe("static Artifact Explorer app", () => {
     row = progress.querySelector(".progress-row");
     assert.equal(progress.scrollTop, 37);
     assert.equal(row.classList.contains("status-done"), true);
+  });
+
+  it("suppresses and deduplicates browser scroll reports during snapshot rendering", async () => {
+    const harness = createHarness(() => createResponse({ scopeKey: "ag-120", items: [] }));
+    harness.sendSnapshot(progressSnapshot([
+      { kind: "phase", label: "implement", depth: 0, status: "running" },
+    ]));
+
+    const progress = harness.document.getElementById("progress-text");
+    const sentScrolls = () => harness.socket.sent.filter((message) => message.type === "scroll");
+
+    progress.scrollTop = 12;
+    progress.dispatchEvent({ type: "scroll", target: progress });
+    assert.equal(sentScrolls().length, 0);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    progress.scrollTop = 13;
+    progress.dispatchEvent({ type: "scroll", target: progress });
+    assert.equal(sentScrolls().length, 1);
+    assert.equal(sentScrolls()[0].pane, "progress");
+    assert.equal(sentScrolls()[0].offset, 13);
+
+    progress.dispatchEvent({ type: "scroll", target: progress });
+    assert.equal(sentScrolls().length, 1);
+
+    progress.scrollTop = 14;
+    progress.dispatchEvent({ type: "scroll", target: progress });
+    assert.equal(sentScrolls().length, 2);
+    assert.equal(sentScrolls()[1].offset, 14);
   });
 
   it("renders grouped metadata and auto-previews the highest-priority useful artifact", async () => {

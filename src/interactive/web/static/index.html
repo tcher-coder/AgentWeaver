@@ -130,6 +130,39 @@
     </div>
   </aside>
 
+  <aside id="git-diff-drawer" class="git-diff-drawer" aria-label="Git Diff Viewer" hidden>
+    <div class="git-diff-drawer-header">
+      <div>
+        <h2 id="git-diff-title">Git Diff Viewer</h2>
+        <p id="git-diff-meta">Select a changed file to inspect its diff.</p>
+      </div>
+      <button id="git-diff-close-button" type="button">Close</button>
+    </div>
+    <div id="git-diff-status" class="git-diff-status" role="status" aria-live="polite"></div>
+    <div class="git-diff-drawer-body">
+      <section class="git-diff-file-pane" aria-label="Changed files">
+        <div class="pane-heading">
+          <h2>Changed Files</h2>
+        </div>
+        <div id="git-diff-file-list" class="git-diff-file-list"></div>
+      </section>
+      <section class="git-diff-preview" aria-label="Selected file diff">
+        <div class="git-diff-preview-header">
+          <div class="git-diff-selected">
+            <h2 id="git-diff-selected-title">Diff</h2>
+            <p id="git-diff-selected-meta">No file selected.</p>
+          </div>
+          <div id="git-diff-mode-controls" class="git-diff-mode-controls" role="group" aria-label="Diff mode">
+            <button type="button" data-git-diff-mode="head">All</button>
+            <button type="button" data-git-diff-mode="staged">Staged</button>
+            <button type="button" data-git-diff-mode="worktree">Unstaged</button>
+          </div>
+        </div>
+        <div id="git-diff-body" class="git-diff-body">Select a changed file to inspect its diff.</div>
+      </section>
+    </div>
+  </aside>
+
   <div id="modal-root" class="modal-root" aria-live="polite"></div>
   <script src="/static/app.js" defer></script>
 </body>

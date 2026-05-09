@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { readyToMergeFile } from "../src/artifacts.js";
@@ -7,6 +8,7 @@ import { createPipelineContext } from "../src/pipeline/context.js";
 import { loadDeclarativeFlow } from "../src/pipeline/declarative-flows.js";
 import { designReviewVerdictNode } from "../src/pipeline/nodes/design-review-verdict-node.js";
 import { flowRunNode } from "../src/pipeline/nodes/flow-run-node.js";
+import { manualJiraTaskInputNode } from "../src/pipeline/nodes/manual-jira-task-input-node.js";
 import type { FlowRunResumeEnvelope } from "../src/pipeline/flow-run-resume.js";
 import { createArtifactRegistry } from "../src/runtime/artifact-registry.js";
 
@@ -52,6 +54,43 @@ describe("design-review-verdict-node", () => {
     expect(phaseIds).toEqual(["source", "normalize", "plan", "implement", "review-loop"]);
   });
 
+  it("manual Jira fallback should write pasted text as the Jira task artifact", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "agentweaver-manual-jira-"));
+    try {
+      const outputFile = join(tempDir, "TASK-1.json");
+      const attachmentsManifestFile = join(tempDir, "jira-attachments-TASK-1.json");
+      const attachmentsContextFile = join(tempDir, "jira-attachments-context-TASK-1.txt");
+
+      const result = await manualJiraTaskInputNode.run(
+        {
+          issueKey: "TASK-1",
+          requestUserInput: async (form) => ({
+            formId: form.formId,
+            submittedAt: "2026-05-07T00:00:00.000Z",
+            values: {
+              task_description: "Manual pasted Jira description\n\nAcceptance criteria",
+            },
+          }),
+        } as never,
+        {
+          taskKey: "TASK-1",
+          outputFile,
+          attachmentsManifestFile,
+          attachmentsContextFile,
+        },
+      );
+
+      const payload = JSON.parse(readFileSync(outputFile, "utf8"));
+      expect(payload.source).toBe("manual-jira-fallback");
+      expect(payload.fields.description).toContain("Manual pasted Jira description");
+      expect(existsSync(attachmentsManifestFile)).toBe(true);
+      expect(existsSync(attachmentsContextFile)).toBe(true);
+      expect(result.outputs?.[0]?.manifest?.logicalKey).toBe("artifacts/jira-task.json");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("should not have design_review gate in auto-simple", async () => {
     const flow = await loadDeclarativeFlow({ source: "built-in", fileName: "auto-simple.json" });
     const hasDesignReview = flow.phases.some((p) => p.id === "design_review");
@@ -76,6 +115,36 @@ describe("design-review-verdict-node", () => {
     expect(runStep).toBeDefined();
     expect(runStep!.node).toBe("flow-run");
     expect(runStep!.params?.fileName).toEqual({ const: "plan.json" });
+  });
+
+  it("auto-common source phase should support Jira fetch and manual input fallback", async () => {
+    const flow = await loadDeclarativeFlow({ source: "built-in", fileName: "auto-common.json" });
+    const sourcePhase = flow.phases.find((p) => p.id === "source");
+    expect(sourcePhase).toBeDefined();
+
+    const jiraStep = sourcePhase!.steps.find((s) => s.id === "fetch_jira_source");
+    const manualStep = sourcePhase!.steps.find((s) => s.id === "collect_manual_source");
+
+    expect(jiraStep).toBeDefined();
+    expect(jiraStep!.when).toEqual({ ref: "params.jiraApiUrl" });
+    expect(jiraStep!.params?.fileName).toEqual({ const: "jira-fetch.json" });
+
+    expect(manualStep).toBeDefined();
+    expect(manualStep!.when).toEqual({ not: { ref: "params.jiraApiUrl" } });
+    expect(manualStep!.params?.fileName).toEqual({ const: "manual-jira-input.json" });
+    expect(manualStep!.params?.repromptInstantTaskInput).toBeUndefined();
+  });
+
+  it("auto-simple and auto-golang source phases should support manual task input fallback", async () => {
+    for (const fileName of ["auto-simple.json", "auto-golang.json", "auto-common-guided.json"]) {
+      const flow = await loadDeclarativeFlow({ source: "built-in", fileName });
+      const sourcePhase = flow.phases.find((p) => p.id === "source");
+      const manualStep = sourcePhase?.steps.find((s) => s.id === "collect_manual_source");
+
+      expect(manualStep).toBeDefined();
+      expect(manualStep!.when).toEqual({ not: { ref: "params.jiraApiUrl" } });
+      expect(manualStep!.params?.fileName).toEqual({ const: "manual-jira-input.json" });
+    }
   });
 
   it("auto-common design_review_loop phase should stop flow if sub-flow is stopped", async () => {

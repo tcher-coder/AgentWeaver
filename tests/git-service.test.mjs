@@ -1,10 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const distRoot = path.resolve(process.cwd(), "dist");
 const { createGitService } = await import(pathToFileURL(path.join(distRoot, "git/git-service.js")).href);
+const { parseGitDiffOutput } = await import(pathToFileURL(path.join(distRoot, "git/git-diff-parser.js")).href);
 
 function createRunner(responses = new Map()) {
   const calls = [];
@@ -208,5 +211,122 @@ describe("git service", () => {
     assert.equal(result.status, "error");
     assert.match(result.message, /No Git remote/);
     assert.equal(calls.length, 0);
+  });
+
+  it("builds safe diff commands for head, staged, and worktree modes", async () => {
+    const { runner, calls } = createRunner();
+    const service = createGitService({ runCommand: runner });
+    const current = snapshot();
+
+    await service.diffFile("--option-like.ts", "head", current);
+    await service.diffFile("--option-like.ts", "staged", current);
+    await service.diffFile("--option-like.ts", "worktree", current);
+
+    assert.deepEqual(calls.map((call) => call.argv), [
+      ["git", "diff", "--no-color", "--no-ext-diff", "--find-renames", "--unified=3", "HEAD", "--", "--option-like.ts"],
+      ["git", "diff", "--no-color", "--no-ext-diff", "--find-renames", "--unified=3", "--cached", "--", "--option-like.ts"],
+      ["git", "diff", "--no-color", "--no-ext-diff", "--find-renames", "--unified=3", "--", "--option-like.ts"],
+    ]);
+  });
+
+  it("rejects diff paths outside the current snapshot before invoking git", async () => {
+    const { runner, calls } = createRunner();
+    const service = createGitService({ runCommand: runner });
+
+    await assert.rejects(
+      () => service.diffFile("../outside.ts", "head", snapshot()),
+      /not in the current Git snapshot/,
+    );
+    assert.equal(calls.length, 0);
+  });
+
+  it("parses unified diff hunks into side-by-side rows with modify pairing", () => {
+    const diff = parseGitDiffOutput([
+      "diff --git a/src/app.ts b/src/app.ts",
+      "--- a/src/app.ts",
+      "+++ b/src/app.ts",
+      "@@ -1,4 +1,5 @@",
+      " keep",
+      "-old",
+      "+new",
+      "+added",
+      " tail",
+      "",
+    ].join("\n"), { mode: "head", path: "src/app.ts" });
+
+    assert.equal(diff.empty, false);
+    assert.equal(diff.hunks.length, 1);
+    assert.deepEqual(diff.hunks[0].rows.map((row) => row.kind), ["context", "modify", "add", "context"]);
+    assert.equal(diff.hunks[0].rows[1].leftText, "old");
+    assert.equal(diff.hunks[0].rows[1].rightText, "new");
+    assert.equal(diff.hunks[0].rows[2].rightLineNumber, 3);
+  });
+
+  it("detects binary and rename metadata in parsed diffs", () => {
+    const diff = parseGitDiffOutput([
+      "diff --git a/old.bin b/new.bin",
+      "similarity index 100%",
+      "rename from old.bin",
+      "rename to new.bin",
+      "Binary files a/old.bin and b/new.bin differ",
+    ].join("\n"), { mode: "head", path: "new.bin" });
+
+    assert.equal(diff.binary, true);
+    assert.equal(diff.originalPath, "old.bin");
+    assert.deepEqual(diff.hunks, []);
+  });
+
+  it("synthesizes untracked text diffs and handles staged empty state", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "agentweaver-git-diff-"));
+    try {
+      mkdirSync(path.join(root, "src"));
+      writeFileSync(path.join(root, "src", "new.ts"), "one\ntwo\n", "utf8");
+      const service = createGitService({ cwd: root, runCommand: async () => "" });
+      const current = snapshot({
+        repositoryRoot: root,
+        changedFiles: [{ path: "src/new.ts", file: "src/new.ts", xy: "??", indexStatus: "?", workTreeStatus: "?", staged: false, type: "untracked" }],
+      });
+
+      const diff = await service.diffFile("src/new.ts", "worktree", current);
+      assert.equal(diff.empty, false);
+      assert.deepEqual(diff.hunks[0].rows.map((row) => [row.leftText, row.rightText]), [["", "one"], ["", "two"]]);
+
+      const staged = await service.diffFile("src/new.ts", "staged", current);
+      assert.equal(staged.empty, true);
+      assert.match(staged.message, /no staged diff/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects untracked symlink escapes and suppresses binary or too-large row payloads", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "agentweaver-git-diff-"));
+    const outside = mkdtempSync(path.join(os.tmpdir(), "agentweaver-git-diff-outside-"));
+    try {
+      writeFileSync(path.join(outside, "secret.txt"), "secret\n", "utf8");
+      symlinkSync(path.join(outside, "secret.txt"), path.join(root, "escape.txt"));
+      writeFileSync(path.join(root, "blob.bin"), Buffer.from([0, 1, 2]));
+      writeFileSync(path.join(root, "large.txt"), "x".repeat(32), "utf8");
+      const service = createGitService({ cwd: root, runCommand: async () => "", maxDiffBytes: 8 });
+      const current = snapshot({
+        repositoryRoot: root,
+        changedFiles: [
+          { path: "escape.txt", file: "escape.txt", xy: "??", indexStatus: "?", workTreeStatus: "?", staged: false, type: "untracked" },
+          { path: "blob.bin", file: "blob.bin", xy: "??", indexStatus: "?", workTreeStatus: "?", staged: false, type: "untracked" },
+          { path: "large.txt", file: "large.txt", xy: "??", indexStatus: "?", workTreeStatus: "?", staged: false, type: "untracked" },
+        ],
+      });
+
+      await assert.rejects(() => service.diffFile("escape.txt", "head", current), /escapes the repository root/);
+      const binary = await service.diffFile("blob.bin", "head", current);
+      assert.equal(binary.binary, true);
+      assert.deepEqual(binary.hunks, []);
+      const large = await service.diffFile("large.txt", "head", current);
+      assert.equal(large.tooLarge, true);
+      assert.deepEqual(large.hunks, []);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 });

@@ -22,11 +22,22 @@ function sourcePhase(): DeclarativePhaseSpec {
     steps: [
       {
         id: "fetch_jira_source",
+        when: { ref: "params.jiraApiUrl" },
         node: "flow-run",
         params: {
           fileName: constant("jira-fetch.json"),
           labelText: constant("Fetching Jira task source"),
           jiraApiUrl: ref("params.jiraApiUrl"),
+          taskKey: ref("params.taskKey"),
+        },
+      },
+      {
+        id: "collect_manual_source",
+        when: { not: { ref: "params.jiraApiUrl" } },
+        node: "flow-run",
+        params: {
+          fileName: constant("manual-jira-input.json"),
+          labelText: constant("Collecting manual Jira task source"),
           taskKey: ref("params.taskKey"),
         },
       },
@@ -225,7 +236,7 @@ function reviewLoopPhase(context: AutoFlowPhaseFactoryContext): DeclarativePhase
 export const BUILT_IN_AUTO_FLOW_BLOCKS = [
   {
     id: "source.jira",
-    title: "Jira source",
+    title: "Task source",
     category: "source",
     allowedSlots: SOURCE_SLOT,
     requires: [],

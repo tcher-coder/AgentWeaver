@@ -294,7 +294,10 @@ describe("auto-flow parity matrix", () => {
     const phases = result.spec!.phases as DeclarativePhaseSpec[];
     expect(phaseIds(phases)).toEqual(["source", "normalize", "plan", "implement", "review-loop"]);
 
+    expect(stepById(phases[0]!, "fetch_jira_source")?.when).toEqual({ ref: "params.jiraApiUrl" });
     expect(stepById(phases[0]!, "fetch_jira_source")?.params?.fileName).toEqual({ const: "jira-fetch.json" });
+    expect(stepById(phases[0]!, "collect_manual_source")?.when).toEqual({ not: { ref: "params.jiraApiUrl" } });
+    expect(stepById(phases[0]!, "collect_manual_source")?.params?.fileName).toEqual({ const: "manual-jira-input.json" });
     expect(stepById(phases[1]!, "run_normalize_source")?.params?.fileName).toEqual({ const: "normalize-task-source.json" });
     expect(stepById(phases[2]!, "run_plan_flow")?.params?.fileName).toEqual({ const: "plan.json" });
 
@@ -321,7 +324,10 @@ describe("auto-flow parity matrix", () => {
     const phases = result.spec!.phases as DeclarativePhaseSpec[];
     expect(phaseIds(phases)).toEqual(["source", "normalize", "plan", "design_review_loop", "implement", "review-loop"]);
 
+    expect(stepById(phases[0]!, "fetch_jira_source")?.when).toEqual({ ref: "params.jiraApiUrl" });
     expect(stepById(phases[0]!, "fetch_jira_source")?.params?.fileName).toEqual({ const: "jira-fetch.json" });
+    expect(stepById(phases[0]!, "collect_manual_source")?.when).toEqual({ not: { ref: "params.jiraApiUrl" } });
+    expect(stepById(phases[0]!, "collect_manual_source")?.params?.fileName).toEqual({ const: "manual-jira-input.json" });
     expect(stepById(phases[1]!, "run_normalize_source")?.params?.fileName).toEqual({ const: "normalize-task-source.json" });
     expect(stepById(phases[2]!, "run_plan_flow")?.params?.fileName).toEqual({ const: "plan.json" });
 

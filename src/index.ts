@@ -125,6 +125,7 @@ import { runDoctorCommand } from "./doctor/index.js";
 import {
   attachJiraContext,
   requestJiraContext,
+  requestOptionalJiraContext,
   resolveProjectScope,
   type ResolvedScope,
 } from "./scope.js";
@@ -349,15 +350,15 @@ function usage(): string {
   agentweaver review-loop [--dry] [--verbose] [--prompt <text>] [--scope <name>] [--blocking-severities <list>] [<jira-browse-url|jira-issue-key>]
   agentweaver run-go-tests-loop [--dry] [--verbose] [--prompt <text>] [--scope <name>] [<jira-browse-url|jira-issue-key>]
   agentweaver run-go-linter-loop [--dry] [--verbose] [--prompt <text>] [--scope <name>] [<jira-browse-url|jira-issue-key>]
-  agentweaver auto [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] <jira-browse-url|jira-issue-key>
+  agentweaver auto [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] [<jira-browse-url|jira-issue-key>]
   agentweaver auto --help-phases
   agentweaver auto-golang [--dry] [--verbose] [--prompt <text>] [<jira-browse-url|jira-issue-key>]
   agentweaver auto-golang [--dry] [--verbose] [--prompt <text>] --from <phase> [<jira-browse-url|jira-issue-key>]
   agentweaver auto-golang --help-phases
-  agentweaver auto-common-guided [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] [--accept-playbook-draft] <jira-browse-url|jira-issue-key>
-  agentweaver auto-common [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] <jira-browse-url|jira-issue-key>
+  agentweaver auto-common-guided [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] [--accept-playbook-draft] [<jira-browse-url|jira-issue-key>]
+  agentweaver auto-common [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] [<jira-browse-url|jira-issue-key>]
   agentweaver auto-common --help-phases
-  agentweaver auto-simple [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] <jira-browse-url|jira-issue-key>
+  agentweaver auto-simple [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] [<jira-browse-url|jira-issue-key>]
   agentweaver auto-simple --help-phases
   agentweaver auto-status [<jira-browse-url|jira-issue-key>]
   agentweaver auto-reset [<jira-browse-url|jira-issue-key>]
@@ -373,7 +374,7 @@ Flags:
   --no-open       Web command only: print the Web UI URL without opening a browser
   --host          Web command only: bind Web UI to this host (default: 127.0.0.1)
   --listen-all    Web command only: bind Web UI to 0.0.0.0
-  --dry           Fetch Jira task, but print codex/opencode commands instead of executing them
+  --dry           Fetch or collect task context, but print codex/opencode commands instead of executing them
   --verbose       Show live stdout/stderr of launched commands
   --scope         Explicit workflow scope name for non-Jira runs except instant-task
   --prompt        Extra prompt text appended to the base prompt
@@ -403,7 +404,7 @@ Optional environment variables:
   ${WEB_AUTH_PASSWORD_ENV}  Web UI Basic auth password; required for external Web UI binding
 
 Notes:
-  - Jira-backed task flows will ask for Jira task via user-input when it is not passed as an argument. task-describe can also work from a manual task description without Jira.
+  - auto-golang, auto-common-guided, auto-common, and auto-simple ask for Jira input when Jira is not passed as an argument; leave it empty to paste the task description manually in the next step. task-describe can also work from a manual task description without Jira.
   - agentweaver web binds to 127.0.0.1 by default on an operating-system-assigned port and does not require auth unless Web UI credentials are configured.
   - External Web UI binding through --listen-all, --host 0.0.0.0, --host ::, non-loopback IPs, or hostnames other than localhost requires ${WEB_AUTH_USERNAME_ENV} and ${WEB_AUTH_PASSWORD_ENV}.
   - Web UI Basic auth over plain HTTP is suitable only on trusted networks; use TLS termination or a reverse proxy on untrusted networks.
@@ -673,7 +674,7 @@ async function lookupInteractiveFlowResume(flowEntry: FlowCatalogEntry, currentS
 
 async function printAutoPhasesHelp(): Promise<void> {
   const phaseLines = ["Available auto-golang phases:", "", ...(await autoPhaseIds())];
-  phaseLines.push("", "You can resume auto-golang from a phase with:", "agentweaver auto-golang --from <phase> <jira>", "or in interactive mode:", "/auto-golang --from <phase>");
+  phaseLines.push("", "You can resume auto-golang from a phase with:", "agentweaver auto-golang --from <phase> [<jira>]", "or in interactive mode:", "/auto-golang --from <phase>");
   printPanel("Auto-Golang Phases", phaseLines.join("\n"), "magenta");
 }
 
@@ -683,7 +684,7 @@ async function autoCommonPhaseIds(fileName = "auto-common.json"): Promise<string
 
 async function printAutoCommonPhasesHelp(command = "auto-common", fileName = "auto-common.json"): Promise<void> {
   const phaseLines = [`Available ${command} phases:`, "", ...(await autoCommonPhaseIds(fileName))];
-  phaseLines.push("", `You can run ${command} with:`, `agentweaver ${command} <jira>`);
+  phaseLines.push("", `You can run ${command} with:`, `agentweaver ${command} [<jira>]`);
   printPanel(command === "auto-common-guided" ? "Auto-Common Guided Phases" : "Auto-Common Phases", phaseLines.join("\n"), "magenta");
 }
 
@@ -693,7 +694,7 @@ async function autoSimplePhaseIds(): Promise<string[]> {
 
 async function printAutoSimplePhasesHelp(): Promise<void> {
   const phaseLines = ["Available auto-simple phases:", "", ...(await autoSimplePhaseIds())];
-  phaseLines.push("", "You can run auto-simple with:", "agentweaver auto-simple <jira>");
+  phaseLines.push("", "You can run auto-simple with:", "agentweaver auto-simple [<jira>]");
   printPanel("Auto-Simple Phases", phaseLines.join("\n"), "magenta");
 }
 
@@ -753,6 +754,15 @@ function commandRequiresTask(command: string): boolean {
   );
 }
 
+function commandSupportsManualTaskSource(command: string): boolean {
+  return (
+    command === "auto-golang" ||
+    command === "auto-common-guided" ||
+    command === "auto-common" ||
+    command === "auto-simple"
+  );
+}
+
 function commandSupportsProjectScope(command: string): boolean {
   return (
     command === "plan" ||
@@ -771,9 +781,26 @@ function commandSupportsProjectScope(command: string): boolean {
   );
 }
 
+function hasJiraConfig(config: Config): config is Config & { jiraBrowseUrl: string; jiraApiUrl: string; jiraTaskFile: string } {
+  return Boolean(config.scope.jiraRef && config.jiraBrowseUrl && config.jiraApiUrl && config.jiraTaskFile);
+}
+
+function syncJiraEnv(config: Config): void {
+  if (hasJiraConfig(config)) {
+    process.env.JIRA_BROWSE_URL = config.jiraBrowseUrl;
+    process.env.JIRA_API_URL = config.jiraApiUrl;
+    process.env.JIRA_TASK_FILE = config.jiraTaskFile;
+    return;
+  }
+  delete process.env.JIRA_BROWSE_URL;
+  delete process.env.JIRA_API_URL;
+  delete process.env.JIRA_TASK_FILE;
+}
+
 async function resolveScopeForCommand(
   config: BaseConfig,
   requestUserInput: UserInputRequester,
+  launchMode?: FlowLaunchMode,
 ): Promise<ResolvedScope> {
   if (config.command === "instant-task") {
     if (config.scopeName?.trim()) {
@@ -797,13 +824,23 @@ async function resolveScopeForCommand(
   }
   if (commandRequiresTask(config.command)) {
     try {
+      if (commandSupportsManualTaskSource(config.command)) {
+        if (launchMode === "resume" || launchMode === "continue") {
+          return resolveProjectScope(config.scopeName);
+        }
+        const jiraContext = await requestOptionalJiraContext(requestUserInput);
+        return resolveProjectScope(config.scopeName, jiraContext?.jiraRef ?? null);
+      }
       const jiraContext = await requestJiraContext(requestUserInput);
       return resolveProjectScope(config.scopeName, jiraContext.jiraRef);
     } catch (error) {
       if (error instanceof TaskRunnerError && error.message.includes("no TTY is available")) {
         throw new TaskRunnerError(
-          `Command '${config.command}' requires a Jira task.\n` +
-          "Pass Jira issue key / browse URL as an argument, or run the command in an interactive terminal.",
+          commandSupportsManualTaskSource(config.command)
+            ? `Command '${config.command}' requires Jira input or a manual task description.\n` +
+              "Pass Jira issue key / browse URL as an argument, or run the command in an interactive terminal, leave Jira empty, and paste the task description in the next step."
+            : `Command '${config.command}' requires a Jira task.\n` +
+              "Pass Jira issue key / browse URL as an argument, or run the command in an interactive terminal.",
         );
       }
       throw error;
@@ -1144,7 +1181,7 @@ async function runDeclarativeFlowByRef(
       config.scope.scopeKey,
       flowId,
       executionState,
-      config.jiraRef,
+      config.scope.jiraRef ?? null,
       overrides.launchProfile,
       overrides.executionRouting,
       overrides.selectedRoutingPreset,
@@ -1402,7 +1439,7 @@ async function summarizeBuildFailure(output: string): Promise<string> {
 }
 
 function requireJiraConfig(config: Config): asserts config is Config & { jiraBrowseUrl: string; jiraApiUrl: string; jiraTaskFile: string } {
-  if (!config.jiraBrowseUrl || !config.jiraApiUrl || !config.jiraTaskFile) {
+  if (!hasJiraConfig(config)) {
     throw new TaskRunnerError(`Command '${config.command}' requires Jira context in the current project scope.`);
   }
 }
@@ -1425,7 +1462,10 @@ async function executeCommand(
     return exitCode === 0;
   }
 
-  const config = buildRuntimeConfig(baseConfig, resolvedScope ?? (await resolveScopeForCommand(baseConfig, requestUserInput)));
+  const config = buildRuntimeConfig(
+    baseConfig,
+    resolvedScope ?? (await resolveScopeForCommand(baseConfig, requestUserInput, explicitLaunchMode)),
+  );
   const flowOverrides: DeclarativeFlowOverrides = executionRouting
     ? {
         launchProfile: executionRouting.defaultRoute,
@@ -1470,10 +1510,7 @@ async function executeCommand(
     return !config.dryRun && existsSync(readyToMergeFile(config.taskKey));
   }
   if (config.command === "auto-golang") {
-    requireJiraConfig(config);
-    process.env.JIRA_BROWSE_URL = config.jiraBrowseUrl;
-    process.env.JIRA_API_URL = config.jiraApiUrl;
-    process.env.JIRA_TASK_FILE = config.jiraTaskFile;
+    syncJiraEnv(config);
 
     let effectiveLaunchMode = launchMode;
     let effectiveLaunchProfile = launchProfile;
@@ -1517,11 +1554,8 @@ async function executeCommand(
     return false;
   }
   if (config.command === "auto-common" || config.command === "auto-common-guided") {
-    requireJiraConfig(config);
     await checkAutoPrerequisites(config, launchProfile, executionRouting);
-    process.env.JIRA_BROWSE_URL = config.jiraBrowseUrl;
-    process.env.JIRA_API_URL = config.jiraApiUrl;
-    process.env.JIRA_TASK_FILE = config.jiraTaskFile;
+    syncJiraEnv(config);
 
     await runDeclarativeFlowBySpecFile(
       config.command === "auto-common-guided" ? "auto-common-guided.json" : "auto-common.json",
@@ -1536,11 +1570,8 @@ async function executeCommand(
     return false;
   }
   if (config.command === "auto-simple") {
-    requireJiraConfig(config);
     await checkAutoPrerequisites(config, launchProfile, executionRouting);
-    process.env.JIRA_BROWSE_URL = config.jiraBrowseUrl;
-    process.env.JIRA_API_URL = config.jiraApiUrl;
-    process.env.JIRA_TASK_FILE = config.jiraTaskFile;
+    syncJiraEnv(config);
 
     await runDeclarativeFlowBySpecFile(
       "auto-simple.json",
@@ -1605,19 +1636,11 @@ async function executeCommand(
   }
 
   await checkPrerequisites(config, launchProfile, executionRouting);
-  if (config.jiraBrowseUrl && config.jiraApiUrl && config.jiraTaskFile) {
-    process.env.JIRA_BROWSE_URL = config.jiraBrowseUrl ?? "";
-    process.env.JIRA_API_URL = config.jiraApiUrl ?? "";
-    process.env.JIRA_TASK_FILE = config.jiraTaskFile ?? "";
-  } else {
-    delete process.env.JIRA_BROWSE_URL;
-    delete process.env.JIRA_API_URL;
-    delete process.env.JIRA_TASK_FILE;
-  }
+  syncJiraEnv(config);
 
   if (config.command === "plan") {
     let taskContextIteration: number;
-    if (config.jiraRef) {
+    if (hasJiraConfig(config)) {
       requireJiraConfig(config);
       if (config.verbose) {
         process.stdout.write(`Fetching Jira issue from browse URL: ${config.jiraBrowseUrl}\n`);
@@ -1635,7 +1658,20 @@ async function executeCommand(
         extraPrompt: config.extraPrompt,
       }, flowOverrides, requestUserInput, setSummary, launchMode, runtime);
     } else {
-      taskContextIteration = latestTaskContextIteration(config.taskKey);
+      const latestTaskContext = latestArtifactIteration(config.taskKey, "task-context", "json");
+      if (latestTaskContext !== null) {
+        taskContextIteration = latestTaskContext;
+      } else {
+        taskContextIteration = nextArtifactIteration(config.taskKey, "task-context", "json");
+        await runDeclarativeFlowBySpecFile("task-source/manual-jira-input.json", config, {
+          taskKey: config.taskKey,
+        }, flowOverrides, requestUserInput, setSummary, launchMode, runtime);
+        await runDeclarativeFlowBySpecFile("normalize-task-source.json", config, {
+          taskKey: config.taskKey,
+          iteration: taskContextIteration,
+          extraPrompt: config.extraPrompt,
+        }, flowOverrides, requestUserInput, setSummary, launchMode, runtime);
+      }
     }
     await runDeclarativeFlowBySpecFile("plan.json", config, {
       taskKey: config.taskKey,
@@ -2319,7 +2355,7 @@ async function runInteractiveWithSessionFactory(
           const previousScopeKey = currentScope.scopeKey;
           const baseConfig = buildInteractiveBaseConfig(flowId, currentScope);
           if (flowEntry.source === "built-in" && isBuiltInCommandFlowId(flowId)) {
-            const nextScope = await resolveScopeForCommand(baseConfig, (form) => ui.requestUserInput(form));
+            const nextScope = await resolveScopeForCommand(baseConfig, (form) => ui.requestUserInput(form), launchMode);
             currentScope = nextScope;
           } else if (flowRequiresTaskScope(flowEntry) && !currentScope.jiraRef) {
             const jiraContext = await requestJiraContext((form) => ui.requestUserInput(form));

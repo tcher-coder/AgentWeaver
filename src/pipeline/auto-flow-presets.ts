@@ -9,7 +9,7 @@ export const BUILT_IN_AUTO_FLOW_PRESETS = [
     fileName: "auto-simple.json",
     kind: "auto-flow",
     version: 1,
-    description: "End-to-end resumable pipeline without language-specific checks. Runs: Jira fetch -> task source normalization -> plan -> implement -> review loop.",
+    description: "End-to-end resumable pipeline without language-specific checks. Runs: task source collection -> task source normalization -> plan -> implement -> review loop.",
     blocks: [
       { blockId: "source.jira", slot: "source", locked: true, defaultEnabled: true },
       { blockId: "normalize.task-source", slot: "normalize", locked: true, defaultEnabled: true },
@@ -24,7 +24,7 @@ export const BUILT_IN_AUTO_FLOW_PRESETS = [
     fileName: "auto-common.json",
     kind: "auto-flow",
     version: 1,
-    description: "End-to-end resumable pipeline without language-specific checks. Runs: Jira fetch -> task source normalization -> plan -> design-review loop -> implement -> review loop.",
+    description: "End-to-end resumable pipeline without language-specific checks. Runs: task source collection -> task source normalization -> plan -> design-review loop -> implement -> review loop.",
     blocks: [
       { blockId: "source.jira", slot: "source", locked: true, defaultEnabled: true },
       { blockId: "normalize.task-source", slot: "normalize", locked: true, defaultEnabled: true },

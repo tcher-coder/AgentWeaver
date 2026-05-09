@@ -10,6 +10,8 @@ import { fileURLToPath } from "node:url";
 
 import { parseArtifactReference, type ArtifactManifest } from "../../artifact-manifest.js";
 import { scopeArtifactsDir, scopeWorkspaceDir } from "../../artifacts.js";
+import { GitDiffError, type GitService } from "../../git/git-service.js";
+import type { GitDiffMode, GitWorkspaceSnapshot } from "../../git/git-types.js";
 import {
   groupArtifactCatalog,
   inferArtifactRenderKind,
@@ -37,6 +39,8 @@ export type WebServerOptions = {
   onClientConnected: (client: WebSocketClient) => void;
   onExitRequested: () => void;
   getArtifactCatalog?: (input?: ArtifactCatalogRequest) => ArtifactCatalog | Promise<ArtifactCatalog>;
+  gitService?: Pick<GitService, "diffFile">;
+  getGitWorkspaceSnapshot?: () => GitWorkspaceSnapshot | null;
   printInfo?: (message: string) => void;
   openBrowser?: (url: string) => Promise<void>;
 };
@@ -73,6 +77,28 @@ const CONTENT_TYPES = new Map<string, string>([
 
 const BASIC_AUTH_REALM = "AgentWeaver Web UI";
 const ARTIFACT_API_PREFIX = "/__agentweaver/api/artifacts";
+const GIT_DIFF_API_PATH = "/__agentweaver/api/git/diff";
+
+type GitDiffApiErrorCode =
+  | "missing_path"
+  | "invalid_path"
+  | "invalid_mode"
+  | "missing_provider"
+  | "repository_unavailable"
+  | "forbidden_path"
+  | "read_failed"
+  | "git_failed";
+
+const GIT_DIFF_ERROR_STATUSES: Record<GitDiffApiErrorCode, number> = {
+  missing_path: 400,
+  invalid_path: 403,
+  invalid_mode: 400,
+  missing_provider: 503,
+  repository_unavailable: 503,
+  forbidden_path: 403,
+  read_failed: 500,
+  git_failed: 500,
+};
 
 type ArtifactApiErrorCode =
   | "invalid_id"
@@ -242,6 +268,14 @@ function writeArtifactApiError(
     message,
     ...(artifact ? { artifact } : {}),
   });
+}
+
+function writeGitDiffApiError(
+  response: http.ServerResponse,
+  code: GitDiffApiErrorCode,
+  message: string,
+): void {
+  writeJson(response, GIT_DIFF_ERROR_STATUSES[code], { code, message });
 }
 
 function safeArtifactMetadata(item: ArtifactCatalogItem): SafeArtifactMetadata {
@@ -670,6 +704,64 @@ function handleArtifactApiRequest(
   return true;
 }
 
+function isGitDiffMode(value: string | null): value is GitDiffMode {
+  return value === "head" || value === "staged" || value === "worktree";
+}
+
+function gitDiffErrorCode(error: unknown): GitDiffApiErrorCode {
+  if (error instanceof GitDiffError && error.code in GIT_DIFF_ERROR_STATUSES) {
+    return error.code as GitDiffApiErrorCode;
+  }
+  return "git_failed";
+}
+
+function handleGitDiffApiRequest(
+  request: IncomingMessage,
+  response: http.ServerResponse,
+  options: WebServerOptions,
+  auth: WebServerAuthConfig | undefined,
+): boolean {
+  const parsed = new URL(request.url ?? "/", "http://agentweaver.local");
+  if (parsed.pathname !== GIT_DIFF_API_PATH) {
+    return false;
+  }
+  if (request.method !== "GET") {
+    return false;
+  }
+  if (!isAuthorized(request, auth)) {
+    writeAuthRequired(response);
+    return true;
+  }
+  if (!options.gitService || !options.getGitWorkspaceSnapshot) {
+    writeGitDiffApiError(response, "missing_provider", "Git diff provider is not configured.");
+    return true;
+  }
+  const filePath = parsed.searchParams.get("path");
+  const mode = parsed.searchParams.get("mode");
+  if (!filePath) {
+    writeGitDiffApiError(response, "missing_path", "A path query parameter is required.");
+    return true;
+  }
+  if (!isGitDiffMode(mode)) {
+    writeGitDiffApiError(response, "invalid_mode", "Mode must be head, staged, or worktree.");
+    return true;
+  }
+  const snapshot = options.getGitWorkspaceSnapshot();
+  if (!snapshot || !snapshot.available || !snapshot.repositoryRoot) {
+    writeGitDiffApiError(response, "repository_unavailable", snapshot?.error ?? "Git repository is not available.");
+    return true;
+  }
+  void options.gitService.diffFile(filePath, mode, snapshot)
+    .then((diff) => {
+      writeJson(response, 200, diff);
+    })
+    .catch((error) => {
+      const code = gitDiffErrorCode(error);
+      writeGitDiffApiError(response, code, (error as Error).message || "Git diff request failed.");
+    });
+  return true;
+}
+
 function htmlShell(): string {
   return `<!doctype html>
 <html lang="en">
@@ -995,6 +1087,9 @@ export async function startWebServer(options: WebServerOptions): Promise<Started
   const server = http.createServer((request, response) => {
     if (request.method === "GET" && request.url === "/__agentweaver/health") {
       writeJson(response, 200, { ok: true });
+      return;
+    }
+    if (handleGitDiffApiRequest(request, response, options, auth)) {
       return;
     }
     if (handleArtifactApiRequest(request, response, options, auth)) {

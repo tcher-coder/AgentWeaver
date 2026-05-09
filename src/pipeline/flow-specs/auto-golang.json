@@ -1,7 +1,7 @@
 {
   "kind": "auto-flow",
   "version": 1,
-  "description": "End-to-end resumable pipeline for Go projects. Runs the full sequence: Jira fetch → task source normalization → plan → design-review loop → implement → linter loop → test loop → review loop → final linter loop → final test loop. Supports --from to restart from a specific phase and auto-status/auto-reset for state management.",
+  "description": "End-to-end resumable pipeline for Go projects. Runs the full sequence: task source collection → task source normalization → plan → design-review loop → implement → linter loop → test loop → review loop → final linter loop → final test loop. Supports --from to restart from a specific phase and auto-status/auto-reset for state management.",
   "constants": {
     "autoReviewFixExtraPrompt": "Fix only blockers, criticals, and important findings"
   },
@@ -11,11 +11,22 @@
       "steps": [
         {
           "id": "fetch_jira_source",
+          "when": { "ref": "params.jiraApiUrl" },
           "node": "flow-run",
           "params": {
             "fileName": { "const": "jira-fetch.json" },
             "labelText": { "const": "Fetching Jira task source" },
             "jiraApiUrl": { "ref": "params.jiraApiUrl" },
+            "taskKey": { "ref": "params.taskKey" }
+          }
+        },
+        {
+          "id": "collect_manual_source",
+          "when": { "not": { "ref": "params.jiraApiUrl" } },
+          "node": "flow-run",
+          "params": {
+            "fileName": { "const": "manual-jira-input.json" },
+            "labelText": { "const": "Collecting manual Jira task source" },
             "taskKey": { "ref": "params.taskKey" }
           }
         }

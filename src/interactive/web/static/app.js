@@ -20,6 +20,15 @@
     },
     gitSelectedPaths: [],
     gitCommitMessage: "",
+    gitDiff: {
+      open: false,
+      selectedPath: null,
+      mode: "head",
+      loading: false,
+      error: null,
+      diff: null,
+      requestId: 0,
+    },
   };
 
   var elements = {
@@ -50,6 +59,16 @@
     gitCommit: document.getElementById("git-commit-button"),
     gitPush: document.getElementById("git-push-button"),
     gitFeedback: document.getElementById("git-feedback"),
+    gitDiffDrawer: document.getElementById("git-diff-drawer"),
+    gitDiffClose: document.getElementById("git-diff-close-button"),
+    gitDiffTitle: document.getElementById("git-diff-title"),
+    gitDiffMeta: document.getElementById("git-diff-meta"),
+    gitDiffStatus: document.getElementById("git-diff-status"),
+    gitDiffFileList: document.getElementById("git-diff-file-list"),
+    gitDiffSelectedTitle: document.getElementById("git-diff-selected-title"),
+    gitDiffSelectedMeta: document.getElementById("git-diff-selected-meta"),
+    gitDiffModeControls: document.getElementById("git-diff-mode-controls"),
+    gitDiffBody: document.getElementById("git-diff-body"),
     logTitle: document.getElementById("log-title"),
     log: document.getElementById("log-text"),
     clearLog: document.getElementById("clear-log-button"),
@@ -285,6 +304,7 @@
 
     renderFlows(vm);
     renderGitWorkspace(vm);
+    renderGitDiffDrawer(vm);
     renderModal(vm);
     renderArtifactExplorer(vm);
   }
@@ -507,6 +527,19 @@
     row.append(checkbox);
     if (type) row.append(type);
     row.append(pathText, meta);
+    if (node.kind === "file" && node.path) {
+      var diffButton = document.createElement("button");
+      diffButton.type = "button";
+      diffButton.className = "git-diff-open";
+      diffButton.textContent = "Diff";
+      diffButton.setAttribute("aria-label", "Open diff for " + node.path);
+      diffButton.addEventListener("click", function (event) {
+        if (event && typeof event.preventDefault === "function") event.preventDefault();
+        if (event && typeof event.stopPropagation === "function") event.stopPropagation();
+        openGitDiff(node.path);
+      });
+      row.append(diffButton);
+    }
     if (node.kind === "file") {
       return row;
     }
@@ -567,6 +600,278 @@
 
   function selectedGitPaths() {
     return state.gitSelectedPaths.slice();
+  }
+
+  function gitChangedFiles() {
+    var git = gitWorkspace(state.viewModel || {});
+    return Array.isArray(git.changedFiles) ? git.changedFiles : [];
+  }
+
+  function gitFilePath(file) {
+    return file && (file.path || file.file) || "";
+  }
+
+  function findGitChangedFile(filePath) {
+    return gitChangedFiles().find(function (file) {
+      return gitFilePath(file) === filePath || file.file === filePath;
+    }) || null;
+  }
+
+  function openGitDiff(filePath) {
+    state.gitDiff.open = true;
+    state.gitDiff.selectedPath = filePath;
+    state.gitDiff.error = null;
+    state.gitDiff.diff = null;
+    fetchGitDiff();
+    renderGitDiffDrawer(state.viewModel || {});
+  }
+
+  function closeGitDiff() {
+    state.gitDiff.open = false;
+    state.gitDiff.requestId += 1;
+    state.gitDiff.loading = false;
+    renderGitDiffDrawer(state.viewModel || {});
+  }
+
+  function setGitDiffMode(mode) {
+    if (state.gitDiff.mode === mode) {
+      return;
+    }
+    state.gitDiff.mode = mode;
+    state.gitDiff.error = null;
+    state.gitDiff.diff = null;
+    if (state.gitDiff.open && state.gitDiff.selectedPath) {
+      fetchGitDiff();
+    }
+    renderGitDiffDrawer(state.viewModel || {});
+  }
+
+  function gitDiffApiUrl(filePath, mode) {
+    var params = new URLSearchParams();
+    params.set("path", filePath);
+    params.set("mode", mode);
+    return "/__agentweaver/api/git/diff?" + params.toString();
+  }
+
+  function fetchGitDiff() {
+    var filePath = state.gitDiff.selectedPath;
+    if (!filePath) {
+      return;
+    }
+    var requestId = state.gitDiff.requestId + 1;
+    state.gitDiff.requestId = requestId;
+    state.gitDiff.loading = true;
+    state.gitDiff.error = null;
+    state.gitDiff.diff = null;
+    fetch(gitDiffApiUrl(filePath, state.gitDiff.mode))
+      .then(function (response) {
+        return response.json().then(function (body) {
+          if (!response.ok) {
+            throw new Error(body && body.message ? body.message : "Git diff request failed.");
+          }
+          return body;
+        });
+      })
+      .then(function (diff) {
+        if (requestId !== state.gitDiff.requestId) {
+          return;
+        }
+        state.gitDiff.loading = false;
+        state.gitDiff.diff = diff;
+        state.gitDiff.error = null;
+        renderGitDiffDrawer(state.viewModel || {});
+      })
+      .catch(function (error) {
+        if (requestId !== state.gitDiff.requestId) {
+          return;
+        }
+        state.gitDiff.loading = false;
+        state.gitDiff.diff = null;
+        state.gitDiff.error = error.message || "Git diff request failed.";
+        renderGitDiffDrawer(state.viewModel || {});
+      });
+  }
+
+  function renderGitDiffDrawer(vm) {
+    var files = gitChangedFiles();
+    var selectedPath = state.gitDiff.selectedPath;
+    var selectedPathChanged = false;
+    if (selectedPath && !findGitChangedFile(selectedPath)) {
+      selectedPath = files[0] ? gitFilePath(files[0]) : null;
+      state.gitDiff.selectedPath = selectedPath;
+      state.gitDiff.diff = null;
+      state.gitDiff.error = null;
+      state.gitDiff.loading = false;
+      selectedPathChanged = Boolean(selectedPath);
+    }
+    elements.gitDiffDrawer.hidden = !state.gitDiff.open;
+    elements.gitDiffTitle.textContent = "Git Diff Viewer";
+    elements.gitDiffMeta.textContent = files.length === 0
+      ? "No changed files are available."
+      : String(files.length) + " changed file" + (files.length === 1 ? "" : "s") + ".";
+    if (!state.gitDiff.open) {
+      return;
+    }
+    if (selectedPathChanged) {
+      fetchGitDiff();
+    }
+    renderGitDiffFileList(files);
+    renderGitDiffModeControls();
+    renderGitDiffPreview(vm);
+  }
+
+  function renderGitDiffFileList(files) {
+    elements.gitDiffFileList.innerHTML = "";
+    if (!Array.isArray(files) || files.length === 0) {
+      var empty = document.createElement("div");
+      empty.className = "git-diff-empty";
+      empty.textContent = "No changed files.";
+      elements.gitDiffFileList.append(empty);
+      return;
+    }
+    files.forEach(function (file) {
+      var filePath = gitFilePath(file);
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "git-diff-file" + (filePath === state.gitDiff.selectedPath ? " selected" : "");
+      button.dataset.path = filePath;
+      button.setAttribute("aria-pressed", filePath === state.gitDiff.selectedPath ? "true" : "false");
+      button.addEventListener("click", function () {
+        if (state.gitDiff.selectedPath !== filePath) {
+          openGitDiff(filePath);
+        }
+      });
+      var title = document.createElement("strong");
+      title.textContent = file.originalPath || file.originalFile
+        ? (file.originalPath || file.originalFile) + " -> " + filePath
+        : filePath;
+      var meta = document.createElement("span");
+      meta.textContent = gitFileMeta(file);
+      button.append(title, meta);
+      elements.gitDiffFileList.append(button);
+    });
+  }
+
+  function renderGitDiffModeControls() {
+    ensureGitDiffModeButtons();
+    Array.prototype.slice.call(elements.gitDiffModeControls.querySelectorAll("button")).forEach(function (button) {
+      var mode = button.dataset.gitDiffMode || "head";
+      var active = state.gitDiff.mode === mode;
+      button.className = active ? "primary" : "";
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+  }
+
+  function ensureGitDiffModeButtons() {
+    if (elements.gitDiffModeControls.querySelectorAll("button").length > 0) {
+      return;
+    }
+    [
+      ["head", "All"],
+      ["staged", "Staged"],
+      ["worktree", "Unstaged"],
+    ].forEach(function (entry) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.dataset.gitDiffMode = entry[0];
+      button.textContent = entry[1];
+      elements.gitDiffModeControls.append(button);
+    });
+  }
+
+  function renderGitDiffPreview(vm) {
+    var selected = state.gitDiff.selectedPath ? findGitChangedFile(state.gitDiff.selectedPath) : null;
+    if (!selected) {
+      elements.gitDiffSelectedTitle.textContent = "Diff";
+      elements.gitDiffSelectedMeta.textContent = "No file selected.";
+      elements.gitDiffStatus.textContent = "";
+      renderGitDiffMessage("Select a changed file to inspect its diff.", false);
+      return;
+    }
+    var displayPath = selected.originalPath || selected.originalFile
+      ? (selected.originalPath || selected.originalFile) + " -> " + gitFilePath(selected)
+      : gitFilePath(selected);
+    elements.gitDiffSelectedTitle.textContent = displayPath;
+    elements.gitDiffSelectedMeta.textContent = [gitFileMeta(selected), gitModeLabel(state.gitDiff.mode)].join(" | ");
+    if (state.gitDiff.loading) {
+      elements.gitDiffStatus.textContent = "Loading diff...";
+      renderGitDiffMessage("Loading diff...", false);
+      return;
+    }
+    if (state.gitDiff.error) {
+      elements.gitDiffStatus.textContent = state.gitDiff.error;
+      renderGitDiffMessage(state.gitDiff.error, true);
+      return;
+    }
+    var diff = state.gitDiff.diff;
+    if (!diff) {
+      elements.gitDiffStatus.textContent = "Diff has not been loaded yet.";
+      renderGitDiffMessage("Diff has not been loaded yet.", false);
+      return;
+    }
+    elements.gitDiffStatus.textContent = diff.message || "";
+    renderGitDiffContent(diff);
+  }
+
+  function gitModeLabel(mode) {
+    if (mode === "staged") return "Staged";
+    if (mode === "worktree") return "Unstaged";
+    return "All";
+  }
+
+  function renderGitDiffMessage(message, failed) {
+    elements.gitDiffBody.textContent = "";
+    elements.gitDiffBody.className = "git-diff-body" + (failed ? " error-text" : "");
+    elements.gitDiffBody.textContent = message;
+  }
+
+  function renderGitDiffContent(diff) {
+    elements.gitDiffBody.textContent = "";
+    elements.gitDiffBody.className = "git-diff-body";
+    if (diff.binary) {
+      renderGitDiffMessage(diff.message || "Binary file diff is not displayed.", false);
+      return;
+    }
+    if (diff.tooLarge) {
+      renderGitDiffMessage(diff.message || "Diff is too large to display.", false);
+      return;
+    }
+    if (diff.empty || !Array.isArray(diff.hunks) || diff.hunks.length === 0) {
+      renderGitDiffMessage(diff.message || "No diff is available for this mode.", false);
+      return;
+    }
+    var table = document.createElement("div");
+    table.className = "git-diff-table";
+    diff.hunks.forEach(function (hunk) {
+      var hunkRow = document.createElement("div");
+      hunkRow.className = "git-diff-hunk";
+      hunkRow.textContent = hunk.header || "@@";
+      table.append(hunkRow);
+      (Array.isArray(hunk.rows) ? hunk.rows : []).forEach(function (row) {
+        table.append(renderGitDiffRow(row));
+      });
+    });
+    elements.gitDiffBody.append(table);
+  }
+
+  function renderGitDiffRow(row) {
+    var element = document.createElement("div");
+    var kind = row && row.kind ? row.kind : "context";
+    element.className = "git-diff-row row-" + kind;
+    var leftNumber = document.createElement("span");
+    leftNumber.className = "git-diff-line-number";
+    leftNumber.textContent = row.leftLineNumber === null || row.leftLineNumber === undefined ? "" : String(row.leftLineNumber);
+    var leftText = document.createElement("code");
+    leftText.className = "git-diff-code left";
+    leftText.textContent = row.leftText || "";
+    var rightNumber = document.createElement("span");
+    rightNumber.className = "git-diff-line-number";
+    rightNumber.textContent = row.rightLineNumber === null || row.rightLineNumber === undefined ? "" : String(row.rightLineNumber);
+    var rightText = document.createElement("code");
+    rightText.className = "git-diff-code right";
+    rightText.textContent = row.rightText || "";
+    element.append(leftNumber, leftText, rightNumber, rightText);
+    return element;
   }
 
   function selectedStageableGitPaths(git) {
@@ -2042,6 +2347,13 @@
   elements.artifactToolbarClose.addEventListener("click", api.closeArtifactExplorer);
   elements.artifactCopyContent.addEventListener("click", copySelectedArtifactContent);
   elements.artifactCopyReference.addEventListener("click", copySelectedArtifactReference);
+  ensureGitDiffModeButtons();
+  elements.gitDiffClose.addEventListener("click", closeGitDiff);
+  Array.prototype.slice.call(elements.gitDiffModeControls.querySelectorAll("button")).forEach(function (button) {
+    button.addEventListener("click", function () {
+      setGitDiffMode(button.dataset.gitDiffMode || "head");
+    });
+  });
   elements.gitRefresh.addEventListener("click", api.refreshGit);
   elements.gitCreateBranch.addEventListener("click", api.createGitBranch);
   elements.gitCheckout.addEventListener("click", api.checkoutGitBranch);

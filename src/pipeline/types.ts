@@ -4,6 +4,7 @@ import type { StructuredArtifactCheck } from "../structured-artifacts.js";
 import type { OutputAdapter } from "../tui.js";
 import type { UserInputRequester } from "../user-input.js";
 import type { ResolvedExecutionRouting } from "./execution-routing-config.js";
+import type { InMemoryDeclarativeFlows } from "./declarative-flows.js";
 import type { NodeRegistry } from "./node-registry.js";
 import type { PipelineRegistryContext } from "./plugin-loader.js";
 import type { ExecutorRegistry } from "./registry.js";
@@ -69,6 +70,7 @@ export type PipelineContext = {
   setSummary?: (markdown: string) => void;
   requestUserInput?: UserInputRequester;
   executionRouting?: ResolvedExecutionRouting;
+  inMemoryFlows?: InMemoryDeclarativeFlows;
   resumeStepValue?: import("../executors/types.js").JsonValue;
   persistRunningStepValue?: (value: import("../executors/types.js").JsonValue) => Promise<void>;
 };

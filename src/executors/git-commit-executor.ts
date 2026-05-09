@@ -1,3 +1,5 @@
+import { selectPathsNeedingGitStage, uniqueGitPaths } from "../git/git-stage-selection.js";
+import { parsePorcelain } from "../git/git-status-parser.js";
 import type { ExecutorContext, ExecutorDefinition, JsonObject } from "./types.js";
 
 export type GitCommitExecutorConfig = JsonObject;
@@ -22,17 +24,34 @@ export const gitCommitExecutor: ExecutorDefinition<
   version: 1,
   defaultConfig: {},
   async execute(context: ExecutorContext, input: GitCommitExecutorInput) {
-    if (input.files.length > 0) {
-      await context.runtime.runCommand(["git", "add", "--", ...input.files], {
-        dryRun: context.dryRun,
-        verbose: context.verbose,
-        label: "git add",
-      });
+    const files = uniqueGitPaths(input.files);
+    if (files.length > 0) {
+      let filesToStage = files;
+      if (!context.dryRun) {
+        const statusOutput = await context.runtime.runCommand(["git", "status", "--porcelain", "--", ...files], {
+          dryRun: false,
+          verbose: context.verbose,
+          label: "git status",
+          printFailureOutput: false,
+        });
+        filesToStage = selectPathsNeedingGitStage(files, parsePorcelain(statusOutput));
+      }
+
+      if (filesToStage.length > 0) {
+        await context.runtime.runCommand(["git", "add", "-A", "--", ...filesToStage], {
+          dryRun: context.dryRun,
+          verbose: context.verbose,
+          label: "git add",
+        });
+      }
     }
 
     const commitArgs = input.editEnabled
       ? ["git", "commit", "-e", "-m", input.message]
       : ["git", "commit", "-m", input.message];
+    if (files.length > 0) {
+      commitArgs.push("--", ...files);
+    }
 
     const output = await context.runtime.runCommand(commitArgs, {
       dryRun: context.dryRun,

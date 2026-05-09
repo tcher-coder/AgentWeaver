@@ -4,6 +4,68 @@
 @source "./app.js";
 
 :root {
+  color-scheme: light;
+  --aw-bg: #f4f7f5;
+  --aw-bg-soft: #edf3ef;
+  --aw-panel: #ffffff;
+  --aw-panel-muted: #f7faf8;
+  --aw-border: #d4dfd9;
+  --aw-border-strong: #a9bcb1;
+  --aw-text: #17231e;
+  --aw-muted: #5d7066;
+  --aw-dim: #7a8b82;
+  --aw-accent: #168254;
+  --aw-accent-strong: #0d6b45;
+  --aw-accent-soft: rgba(22, 130, 84, 0.1);
+  --aw-cyan: #0e7490;
+  --aw-danger: #c03535;
+  --aw-success: #168254;
+  --aw-warning: #946500;
+  --aw-shadow: 0 18px 52px rgba(26, 42, 34, 0.15);
+  --aw-glow: 0 0 0 1px rgba(22, 130, 84, 0.07), 0 16px 44px rgba(26, 42, 34, 0.07);
+  --aw-body-bg: linear-gradient(180deg, rgba(22, 130, 84, 0.08), transparent 24rem), radial-gradient(circle at 88% 8%, rgba(14, 116, 144, 0.08), transparent 24rem), var(--aw-bg);
+  --aw-control-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(242, 248, 245, 0.92));
+  --aw-primary-bg: linear-gradient(180deg, rgba(22, 130, 84, 0.18), rgba(22, 130, 84, 0.09));
+  --aw-danger-text: #a62f2f;
+  --aw-success-text: #0d6b45;
+  --aw-warning-text: #755400;
+  --aw-running-text: #0c6580;
+  --aw-pending-text: #405349;
+  --aw-control-ring: rgba(22, 130, 84, 0.16);
+  --aw-topbar-bg: rgba(255, 255, 255, 0.86);
+  --aw-panel-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 248, 0.98));
+  --aw-heading-bg: linear-gradient(180deg, rgba(25, 52, 39, 0.04), rgba(25, 52, 39, 0.012));
+  --aw-surface-bg: rgba(239, 246, 242, 0.76);
+  --aw-surface-subtle-bg: rgba(248, 251, 249, 0.82);
+  --aw-input-bg: #ffffff;
+  --aw-text-panel-text: #21322a;
+  --aw-log-bg: linear-gradient(180deg, rgba(22, 130, 84, 0.045), transparent 8rem), #f8faf8;
+  --aw-drawer-bg: rgba(255, 255, 255, 0.98);
+  --aw-modal-overlay: rgba(216, 226, 221, 0.68);
+  --aw-code-bg: rgba(14, 116, 144, 0.08);
+  --aw-code-text: #17231e;
+  --aw-pre-bg: rgba(247, 250, 248, 0.88);
+  --aw-pre-text: #21322a;
+  --aw-muted-bg: rgba(23, 35, 30, 0.05);
+  --aw-inset-border: rgba(23, 35, 30, 0.08);
+  --aw-warning-soft: rgba(148, 101, 0, 0.12);
+  --aw-success-soft: rgba(22, 130, 84, 0.11);
+  --aw-running-soft: rgba(14, 116, 144, 0.11);
+  --aw-danger-soft: rgba(192, 53, 53, 0.11);
+  --aw-file-badge-bg: rgba(14, 116, 144, 0.08);
+  --aw-diff-border: rgba(190, 205, 197, 0.92);
+  --aw-diff-line-number-bg: rgba(238, 244, 240, 0.86);
+  --aw-diff-add-bg: rgba(22, 130, 84, 0.12);
+  --aw-diff-add-text: #0d5f3d;
+  --aw-diff-delete-bg: rgba(192, 53, 53, 0.11);
+  --aw-diff-delete-text: #932222;
+  --aw-diff-context-bg: rgba(255, 255, 255, 0.72);
+  --aw-scrollbar-thumb: #b8c8bf;
+  --aw-scrollbar-track: #edf3ef;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+:root[data-theme="dark"] {
   color-scheme: dark;
   --aw-bg: #070b0a;
   --aw-bg-soft: #0b1210;
@@ -23,7 +85,45 @@
   --aw-warning: #f2c94c;
   --aw-shadow: 0 28px 90px rgba(0, 0, 0, 0.45);
   --aw-glow: 0 0 0 1px rgba(56, 224, 143, 0.08), 0 18px 60px rgba(56, 224, 143, 0.08);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --aw-body-bg: linear-gradient(180deg, rgba(56, 224, 143, 0.08), transparent 24rem), radial-gradient(circle at 88% 8%, rgba(101, 216, 255, 0.09), transparent 24rem), var(--aw-bg);
+  --aw-control-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015));
+  --aw-primary-bg: linear-gradient(180deg, rgba(56, 224, 143, 0.26), rgba(56, 224, 143, 0.13));
+  --aw-danger-text: #ffb3b3;
+  --aw-success-text: #9df0c2;
+  --aw-warning-text: #ffe49a;
+  --aw-running-text: #bfefff;
+  --aw-pending-text: #c2d0c8;
+  --aw-control-ring: rgba(56, 224, 143, 0.12);
+  --aw-topbar-bg: rgba(7, 11, 10, 0.88);
+  --aw-panel-bg: linear-gradient(180deg, rgba(15, 23, 20, 0.96), rgba(10, 16, 14, 0.96));
+  --aw-heading-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012));
+  --aw-surface-bg: rgba(7, 11, 10, 0.42);
+  --aw-surface-subtle-bg: rgba(3, 7, 6, 0.36);
+  --aw-input-bg: #070b0a;
+  --aw-text-panel-text: #d7eadf;
+  --aw-log-bg: linear-gradient(180deg, rgba(56, 224, 143, 0.035), transparent 8rem), #050806;
+  --aw-drawer-bg: rgba(10, 16, 14, 0.98);
+  --aw-modal-overlay: rgba(2, 5, 4, 0.72);
+  --aw-code-bg: rgba(101, 216, 255, 0.08);
+  --aw-code-text: #d8f7e7;
+  --aw-pre-bg: rgba(3, 7, 6, 0.62);
+  --aw-pre-text: #d7eadf;
+  --aw-muted-bg: rgba(255, 255, 255, 0.035);
+  --aw-inset-border: rgba(255, 255, 255, 0.08);
+  --aw-warning-soft: rgba(242, 201, 76, 0.12);
+  --aw-success-soft: rgba(56, 224, 143, 0.14);
+  --aw-running-soft: rgba(101, 216, 255, 0.12);
+  --aw-danger-soft: rgba(255, 107, 107, 0.12);
+  --aw-file-badge-bg: rgba(101, 216, 255, 0.09);
+  --aw-diff-border: rgba(34, 53, 46, 0.72);
+  --aw-diff-line-number-bg: rgba(7, 11, 10, 0.55);
+  --aw-diff-add-bg: rgba(56, 224, 143, 0.13);
+  --aw-diff-add-text: #dcffe9;
+  --aw-diff-delete-bg: rgba(255, 107, 107, 0.12);
+  --aw-diff-delete-text: #ffd6d6;
+  --aw-diff-context-bg: rgba(255, 255, 255, 0.015);
+  --aw-scrollbar-thumb: #284137;
+  --aw-scrollbar-track: #08100d;
 }
 
 * {
@@ -41,10 +141,7 @@ body {
 
 body {
   @apply m-0 overflow-hidden;
-  background:
-    linear-gradient(180deg, rgba(56, 224, 143, 0.08), transparent 24rem),
-    radial-gradient(circle at 88% 8%, rgba(101, 216, 255, 0.09), transparent 24rem),
-    var(--aw-bg);
+  background: var(--aw-body-bg);
   color: var(--aw-text);
 }
 
@@ -58,7 +155,7 @@ textarea {
 button {
   @apply inline-flex min-h-8 items-center justify-center gap-2 rounded-md px-3 py-1.5 text-sm font-semibold transition;
   border: 1px solid var(--aw-border-strong);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015));
+  background: var(--aw-control-bg);
   color: var(--aw-text);
   cursor: pointer;
 }
@@ -68,18 +165,18 @@ button:focus-visible {
   border-color: var(--aw-accent);
   color: var(--aw-accent-strong);
   outline: 2px solid transparent;
-  box-shadow: 0 0 0 3px rgba(56, 224, 143, 0.12);
+  box-shadow: 0 0 0 3px var(--aw-control-ring);
 }
 
 button.primary {
   border-color: rgba(56, 224, 143, 0.75);
-  background: linear-gradient(180deg, rgba(56, 224, 143, 0.26), rgba(56, 224, 143, 0.13));
+  background: var(--aw-primary-bg);
   color: var(--aw-accent-strong);
 }
 
 button.danger {
   border-color: rgba(255, 107, 107, 0.68);
-  color: #ffb3b3;
+  color: var(--aw-danger-text);
 }
 
 button:disabled {
@@ -96,7 +193,7 @@ button:disabled {
   @apply grid items-center gap-4 px-4 py-3;
   grid-template-columns: minmax(220px, 1fr) auto auto;
   border-bottom: 1px solid var(--aw-border);
-  background: rgba(7, 11, 10, 0.88);
+  background: var(--aw-topbar-bg);
   backdrop-filter: blur(16px);
 }
 
@@ -150,6 +247,42 @@ h2 {
   @apply justify-end;
 }
 
+.theme-toggle {
+  @apply px-2.5;
+  min-width: 92px;
+}
+
+.theme-toggle-track {
+  width: 34px;
+  height: 18px;
+  flex: none;
+  position: relative;
+  border-radius: 999px;
+  border: 1px solid var(--aw-border-strong);
+  background: var(--aw-surface-bg);
+}
+
+.theme-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--aw-accent-strong);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  transition: transform 0.18s ease;
+}
+
+:root[data-theme="dark"] .theme-toggle-thumb {
+  transform: translateX(16px);
+}
+
+.theme-toggle-label {
+  font-size: 12px;
+  line-height: 1;
+}
+
 .connection {
   @apply inline-flex min-w-24 justify-center rounded-full px-2.5 py-1 text-xs font-bold;
   border: 1px solid currentColor;
@@ -186,7 +319,7 @@ h2 {
   @apply grid min-h-0 overflow-hidden rounded-lg;
   grid-template-rows: auto minmax(0, 1fr);
   border: 1px solid var(--aw-border);
-  background: linear-gradient(180deg, rgba(15, 23, 20, 0.96), rgba(10, 16, 14, 0.96));
+  background: var(--aw-panel-bg);
   box-shadow: var(--aw-glow);
 }
 
@@ -205,7 +338,7 @@ h2 {
 .pane-heading {
   @apply min-h-10 justify-between px-3 py-2;
   border-bottom: 1px solid var(--aw-border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012));
+  background: var(--aw-heading-bg);
 }
 
 .flows-list {
@@ -256,8 +389,8 @@ h2 {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   line-height: 1.5;
-  background: rgba(7, 11, 10, 0.42);
-  color: #d7eadf;
+  background: var(--aw-surface-bg);
+  color: var(--aw-text-panel-text);
 }
 
 .text-panel.compact {
@@ -266,8 +399,8 @@ h2 {
 
 .progress-tree {
   @apply m-0 grid min-h-0 content-start gap-1 overflow-auto p-2;
-  background: rgba(7, 11, 10, 0.42);
-  color: #d7eadf;
+  background: var(--aw-surface-bg);
+  color: var(--aw-text-panel-text);
   font-size: 12px;
   line-height: 1.35;
 }
@@ -326,71 +459,71 @@ h2 {
 }
 
 .progress-row.status-done {
-  color: #9df0c2;
-  background: rgba(56, 224, 143, 0.075);
+  color: var(--aw-success-text);
+  background: var(--aw-success-soft);
 }
 
 .progress-row.status-done .progress-marker {
-  background: rgba(56, 224, 143, 0.16);
+  background: var(--aw-success-soft);
 }
 
 .progress-row.status-running {
   border-color: rgba(101, 216, 255, 0.56);
-  background: rgba(101, 216, 255, 0.12);
-  color: #bfefff;
+  background: var(--aw-running-soft);
+  color: var(--aw-running-text);
   box-shadow: inset 3px 0 0 rgba(101, 216, 255, 0.82);
 }
 
 .progress-row.status-running .progress-marker {
-  background: rgba(101, 216, 255, 0.18);
+  background: var(--aw-running-soft);
 }
 
 .progress-row.status-pending {
-  color: #c2d0c8;
+  color: var(--aw-pending-text);
 }
 
 .progress-row.status-pending .progress-marker {
   color: var(--aw-muted);
-  background: rgba(255, 255, 255, 0.035);
+  background: var(--aw-muted-bg);
 }
 
 .progress-row.status-skipped {
   color: var(--aw-dim);
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--aw-muted-bg);
 }
 
 .progress-row.status-skipped .progress-marker {
-  background: rgba(255, 255, 255, 0.035);
+  background: var(--aw-muted-bg);
 }
 
 .progress-row.status-success {
-  color: #9df0c2;
-  background: rgba(56, 224, 143, 0.075);
+  color: var(--aw-success-text);
+  background: var(--aw-success-soft);
 }
 
 .progress-row.status-success .progress-marker {
-  background: rgba(56, 224, 143, 0.16);
+  background: var(--aw-success-soft);
 }
 
 .progress-row.status-waiting-user,
 .progress-row.status-stopped,
 .progress-row.status-blocked {
   border-color: rgba(242, 201, 76, 0.58);
-  background: rgba(242, 201, 76, 0.12);
-  color: #ffe49a;
+  background: var(--aw-warning-soft);
+  color: var(--aw-warning-text);
 }
 
 .progress-row.status-failed,
 .progress-row.status-invalid {
   border-color: rgba(255, 107, 107, 0.66);
-  background: rgba(255, 107, 107, 0.12);
-  color: #ffb3b3;
+  background: var(--aw-danger-soft);
+  color: var(--aw-danger-text);
 }
 
 .progress-row.status-disabled,
 .progress-row.status-empty {
   color: var(--aw-dim);
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--aw-muted-bg);
 }
 
 .auto-flow-editor {
@@ -421,15 +554,15 @@ h2 {
 .auto-flow-pill.status-running {
   color: var(--aw-accent-strong);
   border-color: rgba(56, 224, 143, 0.68);
-  background: rgba(56, 224, 143, 0.14);
+  background: var(--aw-success-soft);
 }
 
 .auto-flow-status.invalid,
 .auto-flow-pill.status-invalid,
 .auto-flow-pill.status-failed {
-  color: #ffb3b3;
+  color: var(--aw-danger-text);
   border-color: rgba(255, 107, 107, 0.66);
-  background: rgba(255, 107, 107, 0.12);
+  background: var(--aw-danger-soft);
 }
 
 .auto-flow-pill.status-disabled,
@@ -437,7 +570,7 @@ h2 {
 .auto-flow-locked {
   color: var(--aw-dim);
   border-color: var(--aw-border);
-  background: rgba(255, 255, 255, 0.035);
+  background: var(--aw-muted-bg);
 }
 
 .auto-flow-message,
@@ -449,9 +582,9 @@ h2 {
 
 .auto-flow-diagnostics {
   @apply grid gap-1 rounded-md border p-2;
-  color: #ffb3b3;
+  color: var(--aw-danger-text);
   border-color: rgba(255, 107, 107, 0.5);
-  background: rgba(255, 107, 107, 0.1);
+  background: var(--aw-danger-soft);
   font-size: 12px;
 }
 
@@ -462,7 +595,7 @@ h2 {
 .auto-flow-slot {
   @apply grid gap-1 rounded-md border p-2;
   border-color: var(--aw-border);
-  background: rgba(7, 11, 10, 0.42);
+  background: var(--aw-surface-bg);
 }
 
 .auto-flow-slot-title,
@@ -476,8 +609,8 @@ h2 {
 
 .auto-flow-block {
   @apply rounded-md border p-2;
-  border-color: rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.025);
+  border-color: var(--aw-inset-border);
+  background: var(--aw-muted-bg);
 }
 
 .auto-flow-block-main {
@@ -491,13 +624,13 @@ h2 {
   padding: 4px 8px;
   border: 1px solid var(--aw-border-strong);
   color: var(--aw-text);
-  background: #070b0a;
+  background: var(--aw-input-bg);
 }
 
 .git-body {
   @apply grid min-h-0 gap-2 overflow-auto p-2;
   grid-template-rows: auto auto minmax(72px, 1fr) auto auto;
-  background: rgba(7, 11, 10, 0.42);
+  background: var(--aw-surface-bg);
 }
 
 .git-summary,
@@ -523,7 +656,7 @@ h2 {
   @apply min-h-8 rounded-md px-2 py-1.5;
   min-width: 0;
   border: 1px solid var(--aw-border-strong);
-  background: #070b0a;
+  background: var(--aw-input-bg);
   color: var(--aw-text);
   font-size: 12px;
 }
@@ -539,7 +672,7 @@ h2 {
 .git-files {
   @apply grid content-start gap-1 overflow-auto rounded-md p-1;
   border: 1px solid var(--aw-border);
-  background: rgba(3, 7, 6, 0.36);
+  background: var(--aw-surface-subtle-bg);
 }
 
 .git-tree-node {
@@ -551,7 +684,7 @@ h2 {
   grid-template-columns: auto auto minmax(0, 1fr) auto auto;
   min-height: 32px;
   border: 1px solid transparent;
-  color: #d7eadf;
+  color: var(--aw-text-panel-text);
   font-size: 12px;
 }
 
@@ -561,7 +694,7 @@ h2 {
 
 .git-tree-row:hover {
   border-color: var(--aw-border-strong);
-  background: rgba(255, 255, 255, 0.035);
+  background: var(--aw-muted-bg);
 }
 
 .git-tree-row input {
@@ -570,7 +703,7 @@ h2 {
 
 .git-tree-group {
   color: var(--aw-accent-strong);
-  background: rgba(56, 224, 143, 0.07);
+  background: var(--aw-success-soft);
 }
 
 .git-tree-dir {
@@ -578,15 +711,20 @@ h2 {
 }
 
 .git-file-type {
-  @apply rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-normal;
+  @apply inline-flex items-center justify-center rounded-full font-bold uppercase tracking-normal;
+  min-height: 16px;
+  padding: 2px 5px;
+  font-size: 10px;
+  line-height: 1;
   border: 1px solid var(--aw-border-strong);
   color: var(--aw-cyan);
+  background: var(--aw-file-badge-bg);
 }
 
 .git-file-type.staged {
   border-color: rgba(56, 224, 143, 0.72);
   color: var(--aw-accent-strong);
-  background: rgba(56, 224, 143, 0.14);
+  background: var(--aw-success-soft);
 }
 
 .git-file-path {
@@ -615,18 +753,16 @@ h2 {
 }
 
 .git-feedback.error {
-  color: #ffb3b3;
+  color: var(--aw-danger-text);
 }
 
 .git-feedback.success {
-  color: #9df0c2;
+  color: var(--aw-success-text);
 }
 
 .log-output {
-  background:
-    linear-gradient(180deg, rgba(56, 224, 143, 0.035), transparent 8rem),
-    #050806;
-  color: #d8f7e7;
+  background: var(--aw-log-bg);
+  color: var(--aw-code-text);
 }
 
 .help-panel {
@@ -644,14 +780,14 @@ h2 {
   width: min(1120px, calc(100vw - 32px));
   grid-template-rows: auto auto minmax(0, 1fr);
   border-left: 1px solid var(--aw-border-strong);
-  background: rgba(10, 16, 14, 0.98);
+  background: var(--aw-drawer-bg);
   box-shadow: var(--aw-shadow);
 }
 
 .artifact-drawer-header {
   @apply flex items-start justify-between gap-3 px-4 py-3;
   border-bottom: 1px solid var(--aw-border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.012));
+  background: var(--aw-heading-bg);
 }
 
 .artifact-drawer-header p,
@@ -711,7 +847,7 @@ h2 {
   @apply grid items-center gap-2 rounded-md p-2;
   grid-template-columns: minmax(0, 1fr) auto;
   border: 1px solid var(--aw-border);
-  background: rgba(7, 11, 10, 0.42);
+  background: var(--aw-surface-bg);
 }
 
 .artifact-row.selected {
@@ -775,7 +911,7 @@ h2 {
 .artifact-preview-header {
   @apply grid gap-2 px-3 py-2;
   border-bottom: 1px solid var(--aw-border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012));
+  background: var(--aw-heading-bg);
 }
 
 .artifact-selected {
@@ -794,7 +930,7 @@ h2 {
 .artifact-action-link {
   @apply inline-flex min-h-8 items-center justify-center rounded-md px-3 py-1.5;
   border: 1px solid var(--aw-border-strong);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015));
+  background: var(--aw-control-bg);
 }
 
 .artifact-action-link.disabled {
@@ -876,17 +1012,17 @@ h2 {
 .artifact-rendered-markdown code {
   border: 1px solid var(--aw-border);
   border-radius: 4px;
-  background: rgba(101, 216, 255, 0.08);
+  background: var(--aw-code-bg);
   padding: 0.08rem 0.28rem;
-  color: #d8f7e7;
+  color: var(--aw-code-text);
 }
 
 .artifact-rendered-markdown pre,
 .artifact-text-preview {
   @apply m-0 overflow-auto rounded-md p-3;
   border: 1px solid var(--aw-border);
-  background: rgba(3, 7, 6, 0.62);
-  color: #d7eadf;
+  background: var(--aw-pre-bg);
+  color: var(--aw-pre-text);
   font-size: 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -914,7 +1050,7 @@ h2 {
 }
 
 .artifact-rendered-markdown th {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--aw-muted-bg);
   color: var(--aw-accent-strong);
 }
 
@@ -930,8 +1066,8 @@ h2 {
 .artifact-truncation {
   @apply rounded-md px-3 py-2;
   border: 1px solid rgba(242, 201, 76, 0.42);
-  background: rgba(242, 201, 76, 0.11);
-  color: #ffe49a;
+  background: var(--aw-warning-soft);
+  color: var(--aw-warning-text);
   font-size: 13px;
 }
 
@@ -939,13 +1075,13 @@ h2 {
   @apply inline-flex w-fit rounded-full px-2.5 py-1 text-xs font-bold uppercase tracking-normal;
   border: 1px solid var(--aw-border-strong);
   color: var(--aw-cyan);
-  background: rgba(101, 216, 255, 0.09);
+  background: var(--aw-file-badge-bg);
 }
 
 .artifact-placeholder {
   @apply grid gap-3 rounded-md p-3;
   border: 1px dashed var(--aw-border-strong);
-  background: rgba(7, 11, 10, 0.38);
+  background: var(--aw-surface-bg);
 }
 
 .artifact-placeholder dl {
@@ -971,7 +1107,7 @@ h2 {
 .artifact-empty {
   @apply rounded-md p-3;
   border: 1px dashed var(--aw-border);
-  background: rgba(7, 11, 10, 0.32);
+  background: var(--aw-surface-bg);
 }
 
 .git-diff-drawer {
@@ -979,14 +1115,14 @@ h2 {
   width: min(1240px, calc(100vw - 24px));
   grid-template-rows: auto auto minmax(0, 1fr);
   border-left: 1px solid var(--aw-border-strong);
-  background: rgba(9, 15, 13, 0.99);
+  background: var(--aw-drawer-bg);
   box-shadow: var(--aw-shadow);
 }
 
 .git-diff-drawer-header {
   @apply flex items-start justify-between gap-3 px-4 py-3;
   border-bottom: 1px solid var(--aw-border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.012));
+  background: var(--aw-heading-bg);
 }
 
 .git-diff-drawer-header p,
@@ -1026,13 +1162,13 @@ h2 {
 .git-diff-file {
   @apply grid w-full justify-stretch gap-1 rounded-md p-2 text-left;
   border: 1px solid var(--aw-border);
-  background: rgba(7, 11, 10, 0.42);
+  background: var(--aw-surface-bg);
   box-shadow: none;
 }
 
 .git-diff-file.selected {
   border-color: rgba(101, 216, 255, 0.72);
-  background: rgba(101, 216, 255, 0.1);
+  background: var(--aw-running-soft);
 }
 
 .git-diff-file strong,
@@ -1048,7 +1184,7 @@ h2 {
   @apply grid gap-2 px-3 py-2;
   grid-template-columns: minmax(0, 1fr) auto;
   border-bottom: 1px solid var(--aw-border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012));
+  background: var(--aw-heading-bg);
 }
 
 .git-diff-selected {
@@ -1066,8 +1202,8 @@ h2 {
 
 .git-diff-body {
   @apply min-h-0 overflow-auto p-3;
-  background: rgba(3, 7, 6, 0.48);
-  color: #d7eadf;
+  background: var(--aw-surface-bg);
+  color: var(--aw-text-panel-text);
   font-size: 12px;
 }
 
@@ -1091,8 +1227,8 @@ h2 {
   padding: 7px 10px;
   border-top: 1px solid var(--aw-border);
   border-bottom: 1px solid var(--aw-border);
-  background: rgba(101, 216, 255, 0.12);
-  color: #bfefff;
+  background: var(--aw-running-soft);
+  color: var(--aw-running-text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   font-weight: 700;
 }
@@ -1102,7 +1238,7 @@ h2 {
 }
 
 .git-diff-row {
-  border-bottom: 1px solid rgba(34, 53, 46, 0.72);
+  border-bottom: 1px solid var(--aw-diff-border);
 }
 
 .git-diff-row:last-child {
@@ -1122,8 +1258,8 @@ h2 {
   color: var(--aw-dim);
   text-align: right;
   user-select: none;
-  border-right: 1px solid rgba(34, 53, 46, 0.72);
-  background: rgba(7, 11, 10, 0.55);
+  border-right: 1px solid var(--aw-diff-border);
+  background: var(--aw-diff-line-number-bg);
 }
 
 .git-diff-code.left {
@@ -1132,18 +1268,18 @@ h2 {
 
 .git-diff-row.row-add .right,
 .git-diff-row.row-modify .right {
-  background: rgba(56, 224, 143, 0.13);
-  color: #dcffe9;
+  background: var(--aw-diff-add-bg);
+  color: var(--aw-diff-add-text);
 }
 
 .git-diff-row.row-delete .left,
 .git-diff-row.row-modify .left {
-  background: rgba(255, 107, 107, 0.12);
-  color: #ffd6d6;
+  background: var(--aw-diff-delete-bg);
+  color: var(--aw-diff-delete-text);
 }
 
 .git-diff-row.row-context .git-diff-code {
-  background: rgba(255, 255, 255, 0.015);
+  background: var(--aw-diff-context-bg);
 }
 
 .modal-root:empty {
@@ -1152,7 +1288,7 @@ h2 {
 
 .modal-root {
   @apply fixed inset-0 z-20 grid place-items-center p-5;
-  background: rgba(2, 5, 4, 0.72);
+  background: var(--aw-modal-overlay);
   backdrop-filter: blur(8px);
 }
 
@@ -1238,7 +1374,7 @@ h2 {
 .field select {
   @apply min-h-9 w-full rounded-md px-2.5 py-2;
   border: 1px solid var(--aw-border-strong);
-  background: #070b0a;
+  background: var(--aw-input-bg);
   color: var(--aw-text);
 }
 
@@ -1247,7 +1383,7 @@ h2 {
 .field select:focus {
   border-color: var(--aw-accent);
   outline: 2px solid transparent;
-  box-shadow: 0 0 0 3px rgba(56, 224, 143, 0.12);
+  box-shadow: 0 0 0 3px var(--aw-control-ring);
 }
 
 .field textarea {
@@ -1269,7 +1405,7 @@ h2 {
 }
 
 ::selection {
-  background: rgba(56, 224, 143, 0.32);
+  background: var(--aw-accent-soft);
   color: var(--aw-text);
 }
 
@@ -1279,13 +1415,13 @@ h2 {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #284137;
-  border: 2px solid #08100d;
+  background: var(--aw-scrollbar-thumb);
+  border: 2px solid var(--aw-scrollbar-track);
   border-radius: 999px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #08100d;
+  background: var(--aw-scrollbar-track);
 }
 
 @media (max-width: 1080px) {

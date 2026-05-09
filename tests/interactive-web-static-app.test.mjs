@@ -421,6 +421,22 @@ describe("static Artifact Explorer app", () => {
     assert.match(css, /\.split-panels\s*\{[\s\S]*grid-row:\s*2/);
   });
 
+  it("renders the Web UI theme switch and toggles the local theme", () => {
+    const html = readFileSync(path.resolve("src/interactive/web/static/index.html"), "utf8");
+    const css = readFileSync(path.resolve("src/interactive/web/static/styles.input.css"), "utf8");
+    assert.match(html, /id="theme-toggle-button"/);
+    assert.match(css, /:root\[data-theme="dark"\]/);
+    assert.match(css, /\.git-file-type\s*\{[\s\S]*font-size:\s*10px/);
+
+    const harness = createHarness(() => createResponse({ scopeKey: "ag-theme", items: [] }));
+    assert.equal(harness.document.body.getAttribute("data-theme"), "light");
+    assert.equal(harness.document.getElementById("theme-toggle-label").textContent, "Light");
+
+    harness.document.getElementById("theme-toggle-button").click();
+    assert.equal(harness.document.body.getAttribute("data-theme"), "dark");
+    assert.equal(harness.document.getElementById("theme-toggle-label").textContent, "Dark");
+  });
+
   it("renders Git Workspace dirty state and sends typed Git actions", () => {
     const harness = createHarness(() => createResponse({ scopeKey: "ag-121", items: [] }));
     harness.sendSnapshot(progressSnapshot([], {

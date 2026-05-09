@@ -4,6 +4,7 @@
   var state = {
     viewModel: null,
     connectionState: "connecting",
+    theme: loadThemePreference(),
     formValues: {},
     modalSignature: null,
     artifacts: {
@@ -48,6 +49,8 @@
     run: document.getElementById("run-button"),
     interrupt: document.getElementById("interrupt-button"),
     help: document.getElementById("help-button"),
+    themeToggle: document.getElementById("theme-toggle-button"),
+    themeToggleLabel: document.getElementById("theme-toggle-label"),
     flowsTitle: document.getElementById("flows-title"),
     flows: document.getElementById("flows-list"),
     autoFlowEditor: document.getElementById("auto-flow-editor"),
@@ -108,6 +111,103 @@
       return value;
     }
     return fallback;
+  }
+
+  function normalizeTheme(value) {
+    return value === "dark" ? "dark" : "light";
+  }
+
+  function isTheme(value) {
+    return value === "dark" || value === "light";
+  }
+
+  function themeStorage() {
+    try {
+      return typeof window !== "undefined" && window.localStorage ? window.localStorage : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function loadThemePreference() {
+    var storage = themeStorage();
+    var stored = storage ? storage.getItem("agentweaver.web.theme") : null;
+    if (isTheme(stored)) {
+      return stored;
+    }
+    var cookie = readThemeCookie();
+    if (isTheme(cookie)) {
+      return cookie;
+    }
+    return "light";
+  }
+
+  function persistThemePreference(theme) {
+    var nextTheme = normalizeTheme(theme);
+    var storage = themeStorage();
+    if (storage) {
+      try {
+        storage.setItem("agentweaver.web.theme", nextTheme);
+      } catch {
+        // Ignore storage failures; the active session can still switch themes.
+      }
+    }
+    writeThemeCookie(nextTheme);
+  }
+
+  function readThemeCookie() {
+    if (typeof document === "undefined" || typeof document.cookie !== "string") {
+      return null;
+    }
+    var prefix = "agentweaver_web_theme=";
+    var match = document.cookie.split(";").map(function (part) {
+      return part.trim();
+    }).find(function (part) {
+      return part.indexOf(prefix) === 0;
+    });
+    if (!match) {
+      return null;
+    }
+    try {
+      return decodeURIComponent(match.slice(prefix.length));
+    } catch {
+      return null;
+    }
+  }
+
+  function writeThemeCookie(theme) {
+    if (typeof document === "undefined") {
+      return;
+    }
+    try {
+      document.cookie = "agentweaver_web_theme=" + encodeURIComponent(normalizeTheme(theme)) + "; Max-Age=31536000; Path=/; SameSite=Lax";
+    } catch {
+      // Ignore cookie failures; localStorage may still persist the setting.
+    }
+  }
+
+  function applyTheme(theme) {
+    var nextTheme = normalizeTheme(theme);
+    var root = document.documentElement || document.body;
+    state.theme = nextTheme;
+    if (root) {
+      root.setAttribute("data-theme", nextTheme);
+    }
+    if (elements.themeToggle) {
+      var dark = nextTheme === "dark";
+      elements.themeToggle.setAttribute("aria-pressed", dark ? "true" : "false");
+      elements.themeToggle.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
+      elements.themeToggle.title = dark ? "Switch to light theme" : "Switch to dark theme";
+    }
+    if (elements.themeToggleLabel) {
+      elements.themeToggleLabel.textContent = nextTheme === "dark" ? "Dark" : "Light";
+    }
+  }
+
+  function toggleTheme() {
+    var nextTheme = state.theme === "dark" ? "light" : "dark";
+    applyTheme(nextTheme);
+    persistThemePreference(nextTheme);
   }
 
   function actionId() {
@@ -2666,6 +2766,10 @@
     return Object.assign({}, state.formValues);
   }
 
+  applyTheme(state.theme);
+  if (elements.themeToggle) {
+    elements.themeToggle.addEventListener("click", toggleTheme);
+  }
   elements.run.addEventListener("click", api.openRunConfirm);
   elements.interrupt.addEventListener("click", api.openInterruptConfirm);
   elements.artifactOpen.addEventListener("click", api.openArtifactExplorer);

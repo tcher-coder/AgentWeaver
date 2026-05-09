@@ -1,10 +1,26 @@
 (function () {
   "use strict";
 
+  var AUTO_FLOW_HEIGHT_STORAGE_KEY = "agentweaver.web.autoFlowHeight";
+  var AUTO_FLOW_HEIGHT_COOKIE_NAME = "agentweaver_web_auto_flow_height";
+  var AUTO_FLOW_HEIGHT_DEFAULT = 520;
+  var AUTO_FLOW_HEIGHT_MIN = 120;
+  var AUTO_FLOW_HEIGHT_MAX = 640;
+  var AUTO_FLOW_LOWER_PANELS_MIN = 180;
+  var WORKSPACE_SPLIT_STORAGE_KEY = "agentweaver.web.workspaceSplit";
+  var WORKSPACE_SPLIT_COOKIE_NAME = "agentweaver_web_workspace_split";
+  var WORKSPACE_SPLIT_DEFAULT = 36;
+  var WORKSPACE_SPLIT_MIN = 24;
+  var WORKSPACE_SPLIT_MAX = 58;
+  var autoFlowResizeDrag = null;
+  var workspaceResizeDrag = null;
+
   var state = {
     viewModel: null,
     connectionState: "connecting",
     theme: loadThemePreference(),
+    autoFlowHeight: loadAutoFlowHeightPreference(),
+    workspaceSplit: loadWorkspaceSplitPreference(),
     formValues: {},
     modalSignature: null,
     artifacts: {
@@ -54,6 +70,9 @@
     flowsTitle: document.getElementById("flows-title"),
     flows: document.getElementById("flows-list"),
     autoFlowEditor: document.getElementById("auto-flow-editor"),
+    autoFlowResizer: document.getElementById("auto-flow-resizer"),
+    splitPanels: document.getElementById("split-panels"),
+    workspaceResizer: document.getElementById("workspace-resizer"),
     progressTitle: document.getElementById("progress-title"),
     progress: document.getElementById("progress-text"),
     gitRefresh: document.getElementById("git-refresh-button"),
@@ -208,6 +227,402 @@
     var nextTheme = state.theme === "dark" ? "light" : "dark";
     applyTheme(nextTheme);
     persistThemePreference(nextTheme);
+  }
+
+  function loadAutoFlowHeightPreference() {
+    var storage = themeStorage();
+    if (storage) {
+      var stored = Number(storage.getItem(AUTO_FLOW_HEIGHT_STORAGE_KEY));
+      if (Number.isFinite(stored)) {
+        return clampAutoFlowHeight(stored);
+      }
+    }
+    var cookieHeight = Number(readAutoFlowHeightCookie());
+    return Number.isFinite(cookieHeight) ? clampAutoFlowHeight(cookieHeight) : null;
+  }
+
+  function persistAutoFlowHeight(height) {
+    var storage = themeStorage();
+    var finiteHeight = Number.isFinite(height);
+    var rounded = finiteHeight ? Math.round(height) : null;
+    if (storage) {
+      try {
+        if (finiteHeight) {
+          storage.setItem(AUTO_FLOW_HEIGHT_STORAGE_KEY, String(rounded));
+        } else {
+          storage.removeItem(AUTO_FLOW_HEIGHT_STORAGE_KEY);
+        }
+      } catch {
+        // Ignore storage failures; cookie persistence may still work.
+      }
+    }
+    writeAutoFlowHeightCookie(rounded);
+  }
+
+  function readAutoFlowHeightCookie() {
+    if (typeof document === "undefined" || typeof document.cookie !== "string") {
+      return null;
+    }
+    var prefix = AUTO_FLOW_HEIGHT_COOKIE_NAME + "=";
+    var match = document.cookie.split(";").map(function (part) {
+      return part.trim();
+    }).find(function (part) {
+      return part.indexOf(prefix) === 0;
+    });
+    if (!match) {
+      return null;
+    }
+    try {
+      return decodeURIComponent(match.slice(prefix.length));
+    } catch {
+      return null;
+    }
+  }
+
+  function writeAutoFlowHeightCookie(height) {
+    if (typeof document === "undefined") {
+      return;
+    }
+    try {
+      if (Number.isFinite(height)) {
+        document.cookie = AUTO_FLOW_HEIGHT_COOKIE_NAME + "=" + encodeURIComponent(String(Math.round(height))) + "; Max-Age=31536000; Path=/; SameSite=Lax";
+      } else {
+        document.cookie = AUTO_FLOW_HEIGHT_COOKIE_NAME + "=; Max-Age=0; Path=/; SameSite=Lax";
+      }
+    } catch {
+      // Ignore cookie failures; localStorage may still persist the setting.
+    }
+  }
+
+  function autoFlowHeightBounds() {
+    var max = AUTO_FLOW_HEIGHT_MAX;
+    var detailsPane = elements && elements.autoFlowEditor ? elements.autoFlowEditor.parentNode : null;
+    if (detailsPane) {
+      var rectHeight = typeof detailsPane.getBoundingClientRect === "function"
+        ? detailsPane.getBoundingClientRect().height
+        : 0;
+      if (Number.isFinite(rectHeight) && rectHeight > AUTO_FLOW_HEIGHT_MIN + AUTO_FLOW_LOWER_PANELS_MIN) {
+        max = Math.min(max, rectHeight - AUTO_FLOW_LOWER_PANELS_MIN);
+      }
+    }
+    return {
+      min: AUTO_FLOW_HEIGHT_MIN,
+      max: Math.max(AUTO_FLOW_HEIGHT_MIN, max),
+    };
+  }
+
+  function clampAutoFlowHeight(value) {
+    var numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return null;
+    }
+    var bounds = autoFlowHeightBounds();
+    return Math.min(bounds.max, Math.max(bounds.min, Math.round(numeric)));
+  }
+
+  function getAutoFlowEditorHeight() {
+    if (!elements.autoFlowEditor) {
+      return state.autoFlowHeight || AUTO_FLOW_HEIGHT_DEFAULT;
+    }
+    if (typeof elements.autoFlowEditor.getBoundingClientRect === "function") {
+      var rect = elements.autoFlowEditor.getBoundingClientRect();
+      if (rect && Number.isFinite(rect.height) && rect.height > 0) {
+        return rect.height;
+      }
+    }
+    var inlineHeight = parseInt(elements.autoFlowEditor.style.height || "", 10);
+    return Number.isFinite(inlineHeight) ? inlineHeight : (state.autoFlowHeight || AUTO_FLOW_HEIGHT_DEFAULT);
+  }
+
+  function applyAutoFlowHeight(height) {
+    if (!elements.autoFlowEditor) {
+      return;
+    }
+    var clamped = clampAutoFlowHeight(height);
+    if (clamped === null) {
+      state.autoFlowHeight = null;
+      elements.autoFlowEditor.style.height = "";
+      updateAutoFlowResizerState(null);
+      return;
+    }
+    state.autoFlowHeight = clamped;
+    elements.autoFlowEditor.style.height = clamped + "px";
+    updateAutoFlowResizerState(clamped);
+  }
+
+  function updateAutoFlowResizerState(currentHeight) {
+    if (!elements.autoFlowResizer) {
+      return;
+    }
+    var bounds = autoFlowHeightBounds();
+    elements.autoFlowResizer.setAttribute("aria-valuemin", String(bounds.min));
+    elements.autoFlowResizer.setAttribute("aria-valuemax", String(bounds.max));
+    elements.autoFlowResizer.setAttribute("aria-valuenow", String(Math.round(currentHeight || getAutoFlowEditorHeight())));
+  }
+
+  function beginAutoFlowResize(event) {
+    if (!elements.autoFlowEditor || elements.autoFlowEditor.hidden) {
+      return;
+    }
+    if (event.button !== undefined && event.button !== 0) {
+      return;
+    }
+    if (event.preventDefault) {
+      event.preventDefault();
+    }
+    autoFlowResizeDrag = {
+      startY: Number.isFinite(Number(event.clientY)) ? Number(event.clientY) : 0,
+      startHeight: getAutoFlowEditorHeight(),
+    };
+    document.body.classList.add("auto-flow-resizing");
+    elements.autoFlowResizer.classList.add("resizing");
+    if (event.currentTarget && typeof event.currentTarget.setPointerCapture === "function" && event.pointerId !== undefined) {
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture is a progressive enhancement for smoother dragging.
+      }
+    }
+    window.addEventListener("pointermove", updateAutoFlowResize);
+    window.addEventListener("pointerup", finishAutoFlowResize);
+    window.addEventListener("pointercancel", finishAutoFlowResize);
+  }
+
+  function updateAutoFlowResize(event) {
+    if (!autoFlowResizeDrag) {
+      return;
+    }
+    if (event.preventDefault) {
+      event.preventDefault();
+    }
+    var clientY = Number(event.clientY);
+    if (!Number.isFinite(clientY)) {
+      clientY = autoFlowResizeDrag.startY;
+    }
+    applyAutoFlowHeight(autoFlowResizeDrag.startHeight + clientY - autoFlowResizeDrag.startY);
+  }
+
+  function finishAutoFlowResize() {
+    if (!autoFlowResizeDrag) {
+      return;
+    }
+    autoFlowResizeDrag = null;
+    document.body.classList.remove("auto-flow-resizing");
+    elements.autoFlowResizer.classList.remove("resizing");
+    persistAutoFlowHeight(state.autoFlowHeight);
+    window.removeEventListener("pointermove", updateAutoFlowResize);
+    window.removeEventListener("pointerup", finishAutoFlowResize);
+    window.removeEventListener("pointercancel", finishAutoFlowResize);
+  }
+
+  function resetAutoFlowHeight() {
+    applyAutoFlowHeight(null);
+    persistAutoFlowHeight(null);
+  }
+
+  function handleAutoFlowResizerKeydown(event) {
+    var step = event.shiftKey ? 48 : 20;
+    var nextHeight = getAutoFlowEditorHeight();
+    if (event.key === "ArrowUp") {
+      nextHeight -= step;
+    } else if (event.key === "ArrowDown") {
+      nextHeight += step;
+    } else if (event.key === "Home") {
+      nextHeight = AUTO_FLOW_HEIGHT_MIN;
+    } else if (event.key === "End") {
+      nextHeight = AUTO_FLOW_HEIGHT_MAX;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    applyAutoFlowHeight(nextHeight);
+    persistAutoFlowHeight(state.autoFlowHeight);
+  }
+
+  function loadWorkspaceSplitPreference() {
+    var storage = themeStorage();
+    if (storage) {
+      var stored = Number(storage.getItem(WORKSPACE_SPLIT_STORAGE_KEY));
+      if (Number.isFinite(stored)) {
+        return clampWorkspaceSplit(stored);
+      }
+    }
+    var cookieSplit = Number(readWorkspaceSplitCookie());
+    return Number.isFinite(cookieSplit) ? clampWorkspaceSplit(cookieSplit) : WORKSPACE_SPLIT_DEFAULT;
+  }
+
+  function persistWorkspaceSplit(split) {
+    var storage = themeStorage();
+    var finiteSplit = Number.isFinite(split);
+    var rounded = finiteSplit ? Math.round(split) : null;
+    if (storage) {
+      try {
+        if (finiteSplit) {
+          storage.setItem(WORKSPACE_SPLIT_STORAGE_KEY, String(rounded));
+        } else {
+          storage.removeItem(WORKSPACE_SPLIT_STORAGE_KEY);
+        }
+      } catch {
+        // Ignore storage failures; cookie persistence may still work.
+      }
+    }
+    writeWorkspaceSplitCookie(rounded);
+  }
+
+  function readWorkspaceSplitCookie() {
+    if (typeof document === "undefined" || typeof document.cookie !== "string") {
+      return null;
+    }
+    var prefix = WORKSPACE_SPLIT_COOKIE_NAME + "=";
+    var match = document.cookie.split(";").map(function (part) {
+      return part.trim();
+    }).find(function (part) {
+      return part.indexOf(prefix) === 0;
+    });
+    if (!match) {
+      return null;
+    }
+    try {
+      return decodeURIComponent(match.slice(prefix.length));
+    } catch {
+      return null;
+    }
+  }
+
+  function writeWorkspaceSplitCookie(split) {
+    if (typeof document === "undefined") {
+      return;
+    }
+    try {
+      if (Number.isFinite(split)) {
+        document.cookie = WORKSPACE_SPLIT_COOKIE_NAME + "=" + encodeURIComponent(String(Math.round(split))) + "; Max-Age=31536000; Path=/; SameSite=Lax";
+      } else {
+        document.cookie = WORKSPACE_SPLIT_COOKIE_NAME + "=; Max-Age=0; Path=/; SameSite=Lax";
+      }
+    } catch {
+      // Ignore cookie failures; localStorage may still persist the setting.
+    }
+  }
+
+  function clampWorkspaceSplit(value) {
+    var numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return WORKSPACE_SPLIT_DEFAULT;
+    }
+    return Math.min(WORKSPACE_SPLIT_MAX, Math.max(WORKSPACE_SPLIT_MIN, Math.round(numeric)));
+  }
+
+  function applyWorkspaceSplit(split) {
+    if (!elements.splitPanels) {
+      return;
+    }
+    var clamped = clampWorkspaceSplit(split);
+    state.workspaceSplit = clamped;
+    if (elements.splitPanels.style && typeof elements.splitPanels.style.setProperty === "function") {
+      elements.splitPanels.style.setProperty("--aw-work-panel-width", clamped + "%");
+    } else if (elements.splitPanels.style) {
+      elements.splitPanels.style["--aw-work-panel-width"] = clamped + "%";
+    }
+    updateWorkspaceResizerState(clamped);
+  }
+
+  function workspacePanelWidth() {
+    if (!elements.splitPanels || typeof elements.splitPanels.getBoundingClientRect !== "function") {
+      return 0;
+    }
+    var rect = elements.splitPanels.getBoundingClientRect();
+    return rect && Number.isFinite(rect.width) ? rect.width : 0;
+  }
+
+  function updateWorkspaceResizerState(split) {
+    if (!elements.workspaceResizer) {
+      return;
+    }
+    elements.workspaceResizer.setAttribute("aria-valuemin", String(WORKSPACE_SPLIT_MIN));
+    elements.workspaceResizer.setAttribute("aria-valuemax", String(WORKSPACE_SPLIT_MAX));
+    elements.workspaceResizer.setAttribute("aria-valuenow", String(clampWorkspaceSplit(split)));
+  }
+
+  function beginWorkspaceResize(event) {
+    if (event.button !== undefined && event.button !== 0) {
+      return;
+    }
+    var width = workspacePanelWidth();
+    if (width <= 0) {
+      return;
+    }
+    if (event.preventDefault) {
+      event.preventDefault();
+    }
+    workspaceResizeDrag = {
+      startX: Number.isFinite(Number(event.clientX)) ? Number(event.clientX) : 0,
+      startSplit: state.workspaceSplit,
+      width: width,
+    };
+    document.body.classList.add("workspace-split-resizing");
+    elements.workspaceResizer.classList.add("resizing");
+    if (event.currentTarget && typeof event.currentTarget.setPointerCapture === "function" && event.pointerId !== undefined) {
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture is a progressive enhancement for smoother dragging.
+      }
+    }
+    window.addEventListener("pointermove", updateWorkspaceResize);
+    window.addEventListener("pointerup", finishWorkspaceResize);
+    window.addEventListener("pointercancel", finishWorkspaceResize);
+  }
+
+  function updateWorkspaceResize(event) {
+    if (!workspaceResizeDrag) {
+      return;
+    }
+    if (event.preventDefault) {
+      event.preventDefault();
+    }
+    var clientX = Number(event.clientX);
+    if (!Number.isFinite(clientX)) {
+      clientX = workspaceResizeDrag.startX;
+    }
+    var nextSplit = workspaceResizeDrag.startSplit + ((clientX - workspaceResizeDrag.startX) / workspaceResizeDrag.width) * 100;
+    applyWorkspaceSplit(nextSplit);
+  }
+
+  function finishWorkspaceResize() {
+    if (!workspaceResizeDrag) {
+      return;
+    }
+    workspaceResizeDrag = null;
+    document.body.classList.remove("workspace-split-resizing");
+    elements.workspaceResizer.classList.remove("resizing");
+    persistWorkspaceSplit(state.workspaceSplit);
+    window.removeEventListener("pointermove", updateWorkspaceResize);
+    window.removeEventListener("pointerup", finishWorkspaceResize);
+    window.removeEventListener("pointercancel", finishWorkspaceResize);
+  }
+
+  function resetWorkspaceSplit() {
+    applyWorkspaceSplit(WORKSPACE_SPLIT_DEFAULT);
+    persistWorkspaceSplit(null);
+  }
+
+  function handleWorkspaceResizerKeydown(event) {
+    var step = event.shiftKey ? 6 : 2;
+    var nextSplit = state.workspaceSplit;
+    if (event.key === "ArrowLeft") {
+      nextSplit -= step;
+    } else if (event.key === "ArrowRight") {
+      nextSplit += step;
+    } else if (event.key === "Home") {
+      nextSplit = WORKSPACE_SPLIT_MIN;
+    } else if (event.key === "End") {
+      nextSplit = WORKSPACE_SPLIT_MAX;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    applyWorkspaceSplit(nextSplit);
+    persistWorkspaceSplit(state.workspaceSplit);
   }
 
   function actionId() {
@@ -578,9 +993,16 @@
     elements.autoFlowEditor.innerHTML = "";
     if (!model || !Array.isArray(model.slots)) {
       elements.autoFlowEditor.hidden = true;
+      if (elements.autoFlowResizer) {
+        elements.autoFlowResizer.hidden = true;
+      }
       return;
     }
     elements.autoFlowEditor.hidden = false;
+    if (elements.autoFlowResizer) {
+      elements.autoFlowResizer.hidden = false;
+    }
+    applyAutoFlowHeight(state.autoFlowHeight);
     var blocked = hasBlockingInput(vm);
 
     var toolbar = document.createElement("div");
@@ -670,6 +1092,7 @@
       slots.append(slotRow);
     });
     elements.autoFlowEditor.append(slots);
+    updateAutoFlowResizerState(state.autoFlowHeight);
   }
 
   function statusPill(status) {
@@ -2769,6 +3192,25 @@
   applyTheme(state.theme);
   if (elements.themeToggle) {
     elements.themeToggle.addEventListener("click", toggleTheme);
+  }
+  if (elements.autoFlowResizer) {
+    elements.autoFlowResizer.setAttribute("role", "separator");
+    elements.autoFlowResizer.setAttribute("aria-orientation", "horizontal");
+    elements.autoFlowResizer.setAttribute("aria-label", "Resize flow editor");
+    elements.autoFlowResizer.setAttribute("tabindex", "0");
+    elements.autoFlowResizer.addEventListener("pointerdown", beginAutoFlowResize);
+    elements.autoFlowResizer.addEventListener("dblclick", resetAutoFlowHeight);
+    elements.autoFlowResizer.addEventListener("keydown", handleAutoFlowResizerKeydown);
+  }
+  applyWorkspaceSplit(state.workspaceSplit);
+  if (elements.workspaceResizer) {
+    elements.workspaceResizer.setAttribute("role", "separator");
+    elements.workspaceResizer.setAttribute("aria-orientation", "vertical");
+    elements.workspaceResizer.setAttribute("aria-label", "Resize workspace panels");
+    elements.workspaceResizer.setAttribute("tabindex", "0");
+    elements.workspaceResizer.addEventListener("pointerdown", beginWorkspaceResize);
+    elements.workspaceResizer.addEventListener("dblclick", resetWorkspaceSplit);
+    elements.workspaceResizer.addEventListener("keydown", handleWorkspaceResizerKeydown);
   }
   elements.run.addEventListener("click", api.openRunConfirm);
   elements.interrupt.addEventListener("click", api.openInterruptConfirm);

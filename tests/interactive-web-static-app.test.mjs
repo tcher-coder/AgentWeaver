@@ -405,7 +405,7 @@ describe("static Artifact Explorer app", () => {
   it("places Git Workspace where Task Summary used to render", () => {
     const html = readFileSync(path.resolve("src/interactive/web/static/index.html"), "utf8");
     const css = readFileSync(path.resolve("src/interactive/web/static/styles.input.css"), "utf8");
-    const splitStart = html.indexOf('<div class="split-panels">');
+    const splitStart = html.indexOf('<div id="split-panels" class="split-panels">');
     const splitEnd = html.indexOf('<section class="log-pane"', splitStart);
     assert.notEqual(splitStart, -1);
     assert.notEqual(splitEnd, -1);
@@ -414,19 +414,29 @@ describe("static Artifact Explorer app", () => {
     assert.doesNotMatch(html, /Task Summary|Task summary|summary-text|summary-title/);
     assert.doesNotMatch(html, /Flow Details|description-text/);
     assert.match(splitPanels, /aria-label="Progress"/);
+    assert.match(splitPanels, /id="workspace-resizer"/);
     assert.match(splitPanels, /aria-label="Git Workspace"/);
     assert.doesNotMatch(splitPanels, /aria-label="Task summary"/);
     assert.ok(splitPanels.indexOf('aria-label="Progress"') < splitPanels.indexOf('aria-label="Git Workspace"'));
-    assert.match(css, /\.details-pane\s*\{[\s\S]*grid-template-rows:\s*auto minmax\(0, 1fr\)/);
-    assert.match(css, /\.split-panels\s*\{[\s\S]*grid-row:\s*2/);
+    assert.match(css, /\.details-pane\s*\{[\s\S]*grid-template-rows:\s*auto auto minmax\(0, 1fr\)/);
+    assert.match(css, /\.split-panels\s*\{[\s\S]*grid-row:\s*3/);
+    assert.match(css, /\.split-panels\s*\{[\s\S]*--aw-work-panel-width:\s*36%/);
+    assert.match(css, /\.workspace-resizer\s*\{[\s\S]*cursor:\s*col-resize/);
   });
 
   it("renders the Web UI theme switch and toggles the local theme", () => {
     const html = readFileSync(path.resolve("src/interactive/web/static/index.html"), "utf8");
     const css = readFileSync(path.resolve("src/interactive/web/static/styles.input.css"), "utf8");
     assert.match(html, /id="theme-toggle-button"/);
+    assert.match(html, /id="auto-flow-resizer"/);
     assert.match(css, /:root\[data-theme="dark"\]/);
+    const appSource = readFileSync(path.resolve("src/interactive/web/static/app.js"), "utf8");
+    assert.match(appSource, /agentweaver_web_auto_flow_height/);
+    assert.match(appSource, /AUTO_FLOW_HEIGHT_DEFAULT\s*=\s*520/);
+    assert.match(appSource, /agentweaver_web_workspace_split/);
     assert.match(css, /\.auto-flow-toolbar\s*\{[\s\S]*position:\s*sticky/);
+    assert.match(css, /\.auto-flow-editor\s*\{[\s\S]*height:\s*min\(56vh,\s*520px\)/);
+    assert.match(css, /\.auto-flow-resizer\s*\{[\s\S]*cursor:\s*row-resize/);
     assert.match(css, /\.git-file-type\s*\{[\s\S]*font-size:\s*9px/);
 
     const harness = createHarness(() => createResponse({ scopeKey: "ag-theme", items: [] }));
@@ -754,7 +764,13 @@ describe("static Artifact Explorer app", () => {
     assert.equal(progress.querySelector(".status-invalid").dataset.status, "invalid");
 
     const editor = harness.document.getElementById("auto-flow-editor");
+    const resizer = harness.document.getElementById("auto-flow-resizer");
+    const workspaceResizer = harness.document.getElementById("workspace-resizer");
     assert.equal(editor.hidden, false);
+    assert.equal(resizer.hidden, false);
+    assert.equal(resizer.getAttribute("role"), "separator");
+    assert.equal(workspaceResizer.getAttribute("role"), "separator");
+    assert.equal(workspaceResizer.getAttribute("aria-orientation"), "vertical");
     assert.equal(harness.document.byId.has("description-text"), false);
     assertFormControlsAreIdentifiable(editor);
     assert.match(editor.textContent, /Design review loop/);

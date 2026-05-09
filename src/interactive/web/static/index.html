@@ -39,13 +39,15 @@
 
       <section class="details-pane" aria-label="Selected flow workspace">
         <div id="auto-flow-editor" class="auto-flow-editor" hidden></div>
-        <div class="split-panels">
+        <div id="auto-flow-resizer" class="auto-flow-resizer" role="separator" aria-orientation="horizontal" aria-label="Resize flow editor" tabindex="0" hidden></div>
+        <div id="split-panels" class="split-panels">
           <section class="work-panel" aria-label="Progress">
             <div class="pane-heading">
               <h2 id="progress-title">Progress</h2>
             </div>
             <div id="progress-text" class="progress-tree" role="tree" tabindex="0">No progress yet.</div>
           </section>
+          <div id="workspace-resizer" class="workspace-resizer" role="separator" aria-orientation="vertical" aria-label="Resize workspace panels" tabindex="0"></div>
           <section class="git-workspace" aria-label="Git Workspace">
             <div class="pane-heading">
               <h2>Git Workspace</h2>

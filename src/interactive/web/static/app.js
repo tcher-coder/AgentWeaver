@@ -1,29 +1,23 @@
 (function () {
   "use strict";
 
-  var AUTO_FLOW_HEIGHT_STORAGE_KEY = "agentweaver.web.autoFlowHeight";
-  var AUTO_FLOW_HEIGHT_COOKIE_NAME = "agentweaver_web_auto_flow_height";
   var AUTO_FLOW_HEIGHT_DEFAULT = 520;
   var AUTO_FLOW_HEIGHT_MIN = 120;
   var AUTO_FLOW_HEIGHT_MAX = 640;
   var AUTO_FLOW_LOWER_PANELS_MIN = 180;
-  var WORKSPACE_SPLIT_STORAGE_KEY = "agentweaver.web.workspaceSplit";
-  var WORKSPACE_SPLIT_COOKIE_NAME = "agentweaver_web_workspace_split";
   var WORKSPACE_SPLIT_DEFAULT = 36;
   var WORKSPACE_SPLIT_MIN = 24;
   var WORKSPACE_SPLIT_MAX = 58;
-  var LOG_AUTOSCROLL_STORAGE_KEY = "agentweaver.web.logAutoscroll";
-  var LOG_AUTOSCROLL_COOKIE_NAME = "agentweaver_web_log_autoscroll";
   var autoFlowResizeDrag = null;
   var workspaceResizeDrag = null;
 
   var state = {
     viewModel: null,
     connectionState: "connecting",
-    theme: loadThemePreference(),
-    autoFlowHeight: loadAutoFlowHeightPreference(),
-    workspaceSplit: loadWorkspaceSplitPreference(),
-    logAutoscroll: loadLogAutoscrollPreference(),
+    theme: "light",
+    autoFlowHeight: null,
+    workspaceSplit: WORKSPACE_SPLIT_DEFAULT,
+    logAutoscroll: true,
     formValues: {},
     modalSignature: null,
     artifacts: {
@@ -145,69 +139,8 @@
     return value === "dark" || value === "light";
   }
 
-  function themeStorage() {
-    try {
-      return typeof window !== "undefined" && window.localStorage ? window.localStorage : null;
-    } catch {
-      return null;
-    }
-  }
-
-  function loadThemePreference() {
-    var storage = themeStorage();
-    var stored = storage ? storage.getItem("agentweaver.web.theme") : null;
-    if (isTheme(stored)) {
-      return stored;
-    }
-    var cookie = readThemeCookie();
-    if (isTheme(cookie)) {
-      return cookie;
-    }
-    return "light";
-  }
-
   function persistThemePreference(theme) {
-    var nextTheme = normalizeTheme(theme);
-    var storage = themeStorage();
-    if (storage) {
-      try {
-        storage.setItem("agentweaver.web.theme", nextTheme);
-      } catch {
-        // Ignore storage failures; the active session can still switch themes.
-      }
-    }
-    writeThemeCookie(nextTheme);
-  }
-
-  function readThemeCookie() {
-    if (typeof document === "undefined" || typeof document.cookie !== "string") {
-      return null;
-    }
-    var prefix = "agentweaver_web_theme=";
-    var match = document.cookie.split(";").map(function (part) {
-      return part.trim();
-    }).find(function (part) {
-      return part.indexOf(prefix) === 0;
-    });
-    if (!match) {
-      return null;
-    }
-    try {
-      return decodeURIComponent(match.slice(prefix.length));
-    } catch {
-      return null;
-    }
-  }
-
-  function writeThemeCookie(theme) {
-    if (typeof document === "undefined") {
-      return;
-    }
-    try {
-      document.cookie = "agentweaver_web_theme=" + encodeURIComponent(normalizeTheme(theme)) + "; Max-Age=31536000; Path=/; SameSite=Lax";
-    } catch {
-      // Ignore cookie failures; localStorage may still persist the setting.
-    }
+    api.updateSettings({ theme: normalizeTheme(theme) });
   }
 
   function applyTheme(theme) {
@@ -234,69 +167,9 @@
     persistThemePreference(nextTheme);
   }
 
-  function loadAutoFlowHeightPreference() {
-    var storage = themeStorage();
-    if (storage) {
-      var stored = Number(storage.getItem(AUTO_FLOW_HEIGHT_STORAGE_KEY));
-      if (Number.isFinite(stored)) {
-        return clampAutoFlowHeight(stored);
-      }
-    }
-    var cookieHeight = Number(readAutoFlowHeightCookie());
-    return Number.isFinite(cookieHeight) ? clampAutoFlowHeight(cookieHeight) : null;
-  }
-
   function persistAutoFlowHeight(height) {
-    var storage = themeStorage();
-    var finiteHeight = Number.isFinite(height);
-    var rounded = finiteHeight ? Math.round(height) : null;
-    if (storage) {
-      try {
-        if (finiteHeight) {
-          storage.setItem(AUTO_FLOW_HEIGHT_STORAGE_KEY, String(rounded));
-        } else {
-          storage.removeItem(AUTO_FLOW_HEIGHT_STORAGE_KEY);
-        }
-      } catch {
-        // Ignore storage failures; cookie persistence may still work.
-      }
-    }
-    writeAutoFlowHeightCookie(rounded);
-  }
-
-  function readAutoFlowHeightCookie() {
-    if (typeof document === "undefined" || typeof document.cookie !== "string") {
-      return null;
-    }
-    var prefix = AUTO_FLOW_HEIGHT_COOKIE_NAME + "=";
-    var match = document.cookie.split(";").map(function (part) {
-      return part.trim();
-    }).find(function (part) {
-      return part.indexOf(prefix) === 0;
-    });
-    if (!match) {
-      return null;
-    }
-    try {
-      return decodeURIComponent(match.slice(prefix.length));
-    } catch {
-      return null;
-    }
-  }
-
-  function writeAutoFlowHeightCookie(height) {
-    if (typeof document === "undefined") {
-      return;
-    }
-    try {
-      if (Number.isFinite(height)) {
-        document.cookie = AUTO_FLOW_HEIGHT_COOKIE_NAME + "=" + encodeURIComponent(String(Math.round(height))) + "; Max-Age=31536000; Path=/; SameSite=Lax";
-      } else {
-        document.cookie = AUTO_FLOW_HEIGHT_COOKIE_NAME + "=; Max-Age=0; Path=/; SameSite=Lax";
-      }
-    } catch {
-      // Ignore cookie failures; localStorage may still persist the setting.
-    }
+    var clamped = clampAutoFlowHeight(height);
+    api.updateSettings({ autoFlowHeight: clamped });
   }
 
   function autoFlowHeightBounds() {
@@ -444,69 +317,9 @@
     persistAutoFlowHeight(state.autoFlowHeight);
   }
 
-  function loadWorkspaceSplitPreference() {
-    var storage = themeStorage();
-    if (storage) {
-      var stored = Number(storage.getItem(WORKSPACE_SPLIT_STORAGE_KEY));
-      if (Number.isFinite(stored)) {
-        return clampWorkspaceSplit(stored);
-      }
-    }
-    var cookieSplit = Number(readWorkspaceSplitCookie());
-    return Number.isFinite(cookieSplit) ? clampWorkspaceSplit(cookieSplit) : WORKSPACE_SPLIT_DEFAULT;
-  }
-
   function persistWorkspaceSplit(split) {
-    var storage = themeStorage();
-    var finiteSplit = Number.isFinite(split);
-    var rounded = finiteSplit ? Math.round(split) : null;
-    if (storage) {
-      try {
-        if (finiteSplit) {
-          storage.setItem(WORKSPACE_SPLIT_STORAGE_KEY, String(rounded));
-        } else {
-          storage.removeItem(WORKSPACE_SPLIT_STORAGE_KEY);
-        }
-      } catch {
-        // Ignore storage failures; cookie persistence may still work.
-      }
-    }
-    writeWorkspaceSplitCookie(rounded);
-  }
-
-  function readWorkspaceSplitCookie() {
-    if (typeof document === "undefined" || typeof document.cookie !== "string") {
-      return null;
-    }
-    var prefix = WORKSPACE_SPLIT_COOKIE_NAME + "=";
-    var match = document.cookie.split(";").map(function (part) {
-      return part.trim();
-    }).find(function (part) {
-      return part.indexOf(prefix) === 0;
-    });
-    if (!match) {
-      return null;
-    }
-    try {
-      return decodeURIComponent(match.slice(prefix.length));
-    } catch {
-      return null;
-    }
-  }
-
-  function writeWorkspaceSplitCookie(split) {
-    if (typeof document === "undefined") {
-      return;
-    }
-    try {
-      if (Number.isFinite(split)) {
-        document.cookie = WORKSPACE_SPLIT_COOKIE_NAME + "=" + encodeURIComponent(String(Math.round(split))) + "; Max-Age=31536000; Path=/; SameSite=Lax";
-      } else {
-        document.cookie = WORKSPACE_SPLIT_COOKIE_NAME + "=; Max-Age=0; Path=/; SameSite=Lax";
-      }
-    } catch {
-      // Ignore cookie failures; localStorage may still persist the setting.
-    }
+    var nextSplit = Number.isFinite(split) ? clampWorkspaceSplit(split) : WORKSPACE_SPLIT_DEFAULT;
+    api.updateSettings({ workspaceSplit: nextSplit });
   }
 
   function clampWorkspaceSplit(value) {
@@ -630,63 +443,8 @@
     persistWorkspaceSplit(state.workspaceSplit);
   }
 
-  function loadLogAutoscrollPreference() {
-    var storage = themeStorage();
-    if (storage) {
-      var stored = storage.getItem(LOG_AUTOSCROLL_STORAGE_KEY);
-      if (stored === "1" || stored === "0") {
-        return stored === "1";
-      }
-    }
-    var cookieValue = readLogAutoscrollCookie();
-    if (cookieValue === "1" || cookieValue === "0") {
-      return cookieValue === "1";
-    }
-    return true;
-  }
-
   function persistLogAutoscroll(enabled) {
-    var value = enabled ? "1" : "0";
-    var storage = themeStorage();
-    if (storage) {
-      try {
-        storage.setItem(LOG_AUTOSCROLL_STORAGE_KEY, value);
-      } catch {
-        // Ignore storage failures; cookie persistence may still work.
-      }
-    }
-    writeLogAutoscrollCookie(value);
-  }
-
-  function readLogAutoscrollCookie() {
-    if (typeof document === "undefined" || typeof document.cookie !== "string") {
-      return null;
-    }
-    var prefix = LOG_AUTOSCROLL_COOKIE_NAME + "=";
-    var match = document.cookie.split(";").map(function (part) {
-      return part.trim();
-    }).find(function (part) {
-      return part.indexOf(prefix) === 0;
-    });
-    if (!match) {
-      return null;
-    }
-    try {
-      return decodeURIComponent(match.slice(prefix.length));
-    } catch {
-      return null;
-    }
-  }
-
-  function writeLogAutoscrollCookie(value) {
-    if (typeof document === "undefined") {
-      return;
-    }
-    try {
-      document.cookie = LOG_AUTOSCROLL_COOKIE_NAME + "=" + encodeURIComponent(value) + "; Max-Age=31536000; Path=/; SameSite=Lax";
-    } catch {
-      // Ignore cookie failures; localStorage may still persist the setting.
-    }
+    api.updateSettings({ logAutoscroll: Boolean(enabled) });
   }
 
   function applyLogAutoscroll(enabled) {
@@ -696,6 +454,24 @@
     }
     if (state.logAutoscroll) {
       scrollLogToBottom();
+    }
+  }
+
+  function applyWebUiSettings(settings) {
+    if (!settings || typeof settings !== "object") {
+      return;
+    }
+    if (isTheme(settings.theme)) {
+      applyTheme(settings.theme);
+    }
+    if ("autoFlowHeight" in settings) {
+      applyAutoFlowHeight(settings.autoFlowHeight);
+    }
+    if (Number.isFinite(Number(settings.workspaceSplit))) {
+      applyWorkspaceSplit(settings.workspaceSplit);
+    }
+    if (typeof settings.logAutoscroll === "boolean") {
+      applyLogAutoscroll(settings.logAutoscroll);
     }
   }
 
@@ -891,6 +667,9 @@
     updateGitCommitMessage: function () {
       api.send({ type: "git.updateCommitMessage", message: elements.gitCommitMessage.value });
     },
+    updateSettings: function (settings) {
+      api.send({ type: "settings.update", settings: settings });
+    },
     selectAutoFlowPreset: function (preset) {
       api.send({ type: "autoFlow.selectPreset", preset: preset });
     },
@@ -930,6 +709,7 @@
     }
 
     if (message.type === "snapshot") {
+      applyWebUiSettings(message.settings);
       var uiState = captureUiState();
       state.viewModel = message.viewModel || {};
       state.formValues = state.viewModel.form ? Object.assign({}, state.viewModel.form.values || {}) : {};

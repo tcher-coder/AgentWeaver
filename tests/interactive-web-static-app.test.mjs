@@ -283,9 +283,9 @@ function createHarness(fetchHandler, clipboard) {
     document,
     fetchCalls,
     socket: MockWebSocket.instances[0],
-    sendSnapshot(viewModel) {
+    sendSnapshot(viewModel, settings) {
       MockWebSocket.instances[0].emit("message", {
-        data: JSON.stringify({ type: "snapshot", viewModel }),
+        data: JSON.stringify({ type: "snapshot", viewModel, ...(settings ? { settings } : {}) }),
       });
     },
   };
@@ -424,7 +424,7 @@ describe("static Artifact Explorer app", () => {
     assert.match(css, /\.workspace-resizer\s*\{[\s\S]*cursor:\s*col-resize/);
   });
 
-  it("renders the Web UI theme switch and toggles the local theme", () => {
+  it("renders the Web UI theme switch and persists visual settings through the backend", () => {
     const html = readFileSync(path.resolve("src/interactive/web/static/index.html"), "utf8");
     const css = readFileSync(path.resolve("src/interactive/web/static/styles.input.css"), "utf8");
     assert.match(html, /id="theme-toggle-button"/);
@@ -432,10 +432,9 @@ describe("static Artifact Explorer app", () => {
     assert.match(html, /id="log-autoscroll-toggle"/);
     assert.match(css, /:root\[data-theme="dark"\]/);
     const appSource = readFileSync(path.resolve("src/interactive/web/static/app.js"), "utf8");
-    assert.match(appSource, /agentweaver_web_auto_flow_height/);
+    assert.match(appSource, /settings\.update/);
     assert.match(appSource, /AUTO_FLOW_HEIGHT_DEFAULT\s*=\s*520/);
-    assert.match(appSource, /agentweaver_web_workspace_split/);
-    assert.match(appSource, /agentweaver_web_log_autoscroll/);
+    assert.doesNotMatch(appSource, /document\.cookie|localStorage|agentweaver_web_/);
     assert.match(css, /\.auto-flow-toolbar\s*\{[\s\S]*position:\s*sticky/);
     assert.match(css, /\.auto-flow-editor\s*\{[\s\S]*height:\s*min\(56vh,\s*520px\)/);
     assert.match(css, /\.auto-flow-resizer\s*\{[\s\S]*cursor:\s*row-resize/);
@@ -446,9 +445,23 @@ describe("static Artifact Explorer app", () => {
     assert.equal(harness.document.body.getAttribute("data-theme"), "light");
     assert.equal(harness.document.getElementById("theme-toggle-label").textContent, "Light");
 
-    harness.document.getElementById("theme-toggle-button").click();
+    harness.sendSnapshot(progressSnapshot([], { logText: "settings" }), {
+      theme: "dark",
+      autoFlowHeight: 360,
+      workspaceSplit: 44,
+      logAutoscroll: false,
+    });
     assert.equal(harness.document.body.getAttribute("data-theme"), "dark");
     assert.equal(harness.document.getElementById("theme-toggle-label").textContent, "Dark");
+    assert.equal(harness.document.getElementById("auto-flow-editor").style.height, "360px");
+    assert.equal(harness.document.getElementById("split-panels").style["--aw-work-panel-width"], "44%");
+    assert.equal(harness.document.getElementById("log-autoscroll-toggle").checked, false);
+
+    harness.document.getElementById("theme-toggle-button").click();
+    assert.equal(harness.document.body.getAttribute("data-theme"), "light");
+    assert.equal(harness.document.getElementById("theme-toggle-label").textContent, "Light");
+    assert.equal(harness.socket.sent.at(-1).type, "settings.update");
+    assert.deepEqual(harness.socket.sent.at(-1).settings, { theme: "light" });
   });
 
   it("keeps Activity pinned to the bottom when auto-scroll is enabled", () => {
@@ -463,6 +476,8 @@ describe("static Artifact Explorer app", () => {
 
     toggle.checked = false;
     toggle.dispatchEvent({ type: "change", target: toggle });
+    assert.equal(harness.socket.sent.at(-1).type, "settings.update");
+    assert.deepEqual(harness.socket.sent.at(-1).settings, { logAutoscroll: false });
     log.scrollTop = 25;
     log.scrollHeight = 900;
     harness.sendSnapshot(progressSnapshot([], { logText: "line 1\nline 2\nline 3" }));

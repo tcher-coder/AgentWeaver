@@ -144,7 +144,7 @@ By default, AgentWeaver tries to open the browser after the server starts succes
 
 The Web UI serves the operator console from the same local process, including `/`, `/static/app.js`, and `/static/styles.css`. Live browser interaction uses WebSocket on `/__agentweaver/ws`. Bounded checks can use `GET /__agentweaver/health`, and shutdown is available through `POST /__agentweaver/exit` or `SIGINT`/`SIGTERM`.
 
-Web UI state is process-local: it exists only while the AgentWeaver process is running and is not shared with other AgentWeaver processes. The Web UI is intended to match the interactive operator workflow for flow selection, launch confirmation, routing and user-input forms, progress and logs, and interrupt handling.
+Web UI session state is process-local: active flow selection, confirmations, forms, progress, and logs exist only while the AgentWeaver process is running and are not shared with other AgentWeaver processes. Visual preferences such as theme, panel sizes, and log auto-scroll are stored in the global AgentWeaver settings file at `~/.agentweaver/settings.json`, so they survive host and port changes.
 
 ### Artifact Explorer
 

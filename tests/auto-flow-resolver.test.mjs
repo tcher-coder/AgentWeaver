@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 
 const distRoot = path.resolve(process.cwd(), "dist");
 const { resolveAutoFlow } = await import(pathToFileURL(path.join(distRoot, "pipeline/auto-flow-resolver.js")).href);
+const { collectFlowRoutingGroups } = await import(pathToFileURL(path.join(distRoot, "pipeline/declarative-flows.js")).href);
 
 let tempDir;
 let originalHome;
@@ -91,6 +92,47 @@ describe("auto flow resolver", () => {
     ]);
     assert.ok(resolved.document.phases.some((phase) => phase.id === "post_go_linter_loop"));
     assert.ok(resolved.summary.includedBlocks.some((block) => block.blockId === "checks.go.linter" && block.maxIterations === 3));
+  });
+
+  it("collects routing groups from generated in-memory nested flow-run nodes", async () => {
+    writeProjectConfig("backend-standard", [
+      "kind: auto-flow-config",
+      "version: 1",
+      "name: backend-standard",
+      "basePreset: standard",
+      "slots:",
+      "  designReview:",
+      "    blocks:",
+      "      - id: review.design-loop",
+      "        enabled: true",
+      "        maxIterations: 2",
+      "  postImplementationChecks:",
+      "    blocks:",
+      "      - id: checks.go.linter",
+      "        enabled: true",
+      "        maxIterations: 3",
+      "  review:",
+      "    blocks:",
+      "      - id: review.loop",
+      "        enabled: true",
+      "  final:",
+      "    blocks: []",
+      "",
+    ].join("\n"));
+
+    const resolved = await resolveAutoFlow({ kind: "config", name: "backend-standard" }, { cwd: tempDir, scopeKey: "ag-123@test" });
+    assert.equal(resolved.execution.kind, "generated");
+
+    const groups = (await collectFlowRoutingGroups(
+      resolved.execution.flow,
+      tempDir,
+      new Set(),
+      { inMemoryFlows: resolved.execution.inMemoryFlows },
+    )).sort();
+
+    assert.ok(groups.includes("design-review"));
+    assert.ok(groups.includes("local-fix-loop"));
+    assert.ok(groups.includes("repair-loop"));
   });
 
   it("omits design review when a standard config disables the design review slot", async () => {

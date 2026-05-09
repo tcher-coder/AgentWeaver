@@ -18,6 +18,10 @@
         <span id="session-status">Idle</span>
       </div>
       <div class="topbar-actions">
+        <button id="theme-toggle-button" class="theme-toggle" type="button" aria-pressed="false" aria-label="Switch to dark theme">
+          <span class="theme-toggle-track" aria-hidden="true"><span class="theme-toggle-thumb"></span></span>
+          <span id="theme-toggle-label" class="theme-toggle-label">Light</span>
+        </button>
         <button id="artifact-open-button" type="button" hidden>Artifacts</button>
         <button id="run-button" type="button">Run</button>
         <button id="interrupt-button" type="button">Interrupt</button>
@@ -35,13 +39,16 @@
 
       <section class="details-pane" aria-label="Selected flow workspace">
         <div id="auto-flow-editor" class="auto-flow-editor" hidden></div>
-        <div class="split-panels">
+        <div id="auto-flow-resizer" class="auto-flow-resizer" role="separator" aria-orientation="horizontal" aria-label="Resize flow editor" tabindex="0" hidden></div>
+        <div id="split-panels" class="split-panels">
           <section class="work-panel" aria-label="Progress">
             <div class="pane-heading">
               <h2 id="progress-title">Progress</h2>
+              <span id="progress-flow-label" class="progress-flow-label" hidden></span>
             </div>
             <div id="progress-text" class="progress-tree" role="tree" tabindex="0">No progress yet.</div>
           </section>
+          <div id="workspace-resizer" class="workspace-resizer" role="separator" aria-orientation="vertical" aria-label="Resize workspace panels" tabindex="0"></div>
           <section class="git-workspace" aria-label="Git Workspace">
             <div class="pane-heading">
               <h2>Git Workspace</h2>
@@ -76,7 +83,13 @@
       <section class="log-pane" aria-label="Activity log">
         <div class="pane-heading">
           <h2 id="log-title">Activity</h2>
-          <button id="clear-log-button" type="button">Clear Log</button>
+          <div class="log-actions">
+            <label class="log-autoscroll">
+              <input id="log-autoscroll-toggle" type="checkbox" checked>
+              <span>Auto-scroll</span>
+            </label>
+            <button id="clear-log-button" type="button">Clear Log</button>
+          </div>
         </div>
         <pre id="log-text" class="text-panel log-output"></pre>
       </section>

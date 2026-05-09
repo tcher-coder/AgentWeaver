@@ -1,9 +1,23 @@
 (function () {
   "use strict";
 
+  var AUTO_FLOW_HEIGHT_DEFAULT = 520;
+  var AUTO_FLOW_HEIGHT_MIN = 120;
+  var AUTO_FLOW_HEIGHT_MAX = 640;
+  var AUTO_FLOW_LOWER_PANELS_MIN = 180;
+  var WORKSPACE_SPLIT_DEFAULT = 36;
+  var WORKSPACE_SPLIT_MIN = 24;
+  var WORKSPACE_SPLIT_MAX = 58;
+  var autoFlowResizeDrag = null;
+  var workspaceResizeDrag = null;
+
   var state = {
     viewModel: null,
     connectionState: "connecting",
+    theme: "light",
+    autoFlowHeight: null,
+    workspaceSplit: WORKSPACE_SPLIT_DEFAULT,
+    logAutoscroll: true,
     formValues: {},
     modalSignature: null,
     artifacts: {
@@ -48,10 +62,16 @@
     run: document.getElementById("run-button"),
     interrupt: document.getElementById("interrupt-button"),
     help: document.getElementById("help-button"),
+    themeToggle: document.getElementById("theme-toggle-button"),
+    themeToggleLabel: document.getElementById("theme-toggle-label"),
     flowsTitle: document.getElementById("flows-title"),
     flows: document.getElementById("flows-list"),
     autoFlowEditor: document.getElementById("auto-flow-editor"),
+    autoFlowResizer: document.getElementById("auto-flow-resizer"),
+    splitPanels: document.getElementById("split-panels"),
+    workspaceResizer: document.getElementById("workspace-resizer"),
     progressTitle: document.getElementById("progress-title"),
+    progressFlowLabel: document.getElementById("progress-flow-label"),
     progress: document.getElementById("progress-text"),
     gitRefresh: document.getElementById("git-refresh-button"),
     gitSummary: document.getElementById("git-summary"),
@@ -80,6 +100,7 @@
     gitDiffBody: document.getElementById("git-diff-body"),
     logTitle: document.getElementById("log-title"),
     log: document.getElementById("log-text"),
+    logAutoscroll: document.getElementById("log-autoscroll-toggle"),
     clearLog: document.getElementById("clear-log-button"),
     artifactOpen: document.getElementById("artifact-open-button"),
     artifactDrawer: document.getElementById("artifact-drawer"),
@@ -108,6 +129,358 @@
       return value;
     }
     return fallback;
+  }
+
+  function normalizeTheme(value) {
+    return value === "dark" ? "dark" : "light";
+  }
+
+  function isTheme(value) {
+    return value === "dark" || value === "light";
+  }
+
+  function persistThemePreference(theme) {
+    api.updateSettings({ theme: normalizeTheme(theme) });
+  }
+
+  function applyTheme(theme) {
+    var nextTheme = normalizeTheme(theme);
+    var root = document.documentElement || document.body;
+    state.theme = nextTheme;
+    if (root) {
+      root.setAttribute("data-theme", nextTheme);
+    }
+    if (elements.themeToggle) {
+      var dark = nextTheme === "dark";
+      elements.themeToggle.setAttribute("aria-pressed", dark ? "true" : "false");
+      elements.themeToggle.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
+      elements.themeToggle.title = dark ? "Switch to light theme" : "Switch to dark theme";
+    }
+    if (elements.themeToggleLabel) {
+      elements.themeToggleLabel.textContent = nextTheme === "dark" ? "Dark" : "Light";
+    }
+  }
+
+  function toggleTheme() {
+    var nextTheme = state.theme === "dark" ? "light" : "dark";
+    applyTheme(nextTheme);
+    persistThemePreference(nextTheme);
+  }
+
+  function persistAutoFlowHeight(height) {
+    var clamped = clampAutoFlowHeight(height);
+    api.updateSettings({ autoFlowHeight: clamped });
+  }
+
+  function autoFlowHeightBounds() {
+    var max = AUTO_FLOW_HEIGHT_MAX;
+    var detailsPane = elements && elements.autoFlowEditor ? elements.autoFlowEditor.parentNode : null;
+    if (detailsPane) {
+      var rectHeight = typeof detailsPane.getBoundingClientRect === "function"
+        ? detailsPane.getBoundingClientRect().height
+        : 0;
+      if (Number.isFinite(rectHeight) && rectHeight > AUTO_FLOW_HEIGHT_MIN + AUTO_FLOW_LOWER_PANELS_MIN) {
+        max = Math.min(max, rectHeight - AUTO_FLOW_LOWER_PANELS_MIN);
+      }
+    }
+    return {
+      min: AUTO_FLOW_HEIGHT_MIN,
+      max: Math.max(AUTO_FLOW_HEIGHT_MIN, max),
+    };
+  }
+
+  function clampAutoFlowHeight(value) {
+    var numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return null;
+    }
+    var bounds = autoFlowHeightBounds();
+    return Math.min(bounds.max, Math.max(bounds.min, Math.round(numeric)));
+  }
+
+  function getAutoFlowEditorHeight() {
+    if (!elements.autoFlowEditor) {
+      return state.autoFlowHeight || AUTO_FLOW_HEIGHT_DEFAULT;
+    }
+    if (typeof elements.autoFlowEditor.getBoundingClientRect === "function") {
+      var rect = elements.autoFlowEditor.getBoundingClientRect();
+      if (rect && Number.isFinite(rect.height) && rect.height > 0) {
+        return rect.height;
+      }
+    }
+    var inlineHeight = parseInt(elements.autoFlowEditor.style.height || "", 10);
+    return Number.isFinite(inlineHeight) ? inlineHeight : (state.autoFlowHeight || AUTO_FLOW_HEIGHT_DEFAULT);
+  }
+
+  function applyAutoFlowHeight(height) {
+    if (!elements.autoFlowEditor) {
+      return;
+    }
+    var clamped = clampAutoFlowHeight(height);
+    if (clamped === null) {
+      state.autoFlowHeight = null;
+      elements.autoFlowEditor.style.height = "";
+      updateAutoFlowResizerState(null);
+      return;
+    }
+    state.autoFlowHeight = clamped;
+    elements.autoFlowEditor.style.height = clamped + "px";
+    updateAutoFlowResizerState(clamped);
+  }
+
+  function updateAutoFlowResizerState(currentHeight) {
+    if (!elements.autoFlowResizer) {
+      return;
+    }
+    var bounds = autoFlowHeightBounds();
+    elements.autoFlowResizer.setAttribute("aria-valuemin", String(bounds.min));
+    elements.autoFlowResizer.setAttribute("aria-valuemax", String(bounds.max));
+    elements.autoFlowResizer.setAttribute("aria-valuenow", String(Math.round(currentHeight || getAutoFlowEditorHeight())));
+  }
+
+  function beginAutoFlowResize(event) {
+    if (!elements.autoFlowEditor || elements.autoFlowEditor.hidden) {
+      return;
+    }
+    if (event.button !== undefined && event.button !== 0) {
+      return;
+    }
+    if (event.preventDefault) {
+      event.preventDefault();
+    }
+    autoFlowResizeDrag = {
+      startY: Number.isFinite(Number(event.clientY)) ? Number(event.clientY) : 0,
+      startHeight: getAutoFlowEditorHeight(),
+    };
+    document.body.classList.add("auto-flow-resizing");
+    elements.autoFlowResizer.classList.add("resizing");
+    if (event.currentTarget && typeof event.currentTarget.setPointerCapture === "function" && event.pointerId !== undefined) {
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture is a progressive enhancement for smoother dragging.
+      }
+    }
+    window.addEventListener("pointermove", updateAutoFlowResize);
+    window.addEventListener("pointerup", finishAutoFlowResize);
+    window.addEventListener("pointercancel", finishAutoFlowResize);
+  }
+
+  function updateAutoFlowResize(event) {
+    if (!autoFlowResizeDrag) {
+      return;
+    }
+    if (event.preventDefault) {
+      event.preventDefault();
+    }
+    var clientY = Number(event.clientY);
+    if (!Number.isFinite(clientY)) {
+      clientY = autoFlowResizeDrag.startY;
+    }
+    applyAutoFlowHeight(autoFlowResizeDrag.startHeight + clientY - autoFlowResizeDrag.startY);
+  }
+
+  function finishAutoFlowResize() {
+    if (!autoFlowResizeDrag) {
+      return;
+    }
+    autoFlowResizeDrag = null;
+    document.body.classList.remove("auto-flow-resizing");
+    elements.autoFlowResizer.classList.remove("resizing");
+    persistAutoFlowHeight(state.autoFlowHeight);
+    window.removeEventListener("pointermove", updateAutoFlowResize);
+    window.removeEventListener("pointerup", finishAutoFlowResize);
+    window.removeEventListener("pointercancel", finishAutoFlowResize);
+  }
+
+  function resetAutoFlowHeight() {
+    applyAutoFlowHeight(null);
+    persistAutoFlowHeight(null);
+  }
+
+  function handleAutoFlowResizerKeydown(event) {
+    var step = event.shiftKey ? 48 : 20;
+    var nextHeight = getAutoFlowEditorHeight();
+    if (event.key === "ArrowUp") {
+      nextHeight -= step;
+    } else if (event.key === "ArrowDown") {
+      nextHeight += step;
+    } else if (event.key === "Home") {
+      nextHeight = AUTO_FLOW_HEIGHT_MIN;
+    } else if (event.key === "End") {
+      nextHeight = AUTO_FLOW_HEIGHT_MAX;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    applyAutoFlowHeight(nextHeight);
+    persistAutoFlowHeight(state.autoFlowHeight);
+  }
+
+  function persistWorkspaceSplit(split) {
+    var nextSplit = Number.isFinite(split) ? clampWorkspaceSplit(split) : WORKSPACE_SPLIT_DEFAULT;
+    api.updateSettings({ workspaceSplit: nextSplit });
+  }
+
+  function clampWorkspaceSplit(value) {
+    var numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return WORKSPACE_SPLIT_DEFAULT;
+    }
+    return Math.min(WORKSPACE_SPLIT_MAX, Math.max(WORKSPACE_SPLIT_MIN, Math.round(numeric)));
+  }
+
+  function applyWorkspaceSplit(split) {
+    if (!elements.splitPanels) {
+      return;
+    }
+    var clamped = clampWorkspaceSplit(split);
+    state.workspaceSplit = clamped;
+    if (elements.splitPanels.style && typeof elements.splitPanels.style.setProperty === "function") {
+      elements.splitPanels.style.setProperty("--aw-work-panel-width", clamped + "%");
+    } else if (elements.splitPanels.style) {
+      elements.splitPanels.style["--aw-work-panel-width"] = clamped + "%";
+    }
+    updateWorkspaceResizerState(clamped);
+  }
+
+  function workspacePanelWidth() {
+    if (!elements.splitPanels || typeof elements.splitPanels.getBoundingClientRect !== "function") {
+      return 0;
+    }
+    var rect = elements.splitPanels.getBoundingClientRect();
+    return rect && Number.isFinite(rect.width) ? rect.width : 0;
+  }
+
+  function updateWorkspaceResizerState(split) {
+    if (!elements.workspaceResizer) {
+      return;
+    }
+    elements.workspaceResizer.setAttribute("aria-valuemin", String(WORKSPACE_SPLIT_MIN));
+    elements.workspaceResizer.setAttribute("aria-valuemax", String(WORKSPACE_SPLIT_MAX));
+    elements.workspaceResizer.setAttribute("aria-valuenow", String(clampWorkspaceSplit(split)));
+  }
+
+  function beginWorkspaceResize(event) {
+    if (event.button !== undefined && event.button !== 0) {
+      return;
+    }
+    var width = workspacePanelWidth();
+    if (width <= 0) {
+      return;
+    }
+    if (event.preventDefault) {
+      event.preventDefault();
+    }
+    workspaceResizeDrag = {
+      startX: Number.isFinite(Number(event.clientX)) ? Number(event.clientX) : 0,
+      startSplit: state.workspaceSplit,
+      width: width,
+    };
+    document.body.classList.add("workspace-split-resizing");
+    elements.workspaceResizer.classList.add("resizing");
+    if (event.currentTarget && typeof event.currentTarget.setPointerCapture === "function" && event.pointerId !== undefined) {
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture is a progressive enhancement for smoother dragging.
+      }
+    }
+    window.addEventListener("pointermove", updateWorkspaceResize);
+    window.addEventListener("pointerup", finishWorkspaceResize);
+    window.addEventListener("pointercancel", finishWorkspaceResize);
+  }
+
+  function updateWorkspaceResize(event) {
+    if (!workspaceResizeDrag) {
+      return;
+    }
+    if (event.preventDefault) {
+      event.preventDefault();
+    }
+    var clientX = Number(event.clientX);
+    if (!Number.isFinite(clientX)) {
+      clientX = workspaceResizeDrag.startX;
+    }
+    var nextSplit = workspaceResizeDrag.startSplit + ((clientX - workspaceResizeDrag.startX) / workspaceResizeDrag.width) * 100;
+    applyWorkspaceSplit(nextSplit);
+  }
+
+  function finishWorkspaceResize() {
+    if (!workspaceResizeDrag) {
+      return;
+    }
+    workspaceResizeDrag = null;
+    document.body.classList.remove("workspace-split-resizing");
+    elements.workspaceResizer.classList.remove("resizing");
+    persistWorkspaceSplit(state.workspaceSplit);
+    window.removeEventListener("pointermove", updateWorkspaceResize);
+    window.removeEventListener("pointerup", finishWorkspaceResize);
+    window.removeEventListener("pointercancel", finishWorkspaceResize);
+  }
+
+  function resetWorkspaceSplit() {
+    applyWorkspaceSplit(WORKSPACE_SPLIT_DEFAULT);
+    persistWorkspaceSplit(null);
+  }
+
+  function handleWorkspaceResizerKeydown(event) {
+    var step = event.shiftKey ? 6 : 2;
+    var nextSplit = state.workspaceSplit;
+    if (event.key === "ArrowLeft") {
+      nextSplit -= step;
+    } else if (event.key === "ArrowRight") {
+      nextSplit += step;
+    } else if (event.key === "Home") {
+      nextSplit = WORKSPACE_SPLIT_MIN;
+    } else if (event.key === "End") {
+      nextSplit = WORKSPACE_SPLIT_MAX;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    applyWorkspaceSplit(nextSplit);
+    persistWorkspaceSplit(state.workspaceSplit);
+  }
+
+  function persistLogAutoscroll(enabled) {
+    api.updateSettings({ logAutoscroll: Boolean(enabled) });
+  }
+
+  function applyLogAutoscroll(enabled) {
+    state.logAutoscroll = Boolean(enabled);
+    if (elements.logAutoscroll) {
+      elements.logAutoscroll.checked = state.logAutoscroll;
+    }
+    if (state.logAutoscroll) {
+      scrollLogToBottom();
+    }
+  }
+
+  function applyWebUiSettings(settings) {
+    if (!settings || typeof settings !== "object") {
+      return;
+    }
+    if (isTheme(settings.theme)) {
+      applyTheme(settings.theme);
+    }
+    if ("autoFlowHeight" in settings) {
+      applyAutoFlowHeight(settings.autoFlowHeight);
+    }
+    if (Number.isFinite(Number(settings.workspaceSplit))) {
+      applyWorkspaceSplit(settings.workspaceSplit);
+    }
+    if (typeof settings.logAutoscroll === "boolean") {
+      applyLogAutoscroll(settings.logAutoscroll);
+    }
+  }
+
+  function scrollLogToBottom() {
+    if (!elements.log) {
+      return;
+    }
+    elements.log.scrollTop = elements.log.scrollHeight;
+    rememberScrollOffset("log", elements.log.scrollTop);
   }
 
   function actionId() {
@@ -294,6 +667,9 @@
     updateGitCommitMessage: function () {
       api.send({ type: "git.updateCommitMessage", message: elements.gitCommitMessage.value });
     },
+    updateSettings: function (settings) {
+      api.send({ type: "settings.update", settings: settings });
+    },
     selectAutoFlowPreset: function (preset) {
       api.send({ type: "autoFlow.selectPreset", preset: preset });
     },
@@ -333,6 +709,7 @@
     }
 
     if (message.type === "snapshot") {
+      applyWebUiSettings(message.settings);
       var uiState = captureUiState();
       state.viewModel = message.viewModel || {};
       state.formValues = state.viewModel.form ? Object.assign({}, state.viewModel.form.values || {}) : {};
@@ -364,9 +741,8 @@
     if (!lines) return;
     var wasPinned = elements.log.scrollTop + elements.log.clientHeight >= elements.log.scrollHeight - 8;
     elements.log.textContent += (elements.log.textContent ? "\n" : "") + lines;
-    if (wasPinned) {
-      elements.log.scrollTop = elements.log.scrollHeight;
-      rememberScrollOffset("log", elements.log.scrollTop);
+    if (state.logAutoscroll || wasPinned) {
+      scrollLogToBottom();
     }
   }
 
@@ -380,7 +756,7 @@
     elements.progressTitle.textContent = text(vm.progressTitle, "Progress");
     renderProgress(vm);
     elements.logTitle.textContent = text(vm.logTitle, "Activity");
-    setTextPreservingScroll(elements.log, text(vm.logText, ""));
+    setTextPreservingScroll(elements.log, text(vm.logText, ""), state.logAutoscroll);
     elements.helpText.textContent = text(vm.helpText, "No help is available.");
     elements.helpPanel.hidden = !vm.helpVisible;
     elements.help.setAttribute("aria-pressed", vm.helpVisible ? "true" : "false");
@@ -478,9 +854,16 @@
     elements.autoFlowEditor.innerHTML = "";
     if (!model || !Array.isArray(model.slots)) {
       elements.autoFlowEditor.hidden = true;
+      if (elements.autoFlowResizer) {
+        elements.autoFlowResizer.hidden = true;
+      }
       return;
     }
     elements.autoFlowEditor.hidden = false;
+    if (elements.autoFlowResizer) {
+      elements.autoFlowResizer.hidden = false;
+    }
+    applyAutoFlowHeight(state.autoFlowHeight);
     var blocked = hasBlockingInput(vm);
 
     var toolbar = document.createElement("div");
@@ -570,6 +953,7 @@
       slots.append(slotRow);
     });
     elements.autoFlowEditor.append(slots);
+    updateAutoFlowResizerState(state.autoFlowHeight);
   }
 
   function statusPill(status) {
@@ -1228,6 +1612,7 @@
   function renderProgress(vm) {
     var progress = vm && vm.progress;
     var items = progress && Array.isArray(progress.items) ? progress.items.filter(isProgressItem) : [];
+    renderProgressFlowLabel(progress && progress.flow ? text(progress.flow.label, progress.flow.id || "") : "");
     if (!progress || !progress.flow || items.length === 0) {
       var fallbackText = text(vm && vm.progressText, "No progress yet.");
       elements.progress.className = "progress-tree fallback";
@@ -1247,15 +1632,19 @@
     elements.progress.className = "progress-tree";
     elements.progress.innerHTML = "";
 
-    var flow = document.createElement("div");
-    flow.className = "progress-flow";
-    flow.textContent = text(progress.flow.label, progress.flow.id || "Current flow");
-    elements.progress.append(flow);
-
     items.forEach(function (item, index) {
       elements.progress.append(renderProgressRow(item, index));
     });
     elements.progress.scrollTop = wasPinned ? elements.progress.scrollHeight : previousScrollTop;
+  }
+
+  function renderProgressFlowLabel(label) {
+    if (!elements.progressFlowLabel) {
+      return;
+    }
+    var value = text(label, "");
+    elements.progressFlowLabel.textContent = value;
+    elements.progressFlowLabel.hidden = value.length === 0;
   }
 
   function isProgressItem(item) {
@@ -1313,14 +1702,17 @@
     return "○";
   }
 
-  function setTextPreservingScroll(element, value) {
+  function setTextPreservingScroll(element, value, forceBottom) {
     if (element.textContent === value) {
+      if (forceBottom) {
+        element.scrollTop = element.scrollHeight;
+      }
       return;
     }
     var previousScrollTop = element.scrollTop;
     var wasPinned = previousScrollTop + element.clientHeight >= element.scrollHeight - 8;
     element.textContent = value;
-    element.scrollTop = wasPinned ? element.scrollHeight : previousScrollTop;
+    element.scrollTop = forceBottom || wasPinned ? element.scrollHeight : previousScrollTop;
   }
 
   function captureUiState() {
@@ -1351,7 +1743,7 @@
   function restoreUiState(uiState) {
     if (!uiState) return;
     elements.progress.scrollTop = uiState.progressScrollTop;
-    elements.log.scrollTop = uiState.logScrollTop;
+    elements.log.scrollTop = state.logAutoscroll ? elements.log.scrollHeight : uiState.logScrollTop;
     elements.helpText.scrollTop = uiState.helpScrollTop;
     elements.modalRoot.scrollTop = uiState.modalScrollTop;
     var modalBody = currentModalBody();
@@ -2666,6 +3058,36 @@
     return Object.assign({}, state.formValues);
   }
 
+  applyTheme(state.theme);
+  if (elements.themeToggle) {
+    elements.themeToggle.addEventListener("click", toggleTheme);
+  }
+  if (elements.autoFlowResizer) {
+    elements.autoFlowResizer.setAttribute("role", "separator");
+    elements.autoFlowResizer.setAttribute("aria-orientation", "horizontal");
+    elements.autoFlowResizer.setAttribute("aria-label", "Resize flow editor");
+    elements.autoFlowResizer.setAttribute("tabindex", "0");
+    elements.autoFlowResizer.addEventListener("pointerdown", beginAutoFlowResize);
+    elements.autoFlowResizer.addEventListener("dblclick", resetAutoFlowHeight);
+    elements.autoFlowResizer.addEventListener("keydown", handleAutoFlowResizerKeydown);
+  }
+  applyWorkspaceSplit(state.workspaceSplit);
+  if (elements.workspaceResizer) {
+    elements.workspaceResizer.setAttribute("role", "separator");
+    elements.workspaceResizer.setAttribute("aria-orientation", "vertical");
+    elements.workspaceResizer.setAttribute("aria-label", "Resize workspace panels");
+    elements.workspaceResizer.setAttribute("tabindex", "0");
+    elements.workspaceResizer.addEventListener("pointerdown", beginWorkspaceResize);
+    elements.workspaceResizer.addEventListener("dblclick", resetWorkspaceSplit);
+    elements.workspaceResizer.addEventListener("keydown", handleWorkspaceResizerKeydown);
+  }
+  applyLogAutoscroll(state.logAutoscroll);
+  if (elements.logAutoscroll) {
+    elements.logAutoscroll.addEventListener("change", function () {
+      applyLogAutoscroll(elements.logAutoscroll.checked);
+      persistLogAutoscroll(state.logAutoscroll);
+    });
+  }
   elements.run.addEventListener("click", api.openRunConfirm);
   elements.interrupt.addEventListener("click", api.openInterruptConfirm);
   elements.artifactOpen.addEventListener("click", api.openArtifactExplorer);

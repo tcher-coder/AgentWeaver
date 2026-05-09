@@ -1,7 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -11,6 +13,9 @@ const { createWebInteractiveSession } = await import(
 );
 const { setFlowExecutionState } = await import(
   pathToFileURL(path.join(distRoot, "tui.js")).href
+);
+const { agentweaverSettingsPath } = await import(
+  pathToFileURL(path.join(distRoot, "runtime/settings.js")).href
 );
 
 function createOptions(overrides = {}) {
@@ -274,6 +279,74 @@ describe("web interactive session", () => {
       client.close();
       session.destroy();
       setFlowExecutionState(null, null);
+    }
+  });
+
+  it("loads and persists global Web UI settings through snapshots", async (t) => {
+    const tempHome = mkdtempSync(path.join(os.tmpdir(), "agentweaver-web-settings-home-"));
+    const originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+    let ready;
+    const readyPromise = new Promise((resolve) => {
+      ready = resolve;
+    });
+    const session = createWebInteractiveSession(createOptions(), {
+      noOpen: true,
+      onServerReady: ready,
+    });
+    session.mount();
+    const server = await Promise.race([
+      readyPromise,
+      new Promise((resolve) => setTimeout(() => resolve(null), 1000)),
+    ]);
+    if (!server) {
+      t.skip("local TCP listeners are not permitted in this sandbox");
+      session.destroy();
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      rmSync(tempHome, { recursive: true, force: true });
+      return;
+    }
+    const client = await connectWebSocket(server.url);
+    try {
+      const initial = await client.nextMessage();
+      assert.equal(initial.type, "snapshot");
+      assert.deepEqual(initial.settings, {
+        theme: "light",
+        autoFlowHeight: null,
+        workspaceSplit: 36,
+        logAutoscroll: true,
+      });
+
+      client.send({
+        type: "settings.update",
+        settings: {
+          theme: "dark",
+          autoFlowHeight: 333,
+          workspaceSplit: 41,
+          logAutoscroll: false,
+        },
+      });
+      const updated = await nextMatching(client, (message) => message.type === "snapshot" && message.settings?.theme === "dark");
+      assert.deepEqual(updated.settings, {
+        theme: "dark",
+        autoFlowHeight: 333,
+        workspaceSplit: 41,
+        logAutoscroll: false,
+      });
+      assert.deepEqual(JSON.parse(readFileSync(agentweaverSettingsPath(), "utf8")).webUi, updated.settings);
+    } finally {
+      client.close();
+      session.destroy();
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      rmSync(tempHome, { recursive: true, force: true });
     }
   });
 

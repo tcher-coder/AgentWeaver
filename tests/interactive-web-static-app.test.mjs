@@ -283,9 +283,9 @@ function createHarness(fetchHandler, clipboard) {
     document,
     fetchCalls,
     socket: MockWebSocket.instances[0],
-    sendSnapshot(viewModel) {
+    sendSnapshot(viewModel, settings) {
       MockWebSocket.instances[0].emit("message", {
-        data: JSON.stringify({ type: "snapshot", viewModel }),
+        data: JSON.stringify({ type: "snapshot", viewModel, ...(settings ? { settings } : {}) }),
       });
     },
   };
@@ -405,7 +405,7 @@ describe("static Artifact Explorer app", () => {
   it("places Git Workspace where Task Summary used to render", () => {
     const html = readFileSync(path.resolve("src/interactive/web/static/index.html"), "utf8");
     const css = readFileSync(path.resolve("src/interactive/web/static/styles.input.css"), "utf8");
-    const splitStart = html.indexOf('<div class="split-panels">');
+    const splitStart = html.indexOf('<div id="split-panels" class="split-panels">');
     const splitEnd = html.indexOf('<section class="log-pane"', splitStart);
     assert.notEqual(splitStart, -1);
     assert.notEqual(splitEnd, -1);
@@ -414,11 +414,74 @@ describe("static Artifact Explorer app", () => {
     assert.doesNotMatch(html, /Task Summary|Task summary|summary-text|summary-title/);
     assert.doesNotMatch(html, /Flow Details|description-text/);
     assert.match(splitPanels, /aria-label="Progress"/);
+    assert.match(splitPanels, /id="workspace-resizer"/);
     assert.match(splitPanels, /aria-label="Git Workspace"/);
     assert.doesNotMatch(splitPanels, /aria-label="Task summary"/);
     assert.ok(splitPanels.indexOf('aria-label="Progress"') < splitPanels.indexOf('aria-label="Git Workspace"'));
-    assert.match(css, /\.details-pane\s*\{[\s\S]*grid-template-rows:\s*auto minmax\(0, 1fr\)/);
-    assert.match(css, /\.split-panels\s*\{[\s\S]*grid-row:\s*2/);
+    assert.match(css, /\.details-pane\s*\{[\s\S]*grid-template-rows:\s*auto auto minmax\(0, 1fr\)/);
+    assert.match(css, /\.split-panels\s*\{[\s\S]*grid-row:\s*3/);
+    assert.match(css, /\.split-panels\s*\{[\s\S]*--aw-work-panel-width:\s*36%/);
+    assert.match(css, /\.workspace-resizer\s*\{[\s\S]*cursor:\s*col-resize/);
+  });
+
+  it("renders the Web UI theme switch and persists visual settings through the backend", () => {
+    const html = readFileSync(path.resolve("src/interactive/web/static/index.html"), "utf8");
+    const css = readFileSync(path.resolve("src/interactive/web/static/styles.input.css"), "utf8");
+    assert.match(html, /id="theme-toggle-button"/);
+    assert.match(html, /id="auto-flow-resizer"/);
+    assert.match(html, /id="log-autoscroll-toggle"/);
+    assert.match(css, /:root\[data-theme="dark"\]/);
+    const appSource = readFileSync(path.resolve("src/interactive/web/static/app.js"), "utf8");
+    assert.match(appSource, /settings\.update/);
+    assert.match(appSource, /AUTO_FLOW_HEIGHT_DEFAULT\s*=\s*520/);
+    assert.doesNotMatch(appSource, /document\.cookie|localStorage|agentweaver_web_/);
+    assert.match(css, /\.auto-flow-toolbar\s*\{[\s\S]*position:\s*sticky/);
+    assert.match(css, /\.auto-flow-editor\s*\{[\s\S]*height:\s*min\(56vh,\s*520px\)/);
+    assert.match(css, /\.auto-flow-resizer\s*\{[\s\S]*cursor:\s*row-resize/);
+    assert.match(css, /\.log-autoscroll\s*\{[\s\S]*font-size:\s*12px/);
+    assert.match(css, /\.git-file-type\s*\{[\s\S]*font-size:\s*9px/);
+
+    const harness = createHarness(() => createResponse({ scopeKey: "ag-theme", items: [] }));
+    assert.equal(harness.document.body.getAttribute("data-theme"), "light");
+    assert.equal(harness.document.getElementById("theme-toggle-label").textContent, "Light");
+
+    harness.sendSnapshot(progressSnapshot([], { logText: "settings" }), {
+      theme: "dark",
+      autoFlowHeight: 360,
+      workspaceSplit: 44,
+      logAutoscroll: false,
+    });
+    assert.equal(harness.document.body.getAttribute("data-theme"), "dark");
+    assert.equal(harness.document.getElementById("theme-toggle-label").textContent, "Dark");
+    assert.equal(harness.document.getElementById("auto-flow-editor").style.height, "360px");
+    assert.equal(harness.document.getElementById("split-panels").style["--aw-work-panel-width"], "44%");
+    assert.equal(harness.document.getElementById("log-autoscroll-toggle").checked, false);
+
+    harness.document.getElementById("theme-toggle-button").click();
+    assert.equal(harness.document.body.getAttribute("data-theme"), "light");
+    assert.equal(harness.document.getElementById("theme-toggle-label").textContent, "Light");
+    assert.equal(harness.socket.sent.at(-1).type, "settings.update");
+    assert.deepEqual(harness.socket.sent.at(-1).settings, { theme: "light" });
+  });
+
+  it("keeps Activity pinned to the bottom when auto-scroll is enabled", () => {
+    const harness = createHarness(() => createResponse({ scopeKey: "ag-log", items: [] }));
+    const log = harness.document.getElementById("log-text");
+    const toggle = harness.document.getElementById("log-autoscroll-toggle");
+
+    log.scrollHeight = 720;
+    harness.sendSnapshot(progressSnapshot([], { logText: "line 1\nline 2" }));
+    assert.equal(toggle.checked, true);
+    assert.equal(log.scrollTop, 720);
+
+    toggle.checked = false;
+    toggle.dispatchEvent({ type: "change", target: toggle });
+    assert.equal(harness.socket.sent.at(-1).type, "settings.update");
+    assert.deepEqual(harness.socket.sent.at(-1).settings, { logAutoscroll: false });
+    log.scrollTop = 25;
+    log.scrollHeight = 900;
+    harness.sendSnapshot(progressSnapshot([], { logText: "line 1\nline 2\nline 3" }));
+    assert.equal(log.scrollTop, 25);
   });
 
   it("renders Git Workspace dirty state and sends typed Git actions", () => {
@@ -627,7 +690,8 @@ describe("static Artifact Explorer app", () => {
 
     const progress = harness.document.getElementById("progress-text");
     const rows = progress.querySelectorAll(".progress-row");
-    assert.equal(progress.querySelector(".progress-flow").textContent, "Structured Progress Flow");
+    assert.equal(harness.document.getElementById("progress-flow-label").textContent, "Structured Progress Flow");
+    assert.equal(progress.querySelector(".progress-flow"), null);
     assert.equal(rows.length, 5);
     assert.equal(rows[0].dataset.kind, "group");
     assert.equal(rows[0].dataset.status, "done");
@@ -737,7 +801,13 @@ describe("static Artifact Explorer app", () => {
     assert.equal(progress.querySelector(".status-invalid").dataset.status, "invalid");
 
     const editor = harness.document.getElementById("auto-flow-editor");
+    const resizer = harness.document.getElementById("auto-flow-resizer");
+    const workspaceResizer = harness.document.getElementById("workspace-resizer");
     assert.equal(editor.hidden, false);
+    assert.equal(resizer.hidden, false);
+    assert.equal(resizer.getAttribute("role"), "separator");
+    assert.equal(workspaceResizer.getAttribute("role"), "separator");
+    assert.equal(workspaceResizer.getAttribute("aria-orientation"), "vertical");
     assert.equal(harness.document.byId.has("description-text"), false);
     assertFormControlsAreIdentifiable(editor);
     assert.match(editor.textContent, /Design review loop/);

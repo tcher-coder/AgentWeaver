@@ -1,9 +1,10 @@
 import type { UserInputFormValues } from "../../user-input.js";
+import type { AgentWeaverWebUiSettings, AgentWeaverWebUiSettingsPatch } from "../../runtime/settings.js";
 import type { FocusPane } from "../types.js";
 import type { InteractiveSessionViewModel } from "../view-model.js";
 
 export type ServerEvent =
-  | { type: "snapshot"; viewModel: InteractiveSessionViewModel }
+  | { type: "snapshot"; viewModel: InteractiveSessionViewModel; settings?: AgentWeaverWebUiSettings }
   | { type: "log.append"; appendedLines: string[] }
   | { type: "error"; message: string; requestId?: string; actionId?: string }
   | { type: "closed"; reason?: string };
@@ -42,6 +43,7 @@ export type ClientAction =
   | { type: "git.updateCommitMessage"; message: string; actionId?: string }
   | { type: "git.commit"; message: string; paths?: string[]; actionId?: string }
   | { type: "git.push"; actionId?: string }
+  | { type: "settings.update"; settings: AgentWeaverWebUiSettingsPatch; actionId?: string }
   | { type: "help.toggle"; visible?: boolean; actionId?: string }
   | { type: "scroll"; pane: FocusPane | "help"; delta?: number; offset?: number; actionId?: string };
 
@@ -79,6 +81,7 @@ const ACTION_TYPES = new Set([
   "git.updateCommitMessage",
   "git.commit",
   "git.push",
+  "settings.update",
   "help.toggle",
   "scroll",
 ]);
@@ -134,6 +137,55 @@ function optionalBoolean(value: Record<string, unknown>, fieldName: string): boo
     throw new Error(`${fieldName} must be a boolean.`);
   }
   return field;
+}
+
+function requireSettingsPatch(value: Record<string, unknown>): AgentWeaverWebUiSettingsPatch {
+  const settings = value.settings;
+  if (!isRecord(settings)) {
+    throw new Error("settings must be an object.");
+  }
+  const allowed = new Set(["theme", "autoFlowHeight", "workspaceSplit", "logAutoscroll"]);
+  for (const key of Object.keys(settings)) {
+    if (!allowed.has(key)) {
+      throw new Error(`Unsupported settings key: ${key}`);
+    }
+  }
+  const patch: AgentWeaverWebUiSettingsPatch = {};
+  if ("theme" in settings) {
+    const theme = settings.theme;
+    if (theme !== "dark" && theme !== "light") {
+      throw new Error("settings.theme must be light or dark.");
+    }
+    patch.theme = theme;
+  }
+  if ("autoFlowHeight" in settings) {
+    const autoFlowHeight = settings.autoFlowHeight;
+    if (
+      autoFlowHeight !== null
+      && (typeof autoFlowHeight !== "number" || !Number.isFinite(autoFlowHeight))
+    ) {
+      throw new Error("settings.autoFlowHeight must be a finite number or null.");
+    }
+    patch.autoFlowHeight = autoFlowHeight;
+  }
+  if ("workspaceSplit" in settings) {
+    const workspaceSplit = settings.workspaceSplit;
+    if (typeof workspaceSplit !== "number" || !Number.isFinite(workspaceSplit)) {
+      throw new Error("settings.workspaceSplit must be a finite number.");
+    }
+    patch.workspaceSplit = workspaceSplit;
+  }
+  if ("logAutoscroll" in settings) {
+    const logAutoscroll = settings.logAutoscroll;
+    if (typeof logAutoscroll !== "boolean") {
+      throw new Error("settings.logAutoscroll must be a boolean.");
+    }
+    patch.logAutoscroll = logAutoscroll;
+  }
+  if (Object.keys(patch).length === 0) {
+    throw new Error("settings.update requires at least one setting.");
+  }
+  return patch;
 }
 
 function requireValues(value: Record<string, unknown>, fieldName = "values"): UserInputFormValues {
@@ -369,6 +421,9 @@ export function parseClientAction(raw: string): ClientAction {
       ...(paths !== undefined ? { paths } : {}),
       ...(actionId ? { actionId } : {}),
     };
+  }
+  if (parsed.type === "settings.update") {
+    return { type: "settings.update", settings: requireSettingsPatch(parsed), ...(actionId ? { actionId } : {}) };
   }
 
   const pane = requireNonEmptyString(parsed, "pane");

@@ -48,6 +48,7 @@ describe("interactive web protocol", () => {
       { type: "git.updateCommitMessage", message: "" },
       { type: "git.commit", paths: ["--option-like.ts"], message: "Commit message" },
       { type: "git.push" },
+      { type: "settings.update", settings: { theme: "dark", autoFlowHeight: null, workspaceSplit: 42, logAutoscroll: false } },
       { type: "help.toggle", visible: true },
       { type: "scroll", pane: "log", delta: 1 },
       { type: "scroll", pane: "summary", offset: 0, actionId: "a-1" },
@@ -79,6 +80,11 @@ describe("interactive web protocol", () => {
     assert.throws(() => parseClientAction(JSON.stringify({ type: "git.stage", paths: [""] })), /paths must be an array/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "git.updateCommitMessage", message: 123 })), /message must be a string/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "git.commit", message: "   " })), /message must be a non-empty string/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "settings.update", settings: {} })), /requires at least one setting/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "settings.update", settings: { theme: "sepia" } })), /theme must be light or dark/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "settings.update", settings: { workspaceSplit: "42" } })), /workspaceSplit must be a finite number/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "settings.update", settings: { logAutoscroll: "yes" } })), /logAutoscroll must be a boolean/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "settings.update", settings: { unknown: true } })), /Unsupported settings key/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "flow.select" })), /requires index or key/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "folder.toggle", key: "" })), /key must be a non-empty string/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "form.update", values: [] })), /values must be an object/);

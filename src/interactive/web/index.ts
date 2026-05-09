@@ -5,6 +5,7 @@ import { FlowInterruptedError } from "../../errors.js";
 import type { FlowExecutionState } from "../../pipeline/spec-types.js";
 import { listArtifactCatalog, type ArtifactCatalog } from "../../runtime/artifact-catalog.js";
 import { createArtifactRegistry } from "../../runtime/artifact-registry.js";
+import { loadAgentWeaverSettings, updateWebUiSettings } from "../../runtime/settings.js";
 import { InteractiveSessionController } from "../controller.js";
 import type { InteractiveSession, InteractiveSessionOptions } from "../session.js";
 import type { ClientAction, ServerEvent } from "./protocol.js";
@@ -42,6 +43,7 @@ export function createWebInteractiveSession(
   let shuttingDown = false;
   let activeScopeKey = options.scopeKey;
   let artifactRestoreGeneration = 0;
+  let webUiSettings = loadAgentWeaverSettings().webUi;
 
   const artifactCatalogProvider = webOptions.getArtifactCatalog ?? ((input?: ArtifactCatalogRequest) => {
     const explorerScopeKey = controller.getViewModel().artifactExplorer.scopeKey;
@@ -54,7 +56,7 @@ export function createWebInteractiveSession(
   });
 
   function snapshot(): ServerEvent {
-    return { type: "snapshot", viewModel: controller.getViewModel() };
+    return { type: "snapshot", viewModel: controller.getViewModel(), settings: webUiSettings };
   }
 
   function sendError(client: WebSocketClient | null, message: string, id?: string): void {
@@ -331,6 +333,11 @@ export function createWebInteractiveSession(
       }
       if (action.type === "git.push") {
         await controller.pushGitWorkspace();
+        return;
+      }
+      if (action.type === "settings.update") {
+        webUiSettings = updateWebUiSettings(action.settings);
+        server?.broadcast(snapshot());
         return;
       }
       if (action.type === "help.toggle") {

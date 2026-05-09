@@ -1,6 +1,6 @@
 import type { UserInputFieldDefinition, UserInputFormDefinition, UserInputFormValues } from "../user-input.js";
 import type { GitWorkspaceSnapshot } from "../git/git-types.js";
-import type { ProgressViewModel } from "./types.js";
+import type { AutoFlowEditorViewModel, ProgressViewModel } from "./types.js";
 
 export type InteractiveConfirmationAction = "resume" | "continue" | "restart" | "cancel" | "ok" | "stop";
 
@@ -57,6 +57,7 @@ export type InteractiveSessionViewModel = {
   selectedFlowIndex: number;
   progressTitle: string;
   progress: ProgressViewModel;
+  autoFlow: AutoFlowEditorViewModel | null;
   progressText: string;
   progressScrollOffset: number;
   descriptionText: string;

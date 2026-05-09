@@ -252,9 +252,11 @@ export const flowRunNode: PipelineNodeDefinition<FlowRunNodeParams, FlowRunNodeR
       printInfo(String(labelText));
     }
 
-    const flow = await loadNamedDeclarativeFlow(fileName, context.cwd, {
-      ...(context.registryContext ? { registryContext: context.registryContext } : {}),
-    });
+    const flow = context.inMemoryFlows?.[fileName]
+      ?? await loadNamedDeclarativeFlow(fileName, context.cwd, {
+        ...(context.registryContext ? { registryContext: context.registryContext } : {}),
+        ...(context.inMemoryFlows ? { inMemoryFlows: context.inMemoryFlows } : {}),
+      });
     const resolvedFlowParams = resolveNestedFlowParams(flow.kind, {
       projectGuidanceFile: "not provided",
       projectGuidanceJsonFile: "not provided",

@@ -13,7 +13,7 @@ import {
   projectFlowSpecsDir,
   resolveBuiltInFlowSpecPath,
 } from "./spec-loader.js";
-import type { ExpandedPhaseSpec } from "./spec-types.js";
+import type { DeclarativeFlowSpec, ExpandedPhaseSpec } from "./spec-types.js";
 import { validateExpandedPhases, validateFlowSpec } from "./spec-validator.js";
 
 export type DeclarativeFlowRef =
@@ -28,16 +28,19 @@ export type LoadedDeclarativeFlow = {
   catalogVisibility?: "visible" | "hidden";
   constants: Record<string, unknown>;
   phases: ExpandedPhaseSpec[];
-  source: FlowSpecSource["source"];
+  source: FlowSpecSource["source"] | "generated";
   fileName: string;
   absolutePath: string;
 };
+
+export type InMemoryDeclarativeFlows = Record<string, LoadedDeclarativeFlow>;
 
 const cache = new Map<string, LoadedDeclarativeFlow>();
 
 export type DeclarativeFlowLoadOptions = {
   cwd?: string;
   registryContext?: PipelineRegistryContext;
+  inMemoryFlows?: InMemoryDeclarativeFlows;
 };
 
 function toFlowSpecSource(ref: DeclarativeFlowRef): FlowSpecSource {
@@ -83,6 +86,40 @@ export async function loadDeclarativeFlow(
   };
   cache.set(cacheKey(ref, registryContext), loaded);
   return loaded;
+}
+
+export async function loadDeclarativeFlowFromSpec(
+  spec: DeclarativeFlowSpec,
+  metadata: {
+    fileName: string;
+    absolutePath?: string;
+    source?: LoadedDeclarativeFlow["source"];
+  },
+  options: DeclarativeFlowLoadOptions = {},
+): Promise<LoadedDeclarativeFlow> {
+  const cwd = path.resolve(options.cwd ?? options.registryContext?.cwd ?? process.cwd());
+  const registryContext = options.registryContext ?? await createPipelineRegistryContext(cwd);
+  validateFlowSpec(spec, registryContext.nodes, registryContext.executors, {
+    resolveFlowByName: (fileName) => {
+      if (options.inMemoryFlows?.[fileName]) {
+        return options.inMemoryFlows[fileName];
+      }
+      return resolveNamedDeclarativeFlowRef(fileName, cwd);
+    },
+  });
+  const phases = compileFlowSpec(spec);
+  validateExpandedPhases(phases);
+  return {
+    kind: spec.kind,
+    version: spec.version,
+    ...(spec.description !== undefined ? { description: spec.description } : {}),
+    ...(spec.catalogVisibility !== undefined ? { catalogVisibility: spec.catalogVisibility } : {}),
+    constants: spec.constants ?? {},
+    phases,
+    source: metadata.source ?? "generated",
+    fileName: metadata.fileName,
+    absolutePath: metadata.absolutePath ?? `in-memory:${metadata.fileName}`,
+  };
 }
 
 export function resolveNamedDeclarativeFlowRef(fileName: string, cwd: string): DeclarativeFlowRef {
@@ -154,7 +191,8 @@ export async function collectFlowRoutingGroups(
       if (!nestedFlowName || !("const" in nestedFlowName) || typeof nestedFlowName.const !== "string") {
         continue;
       }
-      const nestedFlow = await loadNamedDeclarativeFlow(nestedFlowName.const, cwd, options);
+      const nestedFlow = options.inMemoryFlows?.[nestedFlowName.const]
+        ?? await loadNamedDeclarativeFlow(nestedFlowName.const, cwd, options);
       for (const nestedGroup of await collectFlowRoutingGroups(nestedFlow, cwd, visited, options)) {
         groups.add(nestedGroup);
       }

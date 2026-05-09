@@ -13,6 +13,9 @@ const sessionFactoryModule = await import(
 const inkSessionModule = await import(
   pathToFileURL(path.join(distRoot, "interactive/ink/index.js")).href
 );
+const autoFlowModule = await import(
+  pathToFileURL(path.join(distRoot, "interactive/auto-flow.js")).href
+);
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -130,6 +133,40 @@ function createProgressController() {
         ],
       },
     ],
+  });
+}
+
+function createAutoFlowController(overrides = {}) {
+  return new controllerModule.InteractiveSessionController({
+    scopeKey: "ag-127",
+    jiraIssueKey: "AG-127",
+    summaryText: "Existing summary",
+    cwd: process.cwd(),
+    gitBranchName: "feature/auto-flow",
+    version: "0.1.19",
+    getRunConfirmation: async () => readyToRunConfirmation(),
+    onRun: async () => {},
+    onInterrupt: async () => {},
+    onExit: () => {},
+    flows: [
+      {
+        id: "auto-common",
+        label: "Auto Common",
+        description: "Run configurable standard auto flow.",
+        source: "built-in",
+        treePath: ["default", "auto-common"],
+        autoFlow: autoFlowModule.createPresetAutoFlowDefinition("standard"),
+        phases: [
+          { id: "source", repeatVars: {}, steps: [{ id: "fetch_jira_source" }] },
+          { id: "normalize", repeatVars: {}, steps: [{ id: "run_normalize_source" }] },
+          { id: "plan", repeatVars: {}, steps: [{ id: "run_plan_flow" }] },
+          { id: "design_review_loop", repeatVars: {}, steps: [{ id: "run_design_review_loop" }] },
+          { id: "implement", repeatVars: {}, steps: [{ id: "run_implement" }] },
+          { id: "review-loop", repeatVars: {}, steps: [{ id: "run_review_loop" }] },
+        ],
+      },
+    ],
+    ...overrides,
   });
 }
 
@@ -255,6 +292,108 @@ describe("interactive controller", () => {
       ],
     );
     assert.equal(view.progress.anchorIndex, 3);
+    controller.destroy();
+  });
+
+  it("maps configurable auto-flow slots and blocks from runtime state", async () => {
+    const controller = createAutoFlowController();
+    controller.mount();
+    controller.selectFlowId("auto-common");
+    controller.createAdapter().setFlowState({
+      flowId: "auto-common",
+      executionState: {
+        flowKind: "auto-flow",
+        flowVersion: 1,
+        terminated: false,
+        phases: [
+          { id: "source", status: "done", repeatVars: {}, steps: [{ id: "fetch_jira_source", status: "done" }] },
+          { id: "normalize", status: "running", repeatVars: {}, steps: [{ id: "run_normalize_source", status: "running" }] },
+          { id: "plan", status: "pending", repeatVars: {}, steps: [] },
+          { id: "design_review_loop", status: "skipped", repeatVars: {}, steps: [] },
+        ],
+      },
+    });
+
+    let view = controller.getViewModel();
+    assert.equal(view.progress.items.find((item) => item.kind === "slot" && item.slotId === "source").status, "success");
+    assert.equal(view.progress.items.find((item) => item.kind === "block" && item.blockId === "normalize.task-source").status, "running");
+    assert.equal(view.progress.items.find((item) => item.kind === "block" && item.blockId === "review.design-loop").status, "skipped");
+    assert.equal(view.progress.items.find((item) => item.kind === "slot" && item.slotId === "postImplementationChecks").status, "empty");
+
+    const waitRequest = controller.requestUserInput({
+      formId: "wait",
+      title: "Wait",
+      fields: [{ id: "answer", type: "text", label: "Answer", required: true }],
+    });
+    view = controller.getViewModel();
+    assert.equal(view.progress.items.find((item) => item.kind === "block" && item.blockId === "normalize.task-source").status, "waiting-user");
+    controller.interruptActiveForm();
+    await assert.rejects(waitRequest);
+    controller.destroy();
+  });
+
+  it("shows stopped, failed, disabled, invalid, and blocked auto-flow states", async () => {
+    const controller = createAutoFlowController();
+    controller.mount();
+    controller.selectFlowId("auto-common");
+    controller.toggleAutoFlowBlock("auto-common", "review.design-loop", false);
+    controller.updateAutoFlowParameter("auto-common", "review.loop", "maxIterations", 6);
+
+    let view = controller.getViewModel();
+    assert.equal(view.autoFlow.status.canRun, false);
+    assert.equal(view.progress.items.find((item) => item.kind === "block" && item.blockId === "review.design-loop").status, "disabled");
+    assert.equal(view.progress.items.find((item) => item.kind === "block" && item.blockId === "review.loop").status, "invalid");
+    await controller.openRunConfirm("auto-common");
+    assert.equal(controller.getViewModel().confirmation, null);
+    assert.match(controller.getViewModel().logText, /between 1 and 5; received 6/);
+
+    controller.updateAutoFlowParameter("auto-common", "review.loop", "maxIterations", 5);
+    controller.createAdapter().setFlowState({
+      flowId: "auto-common",
+      executionState: {
+        flowKind: "auto-flow",
+        flowVersion: 1,
+        terminated: true,
+        terminationOutcome: "stopped",
+        terminationReason: "Stopped by implement: user requested stop",
+        phases: [
+          { id: "source", status: "done", repeatVars: {}, steps: [] },
+          { id: "implement", status: "running", repeatVars: {}, steps: [] },
+        ],
+      },
+    });
+    view = controller.getViewModel();
+    assert.equal(view.progress.items.find((item) => item.kind === "block" && item.blockId === "implementation.default").status, "stopped");
+
+    controller.setFlowFailed("auto-common");
+    view = controller.getViewModel();
+    assert.equal(view.progress.items.find((item) => item.kind === "block" && item.blockId === "implementation.default").status, "failed");
+
+    assert.throws(
+      () => controller.insertAutoFlowBlock("auto-common", "designReview", "review.loop"),
+      /cannot be inserted into slot 'designReview'/,
+    );
+    assert.equal(controller.getViewModel().progress.items.some((item) => item.status === "invalid"), true);
+    controller.destroy();
+  });
+
+  it("resets auto-flow edits to the last saved editor baseline", () => {
+    const controller = createAutoFlowController();
+    controller.mount();
+    controller.selectFlowId("auto-common");
+
+    assert.equal(controller.getViewModel().autoFlow.status.canReset, false);
+    controller.toggleAutoFlowBlock("auto-common", "review.design-loop", false);
+
+    let view = controller.getViewModel();
+    assert.equal(view.autoFlow.status.canReset, true);
+    assert.equal(view.autoFlow.slots.find((slot) => slot.slotId === "designReview").blocks[0].enabled, false);
+
+    controller.resetAutoFlowConfig("auto-common");
+    view = controller.getViewModel();
+    assert.equal(view.autoFlow.status.canReset, false);
+    assert.equal(view.autoFlow.status.lastMessage, "Reset auto-flow changes.");
+    assert.equal(view.autoFlow.slots.find((slot) => slot.slotId === "designReview").blocks[0].enabled, true);
     controller.destroy();
   });
 
@@ -855,6 +994,31 @@ describe("interactive controller", () => {
     controller.appendLog("before clear");
     controller.clearLog();
     assert.equal(controller.getViewModel().logText, "Log cleared.");
+    controller.destroy();
+  });
+
+  it("does not emit render events for unchanged scroll offsets", () => {
+    const controller = createController();
+    controller.mount();
+    let renders = 0;
+    const unsubscribe = controller.subscribe((event) => {
+      if (event.type === "render") {
+        renders += 1;
+      }
+    });
+
+    controller.setScrollOffset("help", 999);
+    assert.equal(renders, 1);
+    const offset = controller.getViewModel().helpScrollOffset;
+
+    controller.setScrollOffset("help", offset);
+    controller.scrollPane("help", { delta: 0 });
+    assert.equal(renders, 1);
+
+    controller.scrollPane("help", { delta: -999 });
+    assert.equal(renders, 2);
+
+    unsubscribe();
     controller.destroy();
   });
 

@@ -29,6 +29,15 @@
       diff: null,
       requestId: 0,
     },
+    scrollSync: {
+      suppress: false,
+      releaseTimer: null,
+      sentOffsets: {
+        progress: null,
+        log: null,
+        help: null,
+      },
+    },
   };
 
   var elements = {
@@ -41,7 +50,7 @@
     help: document.getElementById("help-button"),
     flowsTitle: document.getElementById("flows-title"),
     flows: document.getElementById("flows-list"),
-    description: document.getElementById("description-text"),
+    autoFlowEditor: document.getElementById("auto-flow-editor"),
     progressTitle: document.getElementById("progress-title"),
     progress: document.getElementById("progress-text"),
     gitRefresh: document.getElementById("git-refresh-button"),
@@ -103,6 +112,55 @@
 
   function actionId() {
     return "web-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+  }
+
+  function controlId(prefix) {
+    var parts = Array.prototype.slice.call(arguments, 1).map(function (part) {
+      return String(part || "")
+        .trim()
+        .replace(/[^A-Za-z0-9_-]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "value";
+    });
+    return [prefix].concat(parts).join("-");
+  }
+
+  function roundedScrollTop(element) {
+    return Math.round(Number(element.scrollTop) || 0);
+  }
+
+  function rememberScrollOffset(pane, offset) {
+    if (state.scrollSync.sentOffsets[pane] !== undefined) {
+      state.scrollSync.sentOffsets[pane] = Math.round(Number(offset) || 0);
+    }
+  }
+
+  function rememberCurrentScrollOffsets() {
+    rememberScrollOffset("progress", elements.progress ? elements.progress.scrollTop : 0);
+    rememberScrollOffset("log", elements.log ? elements.log.scrollTop : 0);
+    rememberScrollOffset("help", elements.helpText ? elements.helpText.scrollTop : 0);
+  }
+
+  function releaseScrollSuppressionSoon() {
+    if (state.scrollSync.releaseTimer) {
+      clearTimeout(state.scrollSync.releaseTimer);
+    }
+    state.scrollSync.releaseTimer = setTimeout(function () {
+      state.scrollSync.suppress = false;
+      state.scrollSync.releaseTimer = null;
+      rememberCurrentScrollOffsets();
+    }, 0);
+  }
+
+  function sendScrollPane(pane, element) {
+    if (state.scrollSync.suppress) {
+      return;
+    }
+    var offset = roundedScrollTop(element);
+    if (state.scrollSync.sentOffsets[pane] === offset) {
+      return;
+    }
+    rememberScrollOffset(pane, offset);
+    api.scrollPane(pane, offset);
   }
 
   function selectedFlow() {
@@ -236,6 +294,27 @@
     updateGitCommitMessage: function () {
       api.send({ type: "git.updateCommitMessage", message: elements.gitCommitMessage.value });
     },
+    selectAutoFlowPreset: function (preset) {
+      api.send({ type: "autoFlow.selectPreset", preset: preset });
+    },
+    saveAutoFlow: function () {
+      api.send({ type: "autoFlow.save" });
+    },
+    resetAutoFlow: function () {
+      api.send({ type: "autoFlow.reset" });
+    },
+    toggleAutoFlowBlock: function (slotId, blockId, enabled) {
+      api.send({ type: "autoFlow.toggleBlock", slotId: slotId, blockId: blockId, enabled: enabled });
+    },
+    updateAutoFlowParam: function (slotId, blockId, paramName, value) {
+      api.send({ type: "autoFlow.updateParam", slotId: slotId, blockId: blockId, paramName: paramName, value: value });
+    },
+    insertAutoFlowBlock: function (slotId, blockId) {
+      api.send({ type: "autoFlow.insertBlock", slotId: slotId, blockId: blockId });
+    },
+    removeAutoFlowBlock: function (slotId, blockId) {
+      api.send({ type: "autoFlow.removeBlock", slotId: slotId, blockId: blockId });
+    },
   };
 
   function setConnection(nextState) {
@@ -260,8 +339,11 @@
       state.gitSelectedPaths = state.viewModel.gitWorkspace && Array.isArray(state.viewModel.gitWorkspace.selectedPaths)
         ? state.viewModel.gitWorkspace.selectedPaths.slice()
         : [];
+      state.scrollSync.suppress = true;
       render();
       restoreUiState(uiState);
+      rememberCurrentScrollOffsets();
+      releaseScrollSuppressionSoon();
       return;
     }
     if (message.type === "log.append") {
@@ -284,6 +366,7 @@
     elements.log.textContent += (elements.log.textContent ? "\n" : "") + lines;
     if (wasPinned) {
       elements.log.scrollTop = elements.log.scrollHeight;
+      rememberScrollOffset("log", elements.log.scrollTop);
     }
   }
 
@@ -293,7 +376,7 @@
     elements.header.textContent = text(vm.header, "Local operator console");
     elements.status.textContent = text(vm.statusText, "Idle");
     elements.flowsTitle.textContent = text(vm.flowListTitle, "Flows");
-    elements.description.textContent = text(vm.descriptionText, "No flow selected.");
+    renderAutoFlowEditor(vm);
     elements.progressTitle.textContent = text(vm.progressTitle, "Progress");
     renderProgress(vm);
     elements.logTitle.textContent = text(vm.logTitle, "Activity");
@@ -387,6 +470,238 @@
     var element = document.createElement("strong");
     element.textContent = value;
     return element;
+  }
+
+  function renderAutoFlowEditor(vm) {
+    var model = vm && vm.autoFlow;
+    if (!elements.autoFlowEditor) return;
+    elements.autoFlowEditor.innerHTML = "";
+    if (!model || !Array.isArray(model.slots)) {
+      elements.autoFlowEditor.hidden = true;
+      return;
+    }
+    elements.autoFlowEditor.hidden = false;
+    var blocked = hasBlockingInput(vm);
+
+    var toolbar = document.createElement("div");
+    toolbar.className = "auto-flow-toolbar";
+    var simple = document.createElement("button");
+    simple.type = "button";
+    simple.textContent = "Simple";
+    simple.disabled = blocked;
+    simple.className = model.basePreset === "simple" ? "primary" : "";
+    simple.addEventListener("click", function () {
+      api.selectAutoFlowPreset("simple");
+    });
+    var standard = document.createElement("button");
+    standard.type = "button";
+    standard.textContent = "Standard";
+    standard.disabled = blocked;
+    standard.className = model.basePreset === "standard" ? "primary" : "";
+    standard.addEventListener("click", function () {
+      api.selectAutoFlowPreset("standard");
+    });
+    var save = document.createElement("button");
+    save.type = "button";
+    save.textContent = "Save";
+    save.disabled = blocked || !model.status || !model.status.canSave;
+    save.addEventListener("click", api.saveAutoFlow);
+    var reset = document.createElement("button");
+    reset.type = "button";
+    reset.textContent = "Reset";
+    reset.disabled = blocked || !model.status || !model.status.canReset;
+    reset.title = "Discard unsaved auto-flow edits";
+    reset.addEventListener("click", api.resetAutoFlow);
+    var status = document.createElement("span");
+    status.className = "auto-flow-status " + (model.status && model.status.valid ? "valid" : "invalid");
+    status.textContent = (model.status && model.status.valid ? "valid" : "invalid") + " | " + text(model.status && model.status.sourceLabel, model.configName || "auto-flow");
+    toolbar.append(simple, standard, save, reset, status);
+    elements.autoFlowEditor.append(toolbar);
+
+    if (model.status && model.status.lastMessage) {
+      var message = document.createElement("div");
+      message.className = "auto-flow-message";
+      message.textContent = model.status.lastMessage;
+      elements.autoFlowEditor.append(message);
+    }
+
+    if (Array.isArray(model.diagnostics) && model.diagnostics.length > 0) {
+      var diagnostics = document.createElement("div");
+      diagnostics.className = "auto-flow-diagnostics";
+      model.diagnostics.forEach(function (diagnostic) {
+        var item = document.createElement("div");
+        item.textContent = diagnostic.message || "Invalid auto-flow configuration.";
+        diagnostics.append(item);
+      });
+      elements.autoFlowEditor.append(diagnostics);
+    }
+
+    var slots = document.createElement("div");
+    slots.className = "auto-flow-slots";
+    model.slots.forEach(function (slot) {
+      var slotRow = document.createElement("section");
+      slotRow.className = "auto-flow-slot status-" + slot.status;
+      slotRow.dataset.slotId = slot.slotId;
+      var title = document.createElement("div");
+      title.className = "auto-flow-slot-title";
+      title.append(strong(text(slot.title, slot.slotId)), document.createTextNode(" "), statusPill(slot.status));
+      var reason = document.createElement("div");
+      reason.className = "auto-flow-reason";
+      reason.textContent = text(slot.reason, "");
+      slotRow.append(title, reason);
+
+      var blockList = document.createElement("div");
+      blockList.className = "auto-flow-blocks";
+      if (!Array.isArray(slot.blocks) || slot.blocks.length === 0) {
+        var empty = document.createElement("div");
+        empty.className = "auto-flow-empty";
+        empty.textContent = "Empty slot.";
+        blockList.append(empty);
+      } else {
+        slot.blocks.forEach(function (block) {
+          blockList.append(renderAutoFlowBlock(block, blocked));
+        });
+      }
+      slotRow.append(blockList);
+      var insert = renderAutoFlowInsert(slot, model.availableBlocks || [], blocked);
+      if (insert) {
+        slotRow.append(insert);
+      }
+      slots.append(slotRow);
+    });
+    elements.autoFlowEditor.append(slots);
+  }
+
+  function statusPill(status) {
+    var pill = document.createElement("span");
+    pill.className = "auto-flow-pill status-" + status;
+    pill.textContent = status || "pending";
+    return pill;
+  }
+
+  function renderAutoFlowBlock(block, blocked) {
+    var row = document.createElement("div");
+    row.className = "auto-flow-block status-" + block.status;
+    row.dataset.blockId = block.blockId;
+    row.dataset.slotId = block.slotId;
+    var enabled = document.createElement("input");
+    enabled.type = "checkbox";
+    enabled.id = controlId("auto-flow-enabled", block.slotId, block.blockId);
+    enabled.name = enabled.id;
+    enabled.checked = block.enabled !== false;
+    enabled.disabled = blocked || block.locked || !(block.actions && (block.actions.canEnable || block.actions.canDisable));
+    enabled.title = block.locked ? "Locked core block" : "Enable or disable block";
+    enabled.addEventListener("change", function () {
+      api.toggleAutoFlowBlock(block.slotId, block.blockId, enabled.checked);
+    });
+    var main = document.createElement("div");
+    main.className = "auto-flow-block-main";
+    var label = document.createElement("div");
+    label.className = "auto-flow-block-label";
+    label.append(strong(text(block.title, block.blockId)), document.createTextNode(" "), statusPill(block.status));
+    if (block.locked) {
+      var locked = document.createElement("span");
+      locked.className = "auto-flow-locked";
+      locked.textContent = "locked";
+      label.append(document.createTextNode(" "), locked);
+    }
+    var reason = document.createElement("div");
+    reason.className = "auto-flow-reason";
+    reason.textContent = text(block.reason, "");
+    main.append(label, reason);
+    if (Array.isArray(block.params) && block.params.length > 0) {
+      var params = document.createElement("div");
+      params.className = "auto-flow-params";
+      block.params.forEach(function (param) {
+        var field = document.createElement("label");
+        field.textContent = param.label + " ";
+        var input = document.createElement("input");
+        input.type = "number";
+        input.id = controlId("auto-flow-param", block.slotId, block.blockId, param.name);
+        input.name = input.id;
+        input.min = String(param.min);
+        input.max = String(param.max);
+        input.step = "1";
+        input.value = param.value === null || param.value === undefined ? "" : String(param.value);
+        input.disabled = blocked || !(block.actions && block.actions.canEditParams);
+        input.addEventListener("change", function () {
+          var next = Number(input.value);
+          if (Number.isInteger(next)) {
+            api.updateAutoFlowParam(block.slotId, block.blockId, param.name, next);
+          }
+        });
+        field.append(input);
+        params.append(field);
+      });
+      main.append(params);
+    }
+    row.append(enabled, main);
+    if (block.actions && block.actions.canRemove) {
+      var remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "danger";
+      remove.textContent = "Delete";
+      remove.disabled = blocked;
+      remove.title = "Remove block from this slot";
+      remove.addEventListener("click", function (event) {
+        if (event && typeof event.preventDefault === "function") {
+          event.preventDefault();
+        }
+        api.removeAutoFlowBlock(block.slotId, block.blockId);
+      });
+      row.append(remove);
+    }
+    return row;
+  }
+
+  function renderAutoFlowInsert(slot, availableBlocks, blocked) {
+    var configured = new Set((Array.isArray(slot.blocks) ? slot.blocks : []).map(function (block) {
+      return block.blockId;
+    }));
+    var candidates = availableBlocks.filter(function (block) {
+      return Array.isArray(block.allowedSlots)
+        && block.allowedSlots.indexOf(slot.slotId) !== -1
+        && !configured.has(block.blockId);
+    });
+    if (candidates.length === 0) {
+      return null;
+    }
+    var container = document.createElement("div");
+    container.className = "auto-flow-insert";
+    var select = document.createElement("select");
+    select.id = controlId("auto-flow-insert", slot.slotId);
+    select.name = select.id;
+    select.value = "";
+    var placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Add block...";
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    select.append(placeholder);
+    candidates.forEach(function (block) {
+      var option = document.createElement("option");
+      option.value = block.blockId;
+      option.textContent = block.title || block.blockId;
+      select.append(option);
+    });
+    var button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Insert";
+    button.disabled = blocked || !select.value;
+    select.addEventListener("change", function () {
+      button.disabled = blocked || !select.value;
+    });
+    button.addEventListener("click", function (event) {
+      if (event && typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+      if (!select.value) {
+        return;
+      }
+      api.insertAutoFlowBlock(slot.slotId, select.value);
+    });
+    container.append(select, button);
+    return container;
   }
 
   function renderGitBranches(branches, currentBranch) {
@@ -498,6 +813,8 @@
 
     var checkbox = document.createElement("input");
     checkbox.type = "checkbox";
+    checkbox.id = controlId("git-select", node.kind, node.rootKey, node.path || node.label || node.name);
+    checkbox.name = checkbox.id;
     checkbox.checked = checked;
     checkbox.indeterminate = indeterminate;
     checkbox.disabled = paths.length === 0;
@@ -943,8 +1260,8 @@
 
   function isProgressItem(item) {
     if (!item || typeof item !== "object") return false;
-    if (["group", "phase", "step", "termination"].indexOf(item.kind) === -1) return false;
-    if (["pending", "running", "done", "skipped"].indexOf(item.status) === -1) return false;
+    if (["group", "phase", "step", "slot", "block", "termination"].indexOf(item.kind) === -1) return false;
+    if (["pending", "running", "done", "success", "failed", "stopped", "skipped", "waiting-user", "disabled", "blocked", "invalid", "empty"].indexOf(item.status) === -1) return false;
     return typeof item.label === "string" && Number.isFinite(item.depth);
   }
 
@@ -974,7 +1291,7 @@
     label.textContent = text(item.label, "Untitled progress item");
     body.append(label);
 
-    if (item.kind === "termination" && typeof item.detail === "string" && item.detail.length > 0) {
+    if (typeof item.detail === "string" && item.detail.length > 0) {
       var detail = document.createElement("span");
       detail.className = "progress-detail";
       detail.textContent = item.detail;
@@ -987,9 +1304,12 @@
   }
 
   function progressMarker(status) {
-    if (status === "done") return "✓";
-    if (status === "running") return "●";
+    if (status === "done" || status === "success") return "✓";
+    if (status === "failed" || status === "invalid") return "×";
+    if (status === "stopped" || status === "blocked") return "■";
+    if (status === "running" || status === "waiting-user") return "●";
     if (status === "skipped") return "↷";
+    if (status === "disabled" || status === "empty") return "·";
     return "○";
   }
 
@@ -2222,6 +2542,8 @@
       checkRow.className = "check-row";
       var checkbox = document.createElement("input");
       checkbox.type = "checkbox";
+      checkbox.id = "field-" + field.id;
+      checkbox.name = field.id;
       checkbox.dataset.fieldId = field.id;
       checkbox.dataset.fieldType = field.type;
       checkbox.checked = currentValue(field) === true;
@@ -2239,6 +2561,7 @@
         var input = document.createElement(field.multiline ? "textarea" : "input");
         input.id = "field-" + field.id;
         if (!field.multiline) input.type = "text";
+        input.name = field.id;
         if (field.placeholder) input.placeholder = field.placeholder;
         if (field.rows) input.rows = field.rows;
         input.dataset.fieldId = field.id;
@@ -2274,6 +2597,7 @@
       var input = document.createElement("input");
       input.type = "radio";
       input.name = "field-" + field.id;
+      input.id = controlId("field", field.id, option.value);
       input.value = option.value;
       input.dataset.fieldId = field.id;
       input.dataset.fieldType = field.type;
@@ -2304,6 +2628,8 @@
       label.className = "field-option";
       var input = document.createElement("input");
       input.type = "checkbox";
+      input.id = controlId("field", field.id, option.value);
+      input.name = field.id;
       input.value = option.value;
       input.dataset.fieldId = field.id;
       input.dataset.fieldType = field.type;
@@ -2373,13 +2699,13 @@
   });
   elements.clearLog.addEventListener("click", api.clearLog);
   elements.progress.addEventListener("scroll", function () {
-    api.scrollPane("progress", Math.round(elements.progress.scrollTop));
+    sendScrollPane("progress", elements.progress);
   });
   elements.log.addEventListener("scroll", function () {
-    api.scrollPane("log", Math.round(elements.log.scrollTop));
+    sendScrollPane("log", elements.log);
   });
   elements.helpText.addEventListener("scroll", function () {
-    api.scrollPane("help", Math.round(elements.helpText.scrollTop));
+    sendScrollPane("help", elements.helpText);
   });
 
   api.connect();

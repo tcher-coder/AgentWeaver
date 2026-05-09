@@ -314,6 +314,29 @@ describe("flow state routing persistence", () => {
     assert.match(availability.continue.reason, /(Legacy flow state|does not expose a continuable loop boundary)/i);
   });
 
+  it("treats named configurable auto parent states as continuable at stopped loop boundaries", () => {
+    const state = flowStateModule.createFlowRunState(
+      "ag-80@test",
+      "auto-config:backend-standard",
+      {
+        flowKind: "auto-flow",
+        flowVersion: 1,
+        terminated: true,
+        terminationOutcome: "stopped",
+        terminationReason: "Stopped by review-loop:run_review_loop",
+        phases: [],
+      },
+      null,
+    );
+
+    const availability = flowStateModule.classifyFlowLaunchAvailability(state);
+
+    assert.equal(state.continuation.continueEligible, true);
+    assert.equal(state.continuation.stopPhaseId, "review-loop");
+    assert.equal(state.continuation.stopStepId, "run_review_loop");
+    assert.equal(availability.continue.available, true);
+  });
+
   it("archives the active attempt into restart-archives without deleting the archive payload", () => {
     const scopeKey = "ag-80@test";
     const workspaceFile = path.join(tempDir, ".agentweaver", "scopes", scopeKey, "design-ag-80@test-1.md");

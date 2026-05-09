@@ -59,8 +59,28 @@ import {
 import { summarizeBuildFailure as summarizeBuildFailureViaPipeline } from "./pipeline/build-failure-summary.js";
 import { runNodeChecks } from "./pipeline/checks.js";
 import { createPipelineContext } from "./pipeline/context.js";
-import { collectFlowRoutingGroups, loadDeclarativeFlow, type DeclarativeFlowRef } from "./pipeline/declarative-flows.js";
+import {
+  collectFlowRoutingGroups,
+  loadDeclarativeFlow,
+  type DeclarativeFlowRef,
+  type InMemoryDeclarativeFlows,
+  type LoadedDeclarativeFlow,
+} from "./pipeline/declarative-flows.js";
 import { runExpandedPhase } from "./pipeline/declarative-flow-runner.js";
+import { listAutoFlowConfigs, loadAutoFlowConfigByName, type AutoFlowPresetName } from "./pipeline/auto-flow-config.js";
+import {
+  formatAutoFlowDryRunPreview,
+  persistResolvedAutoFlowArtifacts,
+  resolveAutoFlow,
+  type AutoFlowSelection,
+  type ResolvedAutoFlow,
+} from "./pipeline/auto-flow-resolver.js";
+import {
+  autoFlowIdentityForSelection,
+  defaultAutoFlowSelection,
+  isRestartArchivingFlowId,
+  type AutoFlowIdentity,
+} from "./pipeline/auto-flow-identity.js";
 import {
   builtInCommandFlowFile,
   findCatalogEntry,
@@ -109,12 +129,18 @@ import { createWebInteractiveSession } from "./interactive/web/index.js";
 import type { WebServerAuthConfig } from "./interactive/web/server.js";
 import type { InteractiveFlowDefinition } from "./interactive/types.js";
 import {
+  autoFlowSelectionForFlowId,
+  createConfigAutoFlowDefinition,
+  createPresetAutoFlowDefinition,
+} from "./interactive/auto-flow.js";
+import {
   bye,
   getOutputAdapter,
   printError,
   printInfo,
   printPanel,
   printPrompt,
+  renderPanel,
   printSummary,
   setFlowExecutionState,
   stripAnsi,
@@ -164,14 +190,6 @@ const INTERACTIVE_SCOPE_WATCH_INTERVAL_MS = 1500;
 const WEB_AUTH_USERNAME_ENV = "AGENTWEAVER_WEB_USERNAME";
 const WEB_AUTH_PASSWORD_ENV = "AGENTWEAVER_WEB_PASSWORD";
 
-const SCOPE_ARCHIVING_RESTART_FLOW_IDS = new Set([
-  "auto-common",
-  "auto-common-guided",
-  "auto-golang",
-  "auto-simple",
-  "instant-task",
-]);
-
 type CommandName = (typeof COMMANDS)[number];
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -183,6 +201,18 @@ function writeStdoutSync(text: string): void {
 
 function writeStderrSync(text: string): void {
   writeSync(process.stderr.fd, text);
+}
+
+function printPanelSync(title: string, text: string): void {
+  const adapter = getOutputAdapter();
+  if (adapter.renderAuxiliaryOutput === false) {
+    return;
+  }
+  if (adapter.renderPanelsAsPlainText) {
+    writeStdoutSync(`${title}\n${text}\n\n`);
+    return;
+  }
+  writeStdoutSync(`${renderPanel(title, text)}\n`);
 }
 
 function createRuntimeServices(signal?: AbortSignal): RuntimeServices {
@@ -205,9 +235,11 @@ type BaseConfig = {
   autoFromPhase?: string | null;
   mdLang?: "en" | "ru" | null;
   dryRun: boolean;
+  dryRunFlow: boolean;
   verbose: boolean;
   doctorArgs?: string[];
   acceptPlaybookDraft?: boolean;
+  autoFlowSelection?: AutoFlowSelection;
 
 };
 
@@ -232,6 +264,7 @@ type ParsedArgs = {
   scopeName?: string;
   reviewBlockingSeverities?: ReviewSeverity[];
   dry: boolean;
+  dryRunFlow: boolean;
   verbose: boolean;
   prompt?: string;
   autoFromPhase?: string;
@@ -240,6 +273,7 @@ type ParsedArgs = {
   doctorArgs?: string[];
   launchMode?: FlowLaunchMode;
   acceptPlaybookDraft?: boolean;
+  autoFlowSelection?: AutoFlowSelection;
   webNoOpen?: boolean;
   webHost?: string;
 };
@@ -350,7 +384,7 @@ function usage(): string {
   agentweaver review-loop [--dry] [--verbose] [--prompt <text>] [--scope <name>] [--blocking-severities <list>] [<jira-browse-url|jira-issue-key>]
   agentweaver run-go-tests-loop [--dry] [--verbose] [--prompt <text>] [--scope <name>] [<jira-browse-url|jira-issue-key>]
   agentweaver run-go-linter-loop [--dry] [--verbose] [--prompt <text>] [--scope <name>] [<jira-browse-url|jira-issue-key>]
-  agentweaver auto [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] [<jira-browse-url|jira-issue-key>]
+  agentweaver auto [--preset <simple|standard>|--config <name>] [--dry-run-flow] [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] [<jira-browse-url|jira-issue-key>]
   agentweaver auto --help-phases
   agentweaver auto-golang [--dry] [--verbose] [--prompt <text>] [<jira-browse-url|jira-issue-key>]
   agentweaver auto-golang [--dry] [--verbose] [--prompt <text>] --from <phase> [<jira-browse-url|jira-issue-key>]
@@ -360,8 +394,8 @@ function usage(): string {
   agentweaver auto-common --help-phases
   agentweaver auto-simple [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] [<jira-browse-url|jira-issue-key>]
   agentweaver auto-simple --help-phases
-  agentweaver auto-status [<jira-browse-url|jira-issue-key>]
-  agentweaver auto-reset [<jira-browse-url|jira-issue-key>]
+  agentweaver auto-status [--preset <simple|standard>|--config <name>] [<jira-browse-url|jira-issue-key>]
+  agentweaver auto-reset [--preset <simple|standard>|--config <name>] [<jira-browse-url|jira-issue-key>]
 
 Interactive Mode:
   When started without a command, the script opens an interactive UI.
@@ -375,6 +409,9 @@ Flags:
   --host          Web command only: bind Web UI to this host (default: 127.0.0.1)
   --listen-all    Web command only: bind Web UI to 0.0.0.0
   --dry           Fetch or collect task context, but print codex/opencode commands instead of executing them
+  --preset        Auto, auto-status, and auto-reset: resolve the simple or standard preset (default: standard)
+  --config        Auto, auto-status, and auto-reset: load .agentweaver/flow-configs/<name>.yaml or ~/.agentweaver/flow-configs/<name>.yaml
+  --dry-run-flow  Auto command only: validate and preview flow resolution without running workflow steps or writing resolver artifacts
   --verbose       Show live stdout/stderr of launched commands
   --scope         Explicit workflow scope name for non-Jira runs except instant-task
   --prompt        Extra prompt text appended to the base prompt
@@ -404,7 +441,10 @@ Optional environment variables:
   ${WEB_AUTH_PASSWORD_ENV}  Web UI Basic auth password; required for external Web UI binding
 
 Notes:
-  - auto-golang, auto-common-guided, auto-common, and auto-simple ask for Jira input when Jira is not passed as an argument; leave it empty to paste the task description manually in the next step. task-describe can also work from a manual task description without Jira.
+  - agentweaver auto defaults to --preset standard, equivalent to auto-common. Use --dry-run-flow to inspect the resolved preset or saved config before execution.
+  - Saved auto flow configs are YAML files named .agentweaver/flow-configs/<name>.yaml or ~/.agentweaver/flow-configs/<name>.yaml; project configs take precedence over user configs.
+  - Successful configurable auto runs write flow-config.yaml, resolved-flow.json, and resolved-flow-summary.json under the current scope .artifacts directory. --dry-run-flow writes none of them.
+  - auto-golang, auto-common-guided, auto-common, auto-simple, and configurable auto ask for Jira input when Jira is not passed as an argument; leave it empty to paste the task description manually in the next step. task-describe can also work from a manual task description without Jira.
   - agentweaver web binds to 127.0.0.1 by default on an operating-system-assigned port and does not require auth unless Web UI credentials are configured.
   - External Web UI binding through --listen-all, --host 0.0.0.0, --host ::, non-loopback IPs, or hostnames other than localhost requires ${WEB_AUTH_USERNAME_ENV} and ${WEB_AUTH_PASSWORD_ENV}.
   - Web UI Basic auth over plain HTTP is suitable only on trusted networks; use TLS termination or a reverse proxy on untrusted networks.
@@ -632,8 +672,15 @@ function scopeWithRestoredJiraContext(scope: ResolvedScope, state: FlowRunState 
 }
 
 function buildInteractiveBaseConfig(flowId: string, scope: ResolvedScope): BaseConfig {
-  return buildBaseConfig(flowId, {
+  const autoFlowSelection = autoFlowSelectionForFlowId(flowId);
+  const command = autoFlowSelection
+    ? autoFlowSelection.kind === "preset" && autoFlowSelection.preset === "simple"
+      ? "auto-simple"
+      : "auto-common"
+    : flowId;
+  return buildBaseConfig(command, {
     ...(flowId !== "instant-task" && scope.jiraRef ? { jiraRef: scope.jiraRef } : {}),
+    ...(autoFlowSelection ? { autoFlowSelection } : {}),
   });
 }
 
@@ -670,6 +717,32 @@ async function lookupInteractiveFlowResume(flowEntry: FlowCatalogEntry, currentS
   return {
     ...availability,
   };
+}
+
+async function lookupInteractiveAutoFlowResume(
+  selection: AutoFlowSelection,
+  currentScope: ResolvedScope,
+): Promise<FlowResumeLookup> {
+  const resolved = await resolveAutoFlow(selection, {
+    cwd: process.cwd(),
+    scopeKey: currentScope.scopeKey,
+  });
+  const identity = autoFlowIdentityForSelection(selection, resolved);
+  const state = loadFlowRunState(currentScope.scopeKey, identity.flowId);
+  const availability = classifyFlowLaunchAvailability(state);
+  if (state && availability.resume.available) {
+    return {
+      ...availability,
+      details: buildFlowResumeDetails(state),
+    };
+  }
+  if (state && availability.continue.available) {
+    return {
+      ...availability,
+      details: buildFlowContinueDetails(state),
+    };
+  }
+  return availability;
 }
 
 async function printAutoPhasesHelp(): Promise<void> {
@@ -717,9 +790,11 @@ function buildBaseConfig(
     autoFromPhase?: string | null;
     mdLang?: "en" | "ru" | null;
     dryRun?: boolean;
+    dryRunFlow?: boolean;
     verbose?: boolean;
     doctorArgs?: string[];
     acceptPlaybookDraft?: boolean;
+    autoFlowSelection?: AutoFlowSelection;
   } = {},
 ): BaseConfig {
   return {
@@ -732,14 +807,17 @@ function buildBaseConfig(
     autoFromPhase: options.autoFromPhase ?? null,
     mdLang: options.mdLang ?? null,
     dryRun: options.dryRun ?? false,
+    dryRunFlow: options.dryRunFlow ?? false,
     verbose: options.verbose ?? false,
     ...(options.doctorArgs !== undefined ? { doctorArgs: options.doctorArgs } : {}),
     ...(options.acceptPlaybookDraft !== undefined ? { acceptPlaybookDraft: options.acceptPlaybookDraft } : {}),
+    ...(options.autoFlowSelection !== undefined ? { autoFlowSelection: options.autoFlowSelection } : {}),
   };
 }
 
 function commandRequiresTask(command: string): boolean {
   return (
+    command === "auto" ||
     command === "plan-revise" ||
     command === "bug-analyze" ||
     command === "bug-fix" ||
@@ -756,6 +834,7 @@ function commandRequiresTask(command: string): boolean {
 
 function commandSupportsManualTaskSource(command: string): boolean {
   return (
+    command === "auto" ||
     command === "auto-golang" ||
     command === "auto-common-guided" ||
     command === "auto-common" ||
@@ -927,9 +1006,17 @@ async function checkPrerequisites(
   launchProfile?: ResolvedLaunchProfile,
   executionRouting?: ResolvedExecutionRouting,
 ): Promise<void> {
+  const groups = await commandRoutingGroupsForPrerequisiteChecks(config.command, process.cwd());
+  await checkPrerequisitesForRoutingGroups(groups, launchProfile, executionRouting);
+}
+
+async function checkPrerequisitesForRoutingGroups(
+  groups: ExecutionRoutingGroup[],
+  launchProfile?: ResolvedLaunchProfile,
+  executionRouting?: ResolvedExecutionRouting,
+): Promise<void> {
   const registryContext = await createPipelineRegistryContext(process.cwd());
   const routing = routingForPrerequisites(launchProfile, executionRouting);
-  const groups = await commandRoutingGroupsForPrerequisiteChecks(config.command, process.cwd());
   for (const executor of executorsForRoutingGroups(routing, groups)) {
     resolveExecutorPrerequisite(executor, registryContext);
   }
@@ -941,6 +1028,179 @@ async function checkAutoPrerequisites(
   executionRouting?: ResolvedExecutionRouting,
 ): Promise<void> {
   await checkPrerequisites(config, launchProfile, executionRouting);
+}
+
+async function checkResolvedAutoPrerequisites(
+  resolved: ResolvedAutoFlow,
+  launchProfile?: ResolvedLaunchProfile,
+  executionRouting?: ResolvedExecutionRouting,
+): Promise<void> {
+  const groups = resolved.execution.kind === "built-in"
+    ? await collectFlowRoutingGroups(
+      await loadDeclarativeFlow({ source: "built-in", fileName: resolved.execution.specFile }),
+      process.cwd(),
+    )
+    : await collectFlowRoutingGroups(
+      resolved.execution.flow,
+      process.cwd(),
+      new Set<string>(),
+      { inMemoryFlows: resolved.execution.inMemoryFlows },
+    );
+  await checkPrerequisitesForRoutingGroups(groups, launchProfile, executionRouting);
+}
+
+async function loadResolvedAutoFlowExecution(
+  resolved: ResolvedAutoFlow,
+): Promise<{ flow: LoadedDeclarativeFlow; inMemoryFlows?: InMemoryDeclarativeFlows }> {
+  if (resolved.execution.kind === "built-in") {
+    return {
+      flow: await loadDeclarativeFlow({ source: "built-in", fileName: resolved.execution.specFile }),
+    };
+  }
+  return {
+    flow: resolved.execution.flow,
+    inMemoryFlows: resolved.execution.inMemoryFlows,
+  };
+}
+
+async function runResolvedAutoFlow(
+  resolved: ResolvedAutoFlow,
+  identity: AutoFlowIdentity,
+  config: Config,
+  overrides: DeclarativeFlowOverrides = {},
+  requestUserInput: UserInputRequester = requestUserInputInTerminal,
+  setSummary?: (markdown: string) => void,
+  launchMode: FlowLaunchMode = "restart",
+  runtime: RuntimeServices = runtimeServices,
+  forceRefreshSummary = false,
+): Promise<void> {
+  const { flow, inMemoryFlows } = await loadResolvedAutoFlowExecution(resolved);
+  const mergedFlowParams = {
+    ...defaultDeclarativeFlowParams(config, false, overrides),
+    ...autoFlowParams(config, forceRefreshSummary),
+  };
+  await runLoadedDeclarativeFlow(
+    identity.flowId,
+    flow,
+    config,
+    withCanonicalReviewLoopParams(flow.kind, mergedFlowParams),
+    overrides,
+    requestUserInput,
+    setSummary,
+    launchMode,
+    runtime,
+    inMemoryFlows,
+  );
+}
+
+function formatAutoFlowSource(resolved: ResolvedAutoFlow): string {
+  const source = resolved.document.source;
+  if (source.type === "preset") {
+    return `preset ${source.preset}`;
+  }
+  const shadowed = source.shadowedUserPath ? ` (shadowed user config: ${source.shadowedUserPath})` : "";
+  return `${source.type} ${source.configName} at ${source.path}${shadowed}`;
+}
+
+function resolverArtifactStatusLines(resolved: ResolvedAutoFlow): string[] {
+  const paths = resolved.document.artifactPolicy.artifactPaths;
+  if (!paths) {
+    return ["Resolver artifacts: not available for this scope"];
+  }
+  return [
+    "Resolver artifacts:",
+    `  - flow-config.yaml: ${paths.flowConfigYaml}${existsSync(paths.flowConfigYaml) ? "" : " (missing)"}`,
+    `  - resolved-flow.json: ${paths.resolvedFlowJson}${existsSync(paths.resolvedFlowJson) ? "" : " (missing)"}`,
+    `  - resolved-flow-summary.json: ${paths.resolvedFlowSummaryJson}${existsSync(paths.resolvedFlowSummaryJson) ? "" : " (missing)"}`,
+  ];
+}
+
+async function printConfigurableAutoStatus(
+  config: Config,
+  resolved: ResolvedAutoFlow,
+  identity: AutoFlowIdentity,
+): Promise<void> {
+  const stateFile = flowStateFile(config.scope.scopeKey, identity.flowId);
+  const state = loadFlowRunState(config.scope.scopeKey, identity.flowId);
+  const { flow } = await loadResolvedAutoFlowExecution(resolved);
+  const phaseLabels = new Map(resolved.document.phases.map((phase) => [phase.id, phase.label]));
+  const lines = [
+    `Issue: ${config.taskKey}`,
+    `Target: ${identity.displayLabel}`,
+    `Selected command: ${identity.selectedCommand}`,
+    `Effective flow ID: ${identity.flowId}`,
+    `Source: ${formatAutoFlowSource(resolved)}`,
+    `Base preset: ${resolved.document.basePreset}`,
+    `Execution target: ${resolved.document.executionTarget.kind}`,
+    `Resolver fingerprint: ${resolved.document.fingerprint}`,
+    `State file: ${stateFile}`,
+  ];
+
+  if (!state) {
+    lines.push("", "Status: no saved state", "", "Phases:");
+    for (const phase of flow.phases) {
+      const label = phaseLabels.get(phase.id);
+      lines.push(`  - ${phase.id}${label && label !== phase.id ? ` - ${label}` : ""}`);
+    }
+    lines.push("", ...resolverArtifactStatusLines(resolved));
+    printPanelSync("Auto Status", lines.join("\n"));
+    return;
+  }
+
+  const currentStep = findCurrentFlowExecutionStep(state) ?? state.currentStep ?? "-";
+  lines.push(
+    "",
+    `Status: ${state.status}`,
+    `Current step: ${currentStep}`,
+    `Updated: ${state.updatedAt}`,
+    `Continuation: ${state.continuation?.continueEligible ? "eligible" : "not eligible"}`,
+  );
+  if (state.continuation?.stopPhaseId && state.continuation?.stopStepId) {
+    lines.push(`Stopped at: ${state.continuation.stopPhaseId}:${state.continuation.stopStepId}`);
+  }
+  if (state.selectedRoutingPreset) {
+    lines.push(`Routing preset: ${state.selectedRoutingPreset.label}`);
+  }
+  if (state.executionRouting) {
+    lines.push(`Default route: ${state.executionRouting.defaultRoute.executor} / ${state.executionRouting.defaultRoute.model}`);
+    lines.push(`Routing fingerprint: ${state.executionRouting.fingerprint}`);
+  } else if (state.launchProfile) {
+    lines.push(`Launch profile: ${state.launchProfile.executor} / ${state.launchProfile.model}`);
+  }
+  if (state.lastError) {
+    lines.push(
+      `Last error: ${state.lastError.step ?? "-"} (exit ${state.lastError.returnCode ?? "-"}, ${state.lastError.message ?? "-"})`,
+    );
+  }
+  lines.push("", "Phases:");
+  for (const phase of flow.phases) {
+    const phaseState = state.executionState.phases.find((candidate) => candidate.id === phase.id);
+    const label = phaseLabels.get(phase.id);
+    lines.push(`[${phaseState?.status ?? "pending"}] ${phase.id}${label && label !== phase.id ? ` - ${label}` : ""}`);
+    for (const step of phase.steps) {
+      const stepState = phaseState?.steps.find((candidate) => candidate.id === step.id);
+      lines.push(`  - [${stepState?.status ?? "pending"}] ${step.id}`);
+    }
+  }
+  if (state.executionState.terminated) {
+    lines.push("", `Execution terminated: ${state.executionState.terminationReason ?? "yes"}`);
+  }
+  lines.push("", ...resolverArtifactStatusLines(resolved));
+  printPanelSync("Auto Status", lines.join("\n"));
+}
+
+async function printConfigurableAutoReset(config: Config, resolved: ResolvedAutoFlow, identity: AutoFlowIdentity): Promise<void> {
+  const stateFile = flowStateFile(config.scope.scopeKey, identity.flowId);
+  const removed = resetFlowRunState(config.scope.scopeKey, identity.flowId);
+  const lines = [
+    `Issue: ${config.taskKey}`,
+    `Target: ${identity.displayLabel}`,
+    `Effective flow ID: ${identity.flowId}`,
+    `Source: ${formatAutoFlowSource(resolved)}`,
+    removed ? `State file ${stateFile} removed.` : `No flow state file found at ${stateFile}.`,
+    "Resolver artifacts were left unchanged.",
+  ];
+  printPanelSync("Auto Reset", lines.join("\n"));
 }
 
 function autoFlowParams(config: Config, forceRefreshSummary = false): Record<string, unknown> {
@@ -1047,6 +1307,10 @@ function loadInstantTaskInputDefaults(taskKey: string): UserInputFormValues | nu
 
 function interactiveFlowDefinition(entry: FlowCatalogEntry): InteractiveFlowDefinition {
   const flow = entry.flow;
+  const autoFlowSelection = autoFlowSelectionForFlowId(entry.id);
+  const autoFlow = autoFlowSelection?.kind === "preset"
+    ? createPresetAutoFlowDefinition(autoFlowSelection.preset)
+    : null;
   return {
     id: entry.id,
     label: entry.id,
@@ -1054,6 +1318,7 @@ function interactiveFlowDefinition(entry: FlowCatalogEntry): InteractiveFlowDefi
     source: entry.source,
     treePath: [...entry.treePath],
     ...(entry.source !== "built-in" ? { sourcePath: entry.absolutePath } : {}),
+    ...(autoFlow ? { autoFlow } : {}),
     phases: flow.phases.map((phase) => ({
       id: phase.id,
       repeatVars: Object.fromEntries(
@@ -1066,8 +1331,40 @@ function interactiveFlowDefinition(entry: FlowCatalogEntry): InteractiveFlowDefi
   };
 }
 
-function interactiveFlowDefinitions(catalog: FlowCatalogEntry[]): InteractiveFlowDefinition[] {
-  return catalog.map((entry) => interactiveFlowDefinition(entry));
+function savedAutoFlowDefinitions(cwd: string): InteractiveFlowDefinition[] {
+  const definitions: InteractiveFlowDefinition[] = [];
+  for (const item of listAutoFlowConfigs(cwd)) {
+    try {
+      const loaded = loadAutoFlowConfigByName(item.name, cwd);
+      definitions.push({
+        id: `auto-config:${loaded.config.name}`,
+        label: `auto-config:${loaded.config.name}`,
+        description: `Saved configurable auto-flow config '${loaded.config.name}'.`,
+        source: "built-in",
+        treePath: ["default", "auto-configs", loaded.config.name],
+        autoFlow: createConfigAutoFlowDefinition({
+          config: loaded.config,
+          source: {
+            type: loaded.source.type === "project" ? "project-config" : "user-config",
+            configName: loaded.config.name,
+            path: loaded.source.path,
+            ...(loaded.source.shadowedUserPath ? { shadowedUserPath: loaded.source.shadowedUserPath } : {}),
+          },
+        }),
+        phases: [],
+      });
+    } catch (error) {
+      printError((error as Error).message);
+    }
+  }
+  return definitions;
+}
+
+function interactiveFlowDefinitions(catalog: FlowCatalogEntry[], cwd = process.cwd()): InteractiveFlowDefinition[] {
+  return [
+    ...catalog.map((entry) => interactiveFlowDefinition(entry)),
+    ...savedAutoFlowDefinitions(cwd),
+  ];
 }
 
 function publishFlowState(flowId: string, executionState: FlowExecutionState): void {
@@ -1114,9 +1411,9 @@ function findCurrentFlowExecutionStep(state: FlowRunState): string | null {
   return null;
 }
 
-async function runDeclarativeFlowByRef(
+async function runLoadedDeclarativeFlow(
   flowId: string,
-  flowRef: DeclarativeFlowRef,
+  flow: LoadedDeclarativeFlow,
   config: Config,
   flowParams: Record<string, unknown>,
   overrides: DeclarativeFlowOverrides = {},
@@ -1124,6 +1421,7 @@ async function runDeclarativeFlowByRef(
   setSummary?: (markdown: string) => void,
   launchMode: FlowLaunchMode = "restart",
   runtime: RuntimeServices = runtimeServices,
+  inMemoryFlows?: InMemoryDeclarativeFlows,
 ): Promise<void> {
   const context = await createPipelineContext({
     issueKey: config.taskKey,
@@ -1135,8 +1433,8 @@ async function runDeclarativeFlowByRef(
     ...(setSummary ? { setSummary } : {}),
     requestUserInput,
     ...(overrides.executionRouting ? { executionRouting: overrides.executionRouting } : {}),
+    ...(inMemoryFlows ? { inMemoryFlows } : {}),
   });
-  const flow = await loadDeclarativeFlow(flowRef);
   const initialExecutionState: FlowExecutionState = {
     flowKind: flow.kind,
     flowVersion: flow.version,
@@ -1152,7 +1450,7 @@ async function runDeclarativeFlowByRef(
     await validateDeclarativeFlowResumeState(
       {
         id: flowId,
-        source: flow.source,
+        source: flow.source === "generated" ? "built-in" : flow.source,
         fileName: flow.fileName,
         absolutePath: flow.absolutePath,
         treePath: [],
@@ -1170,7 +1468,7 @@ async function runDeclarativeFlowByRef(
   } else if (persistedState && launchMode === "continue") {
     persistedState = prepareFlowStateForContinue(persistedState, flow.phases);
   } else if (launchMode === "restart") {
-    if (existingStateForRestart && SCOPE_ARCHIVING_RESTART_FLOW_IDS.has(flowId)) {
+    if (existingStateForRestart && isRestartArchivingFlowId(flowId)) {
       archiveActiveAttempt(config.scope.scopeKey);
     }
     resetFlowRunState(config.scope.scopeKey, flowId);
@@ -1244,6 +1542,31 @@ async function runDeclarativeFlowByRef(
     saveFlowRunState(state);
     throw error;
   }
+}
+
+async function runDeclarativeFlowByRef(
+  flowId: string,
+  flowRef: DeclarativeFlowRef,
+  config: Config,
+  flowParams: Record<string, unknown>,
+  overrides: DeclarativeFlowOverrides = {},
+  requestUserInput: UserInputRequester = requestUserInputInTerminal,
+  setSummary?: (markdown: string) => void,
+  launchMode: FlowLaunchMode = "restart",
+  runtime: RuntimeServices = runtimeServices,
+): Promise<void> {
+  const flow = await loadDeclarativeFlow(flowRef);
+  await runLoadedDeclarativeFlow(
+    flowId,
+    flow,
+    config,
+    flowParams,
+    overrides,
+    requestUserInput,
+    setSummary,
+    launchMode,
+    runtime,
+  );
 }
 
 async function runDeclarativeFlowBySpecFile(
@@ -1475,9 +1798,55 @@ async function executeCommand(
     : launchProfile
       ? { launchProfile }
       : {};
-  const launchMode = config.command === "auto-status" || config.command === "auto-reset"
-    ? "restart"
-    : await chooseLaunchMode(config.command, config.scope.scopeKey, explicitLaunchMode, requestUserInput);
+  const configurableAutoSelection = config.autoFlowSelection
+    ?? (config.command === "auto" || config.command === "auto-status" || config.command === "auto-reset"
+      ? defaultAutoFlowSelection()
+      : undefined);
+  const resolvedConfigurableAuto = configurableAutoSelection
+    ? await resolveAutoFlow(configurableAutoSelection, {
+      cwd: process.cwd(),
+      scopeKey: config.scope.scopeKey,
+    })
+    : null;
+  const configurableAutoIdentity = resolvedConfigurableAuto && configurableAutoSelection
+    ? autoFlowIdentityForSelection(configurableAutoSelection, resolvedConfigurableAuto)
+    : null;
+  if (resolvedConfigurableAuto && configurableAutoIdentity) {
+    if (config.command !== "auto-status" && config.command !== "auto-reset") {
+      config.command = configurableAutoIdentity.selectedCommand;
+    }
+    if (config.dryRunFlow) {
+      writeStdoutSync(formatAutoFlowDryRunPreview(resolvedConfigurableAuto));
+      return false;
+    }
+  }
+  if (resolvedConfigurableAuto && configurableAutoIdentity && config.command === "auto-status") {
+    await printConfigurableAutoStatus(config, resolvedConfigurableAuto, configurableAutoIdentity);
+    return false;
+  }
+  if (resolvedConfigurableAuto && configurableAutoIdentity && config.command === "auto-reset") {
+    await printConfigurableAutoReset(config, resolvedConfigurableAuto, configurableAutoIdentity);
+    return false;
+  }
+  const launchFlowId = configurableAutoIdentity?.flowId ?? config.command;
+  const launchMode = await chooseLaunchMode(launchFlowId, config.scope.scopeKey, explicitLaunchMode, requestUserInput);
+  if (resolvedConfigurableAuto && configurableAutoIdentity) {
+    syncJiraEnv(config);
+    await checkResolvedAutoPrerequisites(resolvedConfigurableAuto, launchProfile, executionRouting);
+    persistResolvedAutoFlowArtifacts(config.scope.scopeKey, resolvedConfigurableAuto);
+    await runResolvedAutoFlow(
+      resolvedConfigurableAuto,
+      configurableAutoIdentity,
+      config,
+      flowOverrides,
+      requestUserInput,
+      setSummary,
+      launchMode,
+      runtime,
+      forceRefreshSummary,
+    );
+    return false;
+  }
   if (config.command === "instant-task") {
     await checkPrerequisites(config, launchProfile, executionRouting);
     const hasPersistedInstantTaskState = loadFlowRunState(config.scope.scopeKey, "instant-task") !== null;
@@ -1585,56 +1954,6 @@ async function executeCommand(
     );
     return false;
   }
-  if (config.command === "auto-status") {
-    const state = loadFlowRunState(config.scope.scopeKey, "auto-golang");
-    if (!state) {
-      printPanel("Auto-Golang Status", `No flow state file found for ${config.taskKey}.`, "yellow");
-      return false;
-    }
-    const currentStep = findCurrentFlowExecutionStep(state) ?? state.currentStep ?? "-";
-    const phaseOrder = (await loadDeclarativeFlow({ source: "built-in", fileName: "auto-golang.json" })).phases;
-    const lines = [
-      `Issue: ${config.taskKey}`,
-      `Status: ${state.status}`,
-      `Current step: ${currentStep}`,
-      `Updated: ${state.updatedAt}`,
-    ];
-    if (state.executionRouting) {
-      lines.push(`Default route: ${state.executionRouting.defaultRoute.executor} / ${state.executionRouting.defaultRoute.model}`);
-      lines.push(`Routing fingerprint: ${state.executionRouting.fingerprint}`);
-    } else if (state.launchProfile) {
-      lines.push(`Launch profile: ${state.launchProfile.executor} / ${state.launchProfile.model}`);
-    }
-    if (state.lastError) {
-      lines.push(
-        `Last error: ${state.lastError.step ?? "-"} (exit ${state.lastError.returnCode ?? "-"}, ${state.lastError.message ?? "-"})`,
-      );
-    }
-    lines.push("");
-    for (const phase of phaseOrder) {
-      const phaseState = state.executionState.phases.find((candidate) => candidate.id === phase.id);
-      lines.push(`[${phaseState?.status ?? "pending"}] ${phase.id}`);
-      for (const step of phase.steps) {
-        const stepState = phaseState?.steps.find((candidate) => candidate.id === step.id);
-        lines.push(`  - [${stepState?.status ?? "pending"}] ${step.id}`);
-      }
-    }
-    if (state.executionState.terminated) {
-      lines.push("", `Execution terminated: ${state.executionState.terminationReason ?? "yes"}`);
-    }
-    printPanel("Auto-Golang Status", lines.join("\n"), "cyan");
-    return false;
-  }
-  if (config.command === "auto-reset") {
-    const removed = resetFlowRunState(config.scope.scopeKey, "auto-golang");
-    printPanel(
-      "Auto-Golang Reset",
-      removed ? `State file ${flowStateFile(config.scope.scopeKey, "auto-golang")} removed.` : "No flow state file found.",
-      "yellow",
-    );
-    return false;
-  }
-
   await checkPrerequisites(config, launchProfile, executionRouting);
   syncJiraEnv(config);
 
@@ -2058,9 +2377,11 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
     writeStderrSync(`${usage()}\n`);
     process.exit(1);
   }
-  const command = rawCommand === "auto" ? "auto-common" : rawCommand;
+  const isConfigurableAutoCommand = rawCommand === "auto";
+  const supportsAutoFlowSelection = rawCommand === "auto" || rawCommand === "auto-status" || rawCommand === "auto-reset";
 
   let dry = false;
+  let dryRunFlow = false;
   let verbose = false;
   let prompt: string | undefined;
   let autoFromPhase: string | undefined;
@@ -2071,9 +2392,28 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
   let mdLang: "en" | "ru" | undefined;
   let launchMode: FlowLaunchMode | undefined;
   let acceptPlaybookDraft = false;
+  let autoPreset: AutoFlowPresetName | undefined;
+  let autoConfigName: string | undefined;
   let webNoOpen = process.env.AGENTWEAVER_WEB_NO_OPEN === "1";
   let webHost: string | undefined;
   const doctorArgs: string[] = [];
+
+  const readRequiredValue = (flag: string, index: number): string => {
+    const value = argv[index + 1]?.trim();
+    if (!value || value.startsWith("-")) {
+      writeStderrSync(`Error: ${flag} requires a value.\n`);
+      process.exit(1);
+    }
+    return value;
+  };
+
+  const parsePresetValue = (value: string): AutoFlowPresetName => {
+    if (value === "simple" || value === "standard") {
+      return value;
+    }
+    writeStderrSync("Error: --preset accepts only 'simple' or 'standard'.\n");
+    process.exit(1);
+  };
 
   for (let index = 1; index < argv.length; index += 1) {
     const token = argv[index] ?? "";
@@ -2085,6 +2425,58 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
       verbose = true;
       continue;
     }
+    if (token === "--dry-run-flow") {
+      if (!isConfigurableAutoCommand) {
+        writeStderrSync("Error: --dry-run-flow is only supported after the auto command.\n");
+        process.exit(1);
+      }
+      dryRunFlow = true;
+      continue;
+    }
+    if (token === "--preset") {
+      if (!supportsAutoFlowSelection) {
+        writeStderrSync("Error: --preset is only supported after auto, auto-status, or auto-reset.\n");
+        process.exit(1);
+      }
+      autoPreset = parsePresetValue(readRequiredValue("--preset", index));
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("--preset=")) {
+      if (!supportsAutoFlowSelection) {
+        writeStderrSync("Error: --preset is only supported after auto, auto-status, or auto-reset.\n");
+        process.exit(1);
+      }
+      const value = token.slice("--preset=".length).trim();
+      if (!value) {
+        writeStderrSync("Error: --preset requires a value.\n");
+        process.exit(1);
+      }
+      autoPreset = parsePresetValue(value);
+      continue;
+    }
+    if (token === "--config") {
+      if (!supportsAutoFlowSelection) {
+        writeStderrSync("Error: --config is only supported after auto, auto-status, or auto-reset.\n");
+        process.exit(1);
+      }
+      autoConfigName = readRequiredValue("--config", index);
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("--config=")) {
+      if (!supportsAutoFlowSelection) {
+        writeStderrSync("Error: --config is only supported after auto, auto-status, or auto-reset.\n");
+        process.exit(1);
+      }
+      const value = token.slice("--config=".length).trim();
+      if (!value) {
+        writeStderrSync("Error: --config requires a value.\n");
+        process.exit(1);
+      }
+      autoConfigName = value;
+      continue;
+    }
     if (token === "--help-phases") {
       helpPhases = true;
       continue;
@@ -2094,7 +2486,7 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
       continue;
     }
     if (token === "--no-open") {
-      if (command !== "web") {
+      if (rawCommand !== "web") {
         writeStderrSync("Error: --no-open is only supported after the web command.\n");
         process.exit(1);
       }
@@ -2102,7 +2494,7 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
       continue;
     }
     if (token === "--listen-all") {
-      if (command !== "web") {
+      if (rawCommand !== "web") {
         writeStderrSync("Error: --listen-all is only supported after the web command.\n");
         process.exit(1);
       }
@@ -2110,7 +2502,7 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
       continue;
     }
     if (token === "--host") {
-      if (command !== "web") {
+      if (rawCommand !== "web") {
         writeStderrSync("Error: --host is only supported after the web command.\n");
         process.exit(1);
       }
@@ -2124,7 +2516,7 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
       continue;
     }
     if (token.startsWith("--host=")) {
-      if (command !== "web") {
+      if (rawCommand !== "web") {
         writeStderrSync("Error: --host is only supported after the web command.\n");
         process.exit(1);
       }
@@ -2189,12 +2581,30 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
       }
       continue;
     }
-    if (command === "doctor") {
+    if (rawCommand === "doctor") {
       doctorArgs.push(token);
     } else {
       jiraRef = token;
     }
   }
+
+  if (autoPreset && autoConfigName) {
+    writeStderrSync("Error: --preset and --config are mutually exclusive.\n");
+    process.exit(1);
+  }
+
+  const autoFlowSelection: AutoFlowSelection | undefined = supportsAutoFlowSelection
+    ? autoConfigName
+      ? { kind: "config", name: autoConfigName }
+      : autoPreset
+        ? { kind: "preset", preset: autoPreset }
+        : defaultAutoFlowSelection()
+    : undefined;
+  const command = isConfigurableAutoCommand
+    ? autoFlowSelection?.kind === "preset" && autoFlowSelection.preset === "simple"
+      ? "auto-simple"
+      : "auto-common"
+    : rawCommand;
 
   if (command === "auto-golang" && helpPhases) {
     await printAutoPhasesHelp();
@@ -2212,6 +2622,7 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
   return {
     command: command as CommandName,
     dry,
+    dryRunFlow,
     verbose,
     helpPhases,
     ...(jiraRef !== undefined ? { jiraRef } : {}),
@@ -2223,6 +2634,7 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
     ...(doctorArgs.length > 0 ? { doctorArgs } : {}),
     ...(launchMode !== undefined ? { launchMode } : {}),
     ...(acceptPlaybookDraft ? { acceptPlaybookDraft } : {}),
+    ...(autoFlowSelection !== undefined ? { autoFlowSelection } : {}),
     ...(command === "web" ? { webNoOpen } : {}),
     ...(command === "web" && webHost !== undefined ? { webHost } : {}),
   };
@@ -2237,9 +2649,11 @@ function buildConfigFromArgs(args: ParsedArgs): BaseConfig {
     ...(args.autoFromPhase !== undefined ? { autoFromPhase: args.autoFromPhase } : {}),
     ...(args.mdLang !== undefined ? { mdLang: args.mdLang } : {}),
     dryRun: args.dry,
+    dryRunFlow: args.dryRunFlow,
     verbose: args.verbose,
     ...(args.doctorArgs !== undefined ? { doctorArgs: args.doctorArgs } : {}),
     ...(args.acceptPlaybookDraft !== undefined ? { acceptPlaybookDraft: args.acceptPlaybookDraft } : {}),
+    ...(args.autoFlowSelection !== undefined ? { autoFlowSelection: args.autoFlowSelection } : {}),
   });
 }
 
@@ -2318,6 +2732,10 @@ async function runInteractiveWithSessionFactory(
       flows: interactiveFlowDefinitions(flowCatalog),
       getRunConfirmation: async (flowId) => {
         refreshScopeFromGit("git scope refresh before launch confirmation");
+        const autoFlowSelection = autoFlowSelectionForFlowId(flowId);
+        if (autoFlowSelection) {
+          return await lookupInteractiveAutoFlowResume(autoFlowSelection, currentScope);
+        }
         const flowEntry = findCatalogEntry(flowId, flowCatalog);
         if (!flowEntry) {
           throw new TaskRunnerError(`Unknown flow: ${flowId}`);
@@ -2331,6 +2749,31 @@ async function runInteractiveWithSessionFactory(
         activeAbortController = abortController;
         activeFlowId = flowId;
         try {
+          const autoFlowSelection = autoFlowSelectionForFlowId(flowId);
+          if (autoFlowSelection) {
+            const previousScopeKey = currentScope.scopeKey;
+            const baseConfig = buildInteractiveBaseConfig(flowId, currentScope);
+            const nextScope = await resolveScopeForCommand(baseConfig, (form) => ui.requestUserInput(form), launchMode);
+            currentScope = nextScope;
+            ui.setScope(currentScope.scopeKey, currentScope.jiraIssueKey ?? null, currentScope.gitBranchName);
+            if (previousScopeKey !== currentScope.scopeKey || currentScope.jiraIssueKey) {
+              syncInteractiveTaskSummary(ui, currentScope, forceRefresh);
+            }
+            await executeCommand(
+              baseConfig,
+              true,
+              (form) => ui.requestUserInput(form),
+              currentScope,
+              (markdown) => ui.setSummary(markdown),
+              forceRefresh,
+              launchMode,
+              undefined,
+              undefined,
+              undefined,
+              createRuntimeServices(abortController.signal),
+            );
+            return;
+          }
           const flowEntry = findCatalogEntry(flowId, flowCatalog);
           if (!flowEntry) {
             throw new TaskRunnerError(`Unknown flow: ${flowId}`);

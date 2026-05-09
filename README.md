@@ -300,6 +300,10 @@ agentweaver gitlab-review
 agentweaver mr-description DEMO-1234
 agentweaver run-go-tests-loop DEMO-1234
 agentweaver run-go-linter-loop DEMO-1234
+agentweaver auto DEMO-1234
+agentweaver auto --preset simple DEMO-1234
+agentweaver auto --preset standard --dry-run-flow DEMO-1234
+agentweaver auto --config backend-standard --dry-run-flow DEMO-1234
 agentweaver auto-golang DEMO-1234
 agentweaver auto-common DEMO-1234
 agentweaver auto-simple DEMO-1234
@@ -315,6 +319,7 @@ node dist/index.js plan DEMO-1234
 node dist/index.js design-review DEMO-1234
 node dist/index.js implement DEMO-1234
 node dist/index.js review DEMO-1234
+node dist/index.js auto --preset standard --dry-run-flow DEMO-1234
 node dist/index.js auto-golang DEMO-1234
 node dist/index.js auto-common DEMO-1234
 ```
@@ -337,12 +342,17 @@ agentweaver doctor --json
 Notes:
 
 - `--dry` fetches required context but prints launch commands instead of running Codex/OpenCode steps
+- `--dry-run-flow` applies only to `agentweaver auto`; it validates and previews the resolved flow without running workflow steps or writing resolver artifacts
+- `--preset <simple|standard>` applies only to `agentweaver auto`; raw `agentweaver auto` defaults to `--preset standard`
+- `--config <name>` applies only to `agentweaver auto`; it loads a saved YAML config by name
 - `--verbose` streams child process stdout/stderr in direct CLI mode
 - `--prompt <text>` appends extra instructions to the prompt
 - `--scope <name>` is supported by scope-flexible flows such as `implement`, `review`, `review-fix`, `review-loop`, `run-go-tests-loop`, `run-go-linter-loop`, `gitlab-review`, and `gitlab-diff-review`
 - `--md-lang <en|ru>` applies only to generated workflow markdown artifacts, not repository source files or committed documentation
 - `--force` only affects interactive mode: it skips loading cached summary-pane content on startup so Jira-backed flows that regenerate summary artifacts can repopulate it during the run
-- `auto-golang`, `auto-common-guided`, `auto-common`, and `auto-simple` ask for Jira input interactively when Jira input is omitted; leave it empty to paste task text in the next step when Jira is unavailable
+- Saved auto flow configs are discovered at `.agentweaver/flow-configs/<name>.yaml` first and `~/.agentweaver/flow-configs/<name>.yaml` second; the project config wins when both exist
+- Non-dry `agentweaver auto` runs write `flow-config.yaml`, `resolved-flow.json`, and `resolved-flow-summary.json` under `.agentweaver/scopes/<scopeKey>/.artifacts`
+- `auto-golang`, `auto-common-guided`, `auto-common`, `auto-simple`, and configurable `auto` ask for Jira input interactively when Jira input is omitted; leave it empty to paste task text in the next step when Jira is unavailable
 - `task-describe` can also work from manual task description input without Jira
 - `gitlab-review` and `gitlab-diff-review` ask for a GitLab merge request URL interactively
 - `auto-status` and `auto-reset` currently operate on persisted state for `auto-golang`
@@ -360,6 +370,36 @@ Notes:
 `auto-common` is the planning-aware built-in automation flow. After `plan`, it runs a `design-review` loop and blocks implementation until the verdict is `approved` or `approved_with_warnings`. When the verdict is `needs_revision`, it runs `plan-revise` and then another `design-review`, for up to 3 design-review iterations total. If the final verdict still requires revision, the pipeline asks the operator whether to continue with the latest planning artifacts or stop before `implement`.
 
 `auto-simple` is the preserved simplified pipeline: `plan → implement → review loop`, with no planning review gate and no revise rounds. It is behaviorally equivalent to the legacy `auto-common` before the planning gate was introduced.
+
+`agentweaver auto` is the configurable entrypoint in front of those built-in flows. Without flags it resolves to the standard preset, equivalent to `auto-common`. `--preset simple` resolves to the simplified flow, and `--preset standard` resolves to the design-review-gated flow. Use `--dry-run-flow` to inspect the selected source, phase order, included/skipped blocks, max-iteration settings, and artifact policy without invoking LLM executors, command executors, nested flows, state mutation, or resolver artifact writes.
+
+Saved configs are YAML files named by command flag:
+
+```yaml
+kind: auto-flow-config
+version: 1
+name: backend-standard
+basePreset: standard
+slots:
+  designReview:
+    blocks:
+      - id: review.design-loop
+        enabled: true
+        maxIterations: 3
+  postImplementationChecks:
+    blocks:
+      - id: checks.go.linter
+        enabled: true
+        maxIterations: 5
+  review:
+    blocks:
+      - id: review.loop
+        enabled: true
+  final:
+    blocks: []
+```
+
+Supported presets are `simple` and `standard`. Supported slots are `designReview`, `postImplementationChecks`, `review`, and `final`. Supported block ids are `review.design-loop`, `checks.go.linter`, `checks.go.tests`, and `review.loop`. `enabled` accepts `true`, `false`, or `auto`; `maxIterations`, when present, must be a positive integer.
 
 ## Launch Profiles and Resume
 

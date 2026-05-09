@@ -40,6 +40,18 @@ export function artifactIndexFile(scopeKey: string): string {
   return scopeArtifactsFile(scopeKey, "artifact-index.json");
 }
 
+export function flowConfigYamlFile(scopeKey: string): string {
+  return scopeArtifactsFile(scopeKey, "flow-config.yaml");
+}
+
+export function resolvedFlowJsonFile(scopeKey: string): string {
+  return scopeArtifactsFile(scopeKey, "resolved-flow.json");
+}
+
+export function resolvedFlowSummaryJsonFile(scopeKey: string): string {
+  return scopeArtifactsFile(scopeKey, "resolved-flow-summary.json");
+}
+
 export function taskWorkspaceDir(taskKey: string): string {
   return scopeWorkspaceDir(taskKey);
 }

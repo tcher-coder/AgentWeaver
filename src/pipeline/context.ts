@@ -3,6 +3,7 @@ import process from "node:process";
 import type { RuntimeServices } from "../executors/types.js";
 import { getOutputAdapter } from "../tui.js";
 import type { UserInputRequester } from "../user-input.js";
+import type { InMemoryDeclarativeFlows } from "./declarative-flows.js";
 import type { ResolvedExecutionRouting } from "./execution-routing-config.js";
 import { createPipelineRegistryContext, type PipelineRegistryContext } from "./plugin-loader.js";
 import type { PipelineContext } from "./types.js";
@@ -18,6 +19,7 @@ export type CreatePipelineContextInput = {
   requestUserInput?: UserInputRequester;
   executionRouting?: ResolvedExecutionRouting;
   registryContext?: PipelineRegistryContext;
+  inMemoryFlows?: InMemoryDeclarativeFlows;
 };
 
 export async function createPipelineContext(input: CreatePipelineContextInput): Promise<PipelineContext> {
@@ -38,5 +40,6 @@ export async function createPipelineContext(input: CreatePipelineContextInput): 
     ...(input.setSummary ? { setSummary: input.setSummary } : {}),
     ...(input.requestUserInput ? { requestUserInput: input.requestUserInput } : {}),
     ...(input.executionRouting ? { executionRouting: input.executionRouting } : {}),
+    ...(input.inMemoryFlows ? { inMemoryFlows: input.inMemoryFlows } : {}),
   };
 }

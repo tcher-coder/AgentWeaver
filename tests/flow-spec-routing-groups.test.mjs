@@ -62,6 +62,7 @@ describe("flow spec routing groups", () => {
 
     assert.equal(entryIds.has("normalize-task-source"), false);
     assert.equal(entryIds.has("task-source/manual-input"), false);
+    assert.equal(entryIds.has("task-source/manual-jira-input"), false);
     assert.equal(entryIds.has("task-source/jira-fetch"), false);
     assert.equal(entryIds.has("design-review/design-review-loop"), false);
     assert.equal(entryIds.has("review/review-project"), false);

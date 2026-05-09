@@ -92,7 +92,7 @@ The full flow-spec reference now lives in [docs/declarative-workflows.md](docs/d
 
 User-invokable built-in commands currently map to these flow specs:
 
-- `plan` — fetches Jira task with attachments, generates clarifying questions for the developer, collects answers, and produces design, implementation plan, and QA plan as structured JSON and markdown artifacts
+- `plan` — uses a normalized task source from Jira or manual input, generates clarifying questions for the developer, collects answers, and produces design, implementation plan, and QA plan as structured JSON and markdown artifacts
 - `design-review` — performs a structured critique of the latest planning artifacts and writes a dedicated `design-review/v1` artifact; `approved_with_warnings` is treated as ready to proceed and may still produce `ready-to-merge.md`
 - `task-describe` — generates a brief task description from a Jira issue or from manual input; when Jira is provided, fetches the issue and summarizes it; otherwise accepts free-form text and analyzes the codebase to produce a richer description
 - `implement` — runs LLM-backed implementation based on previously approved design and plan artifacts; executes code changes locally in the project working directory
@@ -342,7 +342,7 @@ Notes:
 - `--scope <name>` is supported by scope-flexible flows such as `implement`, `review`, `review-fix`, `review-loop`, `run-go-tests-loop`, `run-go-linter-loop`, `gitlab-review`, and `gitlab-diff-review`
 - `--md-lang <en|ru>` applies only to generated workflow markdown artifacts, not repository source files or committed documentation
 - `--force` only affects interactive mode: it skips loading cached summary-pane content on startup so Jira-backed flows that regenerate summary artifacts can repopulate it during the run
-- Jira-backed flows ask for Jira input interactively when it is omitted
+- `auto-golang`, `auto-common-guided`, `auto-common`, and `auto-simple` ask for Jira input interactively when Jira input is omitted; leave it empty to paste task text in the next step when Jira is unavailable
 - `task-describe` can also work from manual task description input without Jira
 - `gitlab-review` and `gitlab-diff-review` ask for a GitLab merge request URL interactively
 - `auto-status` and `auto-reset` currently operate on persisted state for `auto-golang`
@@ -505,10 +505,10 @@ Use the guided flow with:
 
 ```bash
 agentweaver auto-common-guided --help-phases
-agentweaver auto-common-guided --accept-playbook-draft DEMO-1234
+agentweaver auto-common-guided --accept-playbook-draft [DEMO-1234]
 ```
 
-The workflow does not read old `playbook.json` or `playbook.md` files as fallbacks. In non-interactive runs, a missing manifest stops the workflow before planning and reports the required action: run `agentweaver playbook-init --accept-playbook-draft` first, or rerun `agentweaver auto-common-guided --accept-playbook-draft <jira>`. The `--accept-playbook-draft` flag explicitly accepts the generated playbook without interactive review and allows AgentWeaver to write the manifest-based layout. An invalid manifest stops the guided phase before the LLM prompt.
+The workflow does not read old `playbook.json` or `playbook.md` files as fallbacks. In non-interactive runs, a missing manifest stops the workflow before planning and reports the required action: run `agentweaver playbook-init --accept-playbook-draft` first, or rerun `agentweaver auto-common-guided --accept-playbook-draft [<jira>]` in an interactive terminal when manual task input is needed. The `--accept-playbook-draft` flag explicitly accepts the generated playbook without interactive review and allows AgentWeaver to write the manifest-based layout. An invalid manifest stops the guided phase before the LLM prompt.
 
 To inspect whether playbook guidance participated in a run, check the generated artifacts:
 

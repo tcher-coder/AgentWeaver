@@ -1,5 +1,69 @@
 # Changelog
 
+## v0.1.20
+
+Release range: `v0.1.19...v0.1.20`
+
+### Highlights
+
+- Added the configurable `agentweaver auto` entrypoint with slot-based `simple` and `standard` presets.
+- Added saved YAML auto-flow configs with project-level and user-level discovery.
+- Added a Web UI auto-flow editor with preset selection, block toggles, config save/reset actions, validation diagnostics, and a slot/block progress tree.
+- Added a Web UI Git workspace pane with branch operations, fetch, pull, staging, commit, push, and side-by-side diff inspection.
+- Added manual task-source fallback for Jira-backed planning and auto flows when Jira input is unavailable.
+- Added persisted Web UI preferences for theme, panel sizing, auto-flow editor height, and log auto-scroll.
+
+### Configurable Auto Flow
+
+- Added `agentweaver auto [--preset <simple|standard>|--config <name>] [--dry-run-flow]`.
+- `agentweaver auto` now defaults to the `standard` preset, equivalent to the design-review-gated `auto-common` pipeline.
+- `--preset simple` resolves to the simplified planning, implementation, and review-loop pipeline.
+- `--config <name>` loads saved configs from `.agentweaver/flow-configs/<name>.yaml` before `~/.agentweaver/flow-configs/<name>.yaml`; project configs take precedence.
+- `--dry-run-flow` validates and previews the resolved source, phase order, block decisions, diagnostics, and artifact policy without running workflow steps or writing resolver artifacts.
+- Non-dry configurable auto runs now write `flow-config.yaml`, `resolved-flow.json`, and `resolved-flow-summary.json` under the active scope artifact directory.
+- Added configurable auto status and reset support through `agentweaver auto-status` and `agentweaver auto-reset` with the same preset/config selectors.
+- Preserved `auto-common` and `auto-simple` behavior through resolver-backed built-in presets while replacing the old static flow-spec files.
+
+### Auto-Flow Model
+
+- Added the slot model for `source`, `normalize`, `planning`, `designReview`, `implementation`, `postImplementationChecks`, `review`, and `final`.
+- Added locked core blocks for task source collection, source normalization, planning, and implementation.
+- Added optional block support for design review loops, review loops, Go linter checks, and Go test checks.
+- Added validation for unknown blocks, invalid slots, locked block changes, duplicate blocks, missing dependencies, unsupported parameters, and out-of-range parameters.
+- Added auto-flow identity handling so preset-backed and named-config flows have separate resumable state.
+
+### Web UI
+
+- Added an auto-flow editor that can switch presets, load saved configs, enable or disable optional blocks, insert or remove supported blocks, edit `maxIterations`, and save configs.
+- Added a slot/block progress view for configurable auto runs, including pending, running, success, failed, stopped, skipped, waiting-user, disabled, blocked, invalid, and empty states.
+- Added a Git workspace panel with repository status, current branch, upstream, ahead/behind counts, last commit, changed files, and operation feedback.
+- Added Web UI Git actions for branch creation, checkout, fetch, fast-forward pull, stage, unstage, commit selected paths, and push.
+- Added a side-by-side Git diff drawer with `HEAD`, staged, and worktree modes.
+- Added diff parsing for modified row pairing, renames, binary files, too-large diffs, and synthetic untracked text diffs.
+- Added a light Web UI theme, resizable workspace panels, resizable auto-flow editor height, current-flow header improvements, and activity log auto-scroll controls.
+- Fixed Artifact Explorer visibility so it can show markdown artifacts from the active scope, including artifacts from earlier runs in that scope.
+
+### Task Source and Workflow Behavior
+
+- Added a manual Jira task input node and hidden `manual-jira-input` flow that stores pasted task text as raw Jira-style artifacts for normalization.
+- `plan`, `auto`, `auto-common-guided`, `auto-common`, `auto-simple`, and `auto-golang` can now prompt for Jira input and fall back to pasted manual task text when Jira is omitted.
+- Updated `plan` to operate from normalized task sources instead of requiring Jira fetch as the only entry path.
+- Refined restart behavior so independent single-purpose flows reset only their saved flow state while keeping existing scope artifacts available.
+
+### Documentation
+
+- Updated README usage for `agentweaver auto`, `--preset`, `--config`, `--dry-run-flow`, saved config locations, resolver artifacts, and manual task input.
+- Updated Web UI documentation to describe process-local session state and globally persisted visual preferences.
+- Clarified Artifact Explorer behavior for active-scope markdown artifacts.
+- Updated guided playbook notes for `auto-common-guided --accept-playbook-draft [<jira>]` and manual task input.
+
+### Tests
+
+- Added coverage for configurable auto-flow resolution, presets, saved config validation, CLI dry-run previews, status, and reset.
+- Added coverage for auto-flow identity, state routing, resolver artifacts, and flow-spec routing groups.
+- Added coverage for Git status parsing, Git service operations, safe path handling, diff parsing, untracked diff rendering, binary diff handling, and Web UI diff APIs.
+- Added coverage for Web UI protocol actions, static app behavior, server behavior, session handling, settings persistence, interactive controller behavior, and auto-flow editor state.
+
 ## v0.1.18
 
 Release range: `v0.1.17...v0.1.18`

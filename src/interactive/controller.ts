@@ -2,6 +2,7 @@ import path from "node:path";
 
 import { FlowInterruptedError, TaskRunnerError } from "../errors.js";
 import { createGitService, type GitService } from "../git/git-service.js";
+import { needsGitFileStage } from "../git/git-stage-selection.js";
 import type { GitChangedFile, GitOperationFeedback, GitWorkspaceSnapshot } from "../git/git-types.js";
 import { renderMarkdownToTerminal } from "../markdown.js";
 import type { FlowExecutionState } from "../pipeline/spec-types.js";
@@ -171,13 +172,6 @@ function normalizeLogText(text: string): string[] {
     return [""];
   }
   return normalized.split("\n");
-}
-
-function needsGitFileStage(file: GitChangedFile): boolean {
-  if (file.type === "untracked" || file.xy === "??") {
-    return true;
-  }
-  return file.workTreeStatus !== " ";
 }
 
 function isGitFileStaged(file: GitChangedFile): boolean {

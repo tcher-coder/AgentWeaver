@@ -1,5 +1,6 @@
 import process from "node:process";
 
+import { selectPathsNeedingGitStage, uniqueGitPaths } from "./git-stage-selection.js";
 import { parsePorcelain } from "./git-status-parser.js";
 import type {
   GitBranchSummary,
@@ -337,9 +338,13 @@ export function createGitService(options: GitServiceOptions) {
     if (!validation.ok) {
       return { status: "error", message: validation.message ?? "Selected paths are invalid." };
     }
+    const stagePaths = selectPathsNeedingGitStage(paths, snapshot.changedFiles);
+    if (stagePaths.length === 0) {
+      return success("Selected files are already staged.");
+    }
     try {
-      await git(["add", "--", ...paths], { label: "git add", printFailureOutput: false });
-      return success(`Staged ${paths.length} file${paths.length === 1 ? "" : "s"}.`);
+      await git(["add", "-A", "--", ...stagePaths], { label: "git add", printFailureOutput: false });
+      return success(`Staged ${stagePaths.length} file${stagePaths.length === 1 ? "" : "s"}.`);
     } catch (error) {
       return { status: "error", message: errorMessage(error) };
     }
@@ -369,11 +374,18 @@ export function createGitService(options: GitServiceOptions) {
         return { status: "error", message: pathValidation.message ?? "Selected paths are invalid." };
       }
     }
+    const commitPaths = uniqueGitPaths(paths);
     try {
-      if (paths.length > 0) {
-        await git(["add", "--", ...paths], { label: "git add", printFailureOutput: false });
+      if (commitPaths.length > 0) {
+        const stagePaths = selectPathsNeedingGitStage(commitPaths, snapshot.changedFiles);
+        if (stagePaths.length > 0) {
+          await git(["add", "-A", "--", ...stagePaths], { label: "git add", printFailureOutput: false });
+        }
       }
-      const output = await git(["commit", "-m", message], { label: "git commit", printFailureOutput: false });
+      const commitArgs = commitPaths.length > 0
+        ? ["commit", "-m", message, "--", ...commitPaths]
+        : ["commit", "-m", message];
+      const output = await git(commitArgs, { label: "git commit", printFailureOutput: false });
       const commitHash = extractCommitHash(output);
       return success(commitHash ? `Committed ${commitHash}.` : "Commit completed.", commitHash);
     } catch (error) {

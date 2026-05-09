@@ -77,10 +77,45 @@ describe("git service", () => {
     await service.commit(["--option-like.ts"], "commit option-like path", current);
 
     assert.deepEqual(calls.map((call) => call.argv), [
-      ["git", "add", "--", "--option-like.ts"],
+      ["git", "add", "-A", "--", "--option-like.ts"],
       ["git", "restore", "--staged", "--", "--option-like.ts"],
-      ["git", "add", "--", "--option-like.ts"],
-      ["git", "commit", "-m", "commit option-like path"],
+      ["git", "add", "-A", "--", "--option-like.ts"],
+      ["git", "commit", "-m", "commit option-like path", "--", "--option-like.ts"],
+    ]);
+  });
+
+  it("commits selected staged deletions without re-adding missing paths", async () => {
+    const { runner, calls } = createRunner();
+    const service = createGitService({ runCommand: runner });
+    const current = snapshot({
+      changedFiles: [
+        { path: "deleted.ts", file: "deleted.ts", xy: "D ", indexStatus: "D", workTreeStatus: " ", staged: true, type: "deleted" },
+      ],
+    });
+
+    const result = await service.commit(["deleted.ts"], "commit deletion", current);
+
+    assert.equal(result.status, "success");
+    assert.deepEqual(calls.map((call) => call.argv), [
+      ["git", "commit", "-m", "commit deletion", "--", "deleted.ts"],
+    ]);
+  });
+
+  it("stages unstaged deletions with update-all semantics before committing", async () => {
+    const { runner, calls } = createRunner();
+    const service = createGitService({ runCommand: runner });
+    const current = snapshot({
+      changedFiles: [
+        { path: "deleted.ts", file: "deleted.ts", xy: " D", indexStatus: " ", workTreeStatus: "D", staged: false, type: "deleted" },
+      ],
+    });
+
+    const result = await service.commit(["deleted.ts"], "commit deletion", current);
+
+    assert.equal(result.status, "success");
+    assert.deepEqual(calls.map((call) => call.argv), [
+      ["git", "add", "-A", "--", "deleted.ts"],
+      ["git", "commit", "-m", "commit deletion", "--", "deleted.ts"],
     ]);
   });
 

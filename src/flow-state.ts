@@ -3,6 +3,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 import { ensureScopeWorkspaceDir, flowStateFile } from "./artifacts.js";
 import { TaskRunnerError } from "./errors.js";
+import { isContinuableParentFlowId } from "./pipeline/auto-flow-identity.js";
 import { isFlowRunResumeEnvelope } from "./pipeline/flow-run-resume.js";
 import type { ResolvedExecutionRouting, SelectedExecutionPreset } from "./pipeline/execution-routing-config.js";
 import type { ResolvedLaunchProfile } from "./pipeline/launch-profile-config.js";
@@ -21,12 +22,6 @@ const CONTINUABLE_FLOW_KINDS = new Set([
   "review-project-loop-flow",
   "run-go-linter-loop-flow",
   "run-go-tests-loop-flow",
-]);
-const CONTINUABLE_PARENT_FLOW_IDS = new Set([
-  "auto-common",
-  "auto-simple",
-  "auto-golang",
-  "instant-task",
 ]);
 const CONTINUABLE_DIRECT_FLOW_IDS = new Set([
   "review-loop",
@@ -190,7 +185,7 @@ function inferContinuationMetadata(flowId: string, executionState: FlowExecution
   const stopLocation = parseTerminationLocation(executionState.terminationReason);
   const continueEligible =
     CONTINUABLE_FLOW_KINDS.has(executionState.flowKind)
-    || (CONTINUABLE_PARENT_FLOW_IDS.has(flowId) && Boolean(stopLocation.stopPhaseId && stopLocation.stopStepId));
+    || (isContinuableParentFlowId(flowId) && Boolean(stopLocation.stopPhaseId && stopLocation.stopStepId));
   return {
     continueEligible,
     ...(stopLocation.stopPhaseId ? { stopPhaseId: stopLocation.stopPhaseId } : {}),

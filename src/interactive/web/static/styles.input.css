@@ -527,9 +527,10 @@ h2 {
 }
 
 .auto-flow-editor {
-  @apply grid gap-2 overflow-auto px-3 pb-2;
-  max-height: 260px;
+  @apply grid gap-1.5 overflow-auto px-2 pb-2;
+  max-height: min(46vh, 430px);
   border-bottom: 1px solid var(--aw-border);
+  font-size: 12px;
 }
 
 .auto-flow-toolbar,
@@ -540,13 +541,30 @@ h2 {
 }
 
 .auto-flow-toolbar {
-  @apply pt-2;
+  @apply py-1.5;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin-inline: calc(var(--spacing) * -2);
+  padding-inline: calc(var(--spacing) * 2);
+  border-bottom: 1px solid var(--aw-border);
+  background: var(--aw-panel-bg);
+}
+
+.auto-flow-toolbar button {
+  min-height: 26px;
+  padding: 3px 10px;
+  font-size: 12px;
 }
 
 .auto-flow-status,
 .auto-flow-pill,
 .auto-flow-locked {
-  @apply inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-xs font-bold;
+  @apply inline-flex items-center justify-center rounded-full border font-bold;
+  min-height: 16px;
+  padding: 1px 5px;
+  font-size: 10px;
+  line-height: 1;
 }
 
 .auto-flow-status.valid,
@@ -577,7 +595,8 @@ h2 {
 .auto-flow-reason,
 .auto-flow-empty {
   color: var(--aw-muted);
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.25;
 }
 
 .auto-flow-diagnostics {
@@ -589,46 +608,56 @@ h2 {
 }
 
 .auto-flow-slots {
-  @apply grid gap-2;
+  @apply grid gap-1.5;
 }
 
 .auto-flow-slot {
-  @apply grid gap-1 rounded-md border p-2;
+  @apply grid rounded-md border;
+  gap: 3px;
+  padding: 6px 8px;
   border-color: var(--aw-border);
   background: var(--aw-surface-bg);
 }
 
 .auto-flow-slot-title,
 .auto-flow-block-label {
-  @apply flex flex-wrap items-center gap-2;
+  @apply flex flex-wrap items-center gap-1.5;
+  line-height: 1.2;
+}
+
+.auto-flow-slot-title strong,
+.auto-flow-block-label strong {
+  font-size: 13px;
 }
 
 .auto-flow-blocks {
-  @apply grid gap-1;
+  @apply grid gap-0.5;
 }
 
 .auto-flow-block {
-  @apply rounded-md border p-2;
+  @apply rounded-md border;
+  padding: 5px 7px;
   border-color: var(--aw-inset-border);
   background: var(--aw-muted-bg);
 }
 
 .auto-flow-block-main {
-  @apply grid min-w-0 gap-1;
+  @apply grid min-w-0 gap-0.5;
 }
 
 .auto-flow-params input,
 .auto-flow-insert select {
-  min-height: 30px;
+  min-height: 26px;
   border-radius: var(--radius-md);
-  padding: 4px 8px;
+  padding: 2px 6px;
   border: 1px solid var(--aw-border-strong);
   color: var(--aw-text);
   background: var(--aw-input-bg);
+  font-size: 11px;
 }
 
 .git-body {
-  @apply grid min-h-0 gap-2 overflow-auto p-2;
+  @apply grid min-h-0 gap-1.5 overflow-auto p-1.5;
   grid-template-rows: auto auto minmax(72px, 1fr) auto auto;
   background: var(--aw-surface-bg);
 }
@@ -670,22 +699,23 @@ h2 {
 }
 
 .git-files {
-  @apply grid content-start gap-1 overflow-auto rounded-md p-1;
+  @apply grid content-start gap-0.5 overflow-auto rounded-md p-1;
   border: 1px solid var(--aw-border);
   background: var(--aw-surface-subtle-bg);
 }
 
 .git-tree-node {
-  @apply grid gap-1;
+  @apply grid gap-0;
 }
 
 .git-tree-row {
-  @apply grid items-center gap-2 rounded-md px-2 py-1.5;
+  @apply grid items-center gap-1.5 rounded-md px-1.5 py-0.5;
   grid-template-columns: auto auto minmax(0, 1fr) auto auto;
-  min-height: 32px;
+  min-height: 24px;
   border: 1px solid transparent;
   color: var(--aw-text-panel-text);
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.25;
 }
 
 .git-tree-row.without-type {
@@ -699,6 +729,8 @@ h2 {
 
 .git-tree-row input {
   margin: 0;
+  width: 13px;
+  height: 13px;
 }
 
 .git-tree-group {
@@ -712,9 +744,9 @@ h2 {
 
 .git-file-type {
   @apply inline-flex items-center justify-center rounded-full font-bold uppercase tracking-normal;
-  min-height: 16px;
-  padding: 2px 5px;
-  font-size: 10px;
+  min-height: 14px;
+  padding: 1px 4px;
+  font-size: 9px;
   line-height: 1;
   border: 1px solid var(--aw-border-strong);
   color: var(--aw-cyan);
@@ -733,13 +765,13 @@ h2 {
 
 .git-file-meta {
   color: var(--aw-dim);
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .git-diff-open {
-  min-height: 26px;
-  padding: 2px 8px;
-  font-size: 11px;
+  min-height: 22px;
+  padding: 1px 6px;
+  font-size: 10px;
 }
 
 .git-commit-row {

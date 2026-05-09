@@ -426,7 +426,8 @@ describe("static Artifact Explorer app", () => {
     const css = readFileSync(path.resolve("src/interactive/web/static/styles.input.css"), "utf8");
     assert.match(html, /id="theme-toggle-button"/);
     assert.match(css, /:root\[data-theme="dark"\]/);
-    assert.match(css, /\.git-file-type\s*\{[\s\S]*font-size:\s*10px/);
+    assert.match(css, /\.auto-flow-toolbar\s*\{[\s\S]*position:\s*sticky/);
+    assert.match(css, /\.git-file-type\s*\{[\s\S]*font-size:\s*9px/);
 
     const harness = createHarness(() => createResponse({ scopeKey: "ag-theme", items: [] }));
     assert.equal(harness.document.body.getAttribute("data-theme"), "light");

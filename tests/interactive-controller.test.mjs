@@ -1,5 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -341,6 +343,8 @@ describe("interactive controller", () => {
 
     let view = controller.getViewModel();
     assert.equal(view.autoFlow.status.canRun, false);
+    assert.equal(view.autoFlow.slots.find((slot) => slot.slotId === "designReview").blocks[0].status, "disabled");
+    assert.equal(view.autoFlow.slots.find((slot) => slot.slotId === "review").blocks[0].status, "invalid");
     assert.equal(view.progress.items.find((item) => item.kind === "block" && item.blockId === "review.design-loop").status, "disabled");
     assert.equal(view.progress.items.find((item) => item.kind === "block" && item.blockId === "review.loop").status, "invalid");
     await controller.openRunConfirm("auto-common");
@@ -373,7 +377,7 @@ describe("interactive controller", () => {
       () => controller.insertAutoFlowBlock("auto-common", "designReview", "review.loop"),
       /cannot be inserted into slot 'designReview'/,
     );
-    assert.equal(controller.getViewModel().progress.items.some((item) => item.status === "invalid"), true);
+    assert.equal(controller.getViewModel().autoFlow.status.valid, false);
     controller.destroy();
   });
 
@@ -395,6 +399,87 @@ describe("interactive controller", () => {
     assert.equal(view.autoFlow.status.lastMessage, "Reset auto-flow changes.");
     assert.equal(view.autoFlow.slots.find((slot) => slot.slotId === "designReview").blocks[0].enabled, true);
     controller.destroy();
+  });
+
+  it("changes the current auto-flow draft preset without selecting another flow", () => {
+    const controller = createAutoFlowController();
+    controller.mount();
+    controller.selectFlowId("auto-common");
+
+    controller.selectAutoFlowPreset("simple");
+    const view = controller.getViewModel();
+
+    assert.equal(view.flowItems[view.selectedFlowIndex].key, "flow:auto-common");
+    assert.equal(view.autoFlow.basePreset, "simple");
+    assert.equal(view.autoFlow.status.canReset, true);
+    assert.equal(view.autoFlow.status.canRun, false);
+    assert.equal(view.autoFlow.status.lastMessage, "Selected 'simple' base preset for this auto-flow draft.");
+    assert.equal(view.autoFlow.slots.find((slot) => slot.slotId === "designReview").blocks.length, 0);
+    assert.equal(view.progress.flow.id, "auto-common");
+    assert.equal(
+      view.progress.items.some((item) => item.kind === "block" && item.blockId === "review.design-loop"),
+      false,
+    );
+    controller.destroy();
+  });
+
+  it("requires unsaved auto-flow drafts to be saved before running", async () => {
+    const controller = createAutoFlowController();
+    controller.mount();
+    controller.selectFlowId("auto-common");
+    controller.selectAutoFlowPreset("simple");
+
+    await controller.openRunConfirm("auto-common");
+    const view = controller.getViewModel();
+
+    assert.equal(view.confirmation, null);
+    assert.match(view.logText, /Save this auto-flow draft before running it/);
+    assert.equal(view.autoFlow.status.lastMessage, "Save this auto-flow draft before running it.");
+    controller.destroy();
+  });
+
+  it("saves edited presets as selectable auto-config flows and switches to them", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "agentweaver-interactive-save-auto-flow-"));
+    const controller = createAutoFlowController({ cwd: tempDir });
+    try {
+      controller.mount();
+      controller.selectFlowId("auto-common");
+      controller.toggleAutoFlowBlock("auto-common", "checks.go.linter", true, "final");
+      controller.toggleAutoFlowBlock("auto-common", "checks.go.tests", true, "final");
+
+      let view = controller.getViewModel();
+      assert.equal(view.autoFlow.slots.find((slot) => slot.slotId === "final").blocks.length, 2);
+      assert.equal(
+        view.progress.items.some((item) => item.kind === "block" && item.blockId === "checks.go.linter"),
+        true,
+      );
+
+      controller.saveAutoFlowConfig("auto-common");
+      view = controller.getViewModel();
+
+      assert.equal(view.flowItems[view.selectedFlowIndex].key, "flow:auto-config:preset-standard");
+      assert.equal(view.autoFlow.source.type, "project-config");
+      assert.equal(view.progress.flow.id, "auto-config:preset-standard");
+      assert.equal(
+        view.progress.items.find((item) => item.kind === "block" && item.slotId === "final" && item.blockId === "checks.go.linter").status,
+        "pending",
+      );
+      assert.equal(
+        view.progress.items.find((item) => item.kind === "block" && item.slotId === "final" && item.blockId === "checks.go.tests").status,
+        "pending",
+      );
+
+      controller.selectFlowId("auto-common");
+      view = controller.getViewModel();
+      assert.equal(view.progress.flow.id, "auto-common");
+      assert.equal(
+        view.progress.items.some((item) => item.kind === "block" && item.blockId === "checks.go.linter"),
+        false,
+      );
+    } finally {
+      controller.destroy();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("renders shared form state independently from blessed widgets", async () => {

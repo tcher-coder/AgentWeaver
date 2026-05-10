@@ -676,6 +676,9 @@
     saveAutoFlow: function () {
       api.send({ type: "autoFlow.save" });
     },
+    saveAutoFlowAs: function (name) {
+      api.send({ type: "autoFlow.save", name: name });
+    },
     resetAutoFlow: function () {
       api.send({ type: "autoFlow.reset" });
     },
@@ -889,6 +892,21 @@
     save.textContent = "Save";
     save.disabled = blocked || !model.status || !model.status.canSave;
     save.addEventListener("click", api.saveAutoFlow);
+    var saveAs = document.createElement("button");
+    saveAs.type = "button";
+    saveAs.textContent = "Save as flow";
+    saveAs.disabled = blocked || !model.status || !model.status.canSave;
+    saveAs.addEventListener("click", function () {
+      var defaultName = model.configName && model.configName.indexOf("preset-") !== 0
+        ? model.configName
+        : "";
+      var name = window.prompt("Flow config name", defaultName);
+      var normalizedName = name ? name.trim() : "";
+      if (!normalizedName) {
+        return;
+      }
+      api.saveAutoFlowAs(normalizedName);
+    });
     var reset = document.createElement("button");
     reset.type = "button";
     reset.textContent = "Reset";
@@ -898,7 +916,7 @@
     var status = document.createElement("span");
     status.className = "auto-flow-status " + (model.status && model.status.valid ? "valid" : "invalid");
     status.textContent = (model.status && model.status.valid ? "valid" : "invalid") + " | " + text(model.status && model.status.sourceLabel, model.configName || "auto-flow");
-    toolbar.append(simple, standard, save, reset, status);
+    toolbar.append(simple, standard, save, saveAs, reset, status);
     elements.autoFlowEditor.append(toolbar);
 
     if (model.status && model.status.lastMessage) {

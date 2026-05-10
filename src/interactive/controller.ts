@@ -28,6 +28,7 @@ import {
 import {
   buildAutoFlowEditorViewModel,
   createConfigAutoFlowDefinition,
+  defaultAutoFlowConfigForPreset,
   insertAutoFlowBlock,
   removeAutoFlowBlock,
   setAutoFlowBlockEnabled,
@@ -207,8 +208,9 @@ function isGitFileStaged(file: GitChangedFile): boolean {
 
 export class InteractiveSessionController {
   private readonly listeners = new Set<(event: InteractiveSessionChangeEvent) => void>();
+  private readonly flows: InteractiveFlowDefinition[];
   private readonly flowMap: Map<string, InteractiveFlowDefinition>;
-  private readonly flowTree: FlowTreeNode[];
+  private flowTree: FlowTreeNode[];
   private readonly expandedFlowFolders = new Set<string>();
   private readonly autoFlowEditors = new Map<string, AutoFlowEditorSessionState>();
   private visibleFlowItems: VisibleFlowTreeItem[];
@@ -230,8 +232,9 @@ export class InteractiveSessionController {
     }
 
     this.state = createInitialInteractiveState(options);
-    this.flowMap = new Map(options.flows.map((flow) => [flow.id, flow]));
-    for (const flow of options.flows) {
+    this.flows = [...options.flows];
+    this.flowMap = new Map(this.flows.map((flow) => [flow.id, flow]));
+    for (const flow of this.flows) {
       if (!flow.autoFlow) {
         continue;
       }
@@ -242,7 +245,7 @@ export class InteractiveSessionController {
         saveTarget: "project",
       });
     }
-    this.flowTree = buildFlowTree(options.flows);
+    this.flowTree = buildFlowTree(this.flows);
     collectInitiallyExpandedFolderKeys(this.flowTree).forEach((key) => this.expandedFlowFolders.add(key));
     this.visibleFlowItems = computeVisibleFlowItems(this.flowTree, this.expandedFlowFolders);
     this.gitService = options.gitService ?? createGitService({
@@ -713,6 +716,19 @@ export class InteractiveSessionController {
   }
 
   selectAutoFlowPreset(preset: "simple" | "standard"): void {
+    const targetFlowId = this.state.selectedFlowId;
+    const editor = this.autoFlowEditors.get(targetFlowId);
+    if (editor) {
+      const nextConfig = defaultAutoFlowConfigForPreset(preset, editor.config.name);
+      this.autoFlowEditors.set(targetFlowId, {
+        ...editor,
+        config: nextConfig,
+        diagnostics: [],
+        lastMessage: `Selected '${preset}' base preset for this auto-flow draft.`,
+      });
+      this.emitChange();
+      return;
+    }
     const flowId = preset === "simple" ? "auto-simple" : "auto-common";
     this.selectFlowId(flowId);
   }
@@ -853,19 +869,84 @@ export class InteractiveSessionController {
       cwd: this.options.cwd,
       location: location ?? editor.saveTarget,
     });
-    this.autoFlowEditors.set(targetFlowId, {
-      ...editor,
-      definition: {
-        ...editor.definition,
-        config: cloneSavedAutoFlowConfig(result.config),
-      },
-      config: result.config,
-      diagnostics: [],
-      saveTarget: result.source.type,
-      lastMessage: `Saved auto-flow config '${result.config.name}' to ${result.source.path}.`,
-    });
-    this.appendLog(`Saved auto-flow config '${result.config.name}' to ${result.source.path}.`);
+    const savedMessage = `Saved auto-flow config '${result.config.name}' to ${result.source.path}.`;
+    const savedFlowId = this.upsertSavedAutoFlow(result.config, result.source, savedMessage);
+    const targetEditorState: AutoFlowEditorSessionState = targetFlowId === savedFlowId
+      ? {
+          ...editor,
+          definition: {
+            ...editor.definition,
+            config: cloneSavedAutoFlowConfig(result.config),
+          },
+          config: result.config,
+          diagnostics: [],
+          saveTarget: result.source.type,
+          lastMessage: savedMessage,
+        }
+      : {
+          ...editor,
+          config: cloneSavedAutoFlowConfig(editor.definition.config),
+          diagnostics: [],
+          lastMessage: `Saved as '${savedFlowId}'.`,
+        };
+    this.autoFlowEditors.set(targetFlowId, targetEditorState);
+    this.appendLog(savedMessage);
+    this.selectFlowId(savedFlowId);
     this.emitChange();
+  }
+
+  private upsertSavedAutoFlow(
+    config: SavedAutoFlowConfig,
+    source: { type: AutoFlowConfigLocation; path: string; shadowedUserPath?: string },
+    message: string,
+  ): string {
+    const flowId = `auto-config:${config.name}`;
+    const autoFlowDefinition = createConfigAutoFlowDefinition({
+      config,
+      source: {
+        type: source.type === "project" ? "project-config" : "user-config",
+        configName: config.name,
+        path: source.path,
+        ...(source.shadowedUserPath ? { shadowedUserPath: source.shadowedUserPath } : {}),
+      },
+    });
+    const flow: InteractiveFlowDefinition = {
+      id: flowId,
+      label: flowId,
+      description: `Saved configurable auto-flow config '${config.name}'.`,
+      source: "built-in",
+      treePath: ["default", "auto-configs", config.name],
+      autoFlow: autoFlowDefinition,
+      phases: [],
+    };
+    const existingIndex = this.flows.findIndex((candidate) => candidate.id === flowId);
+    if (existingIndex >= 0) {
+      this.flows[existingIndex] = flow;
+    } else {
+      this.flows.push(flow);
+    }
+    this.flowMap.set(flowId, flow);
+    this.autoFlowEditors.set(flowId, {
+      definition: autoFlowDefinition,
+      config: cloneSavedAutoFlowConfig(config),
+      diagnostics: [],
+      saveTarget: source.type,
+      lastMessage: `${message} Selected '${flowId}'.`,
+    });
+    this.expandFlowTreePath(flow.treePath);
+    this.rebuildFlowTree();
+    return flowId;
+  }
+
+  private expandFlowTreePath(pathSegments: readonly string[]): void {
+    for (let index = 1; index < pathSegments.length; index += 1) {
+      this.expandedFlowFolders.add(makeFolderKey(pathSegments.slice(0, index)));
+    }
+  }
+
+  private rebuildFlowTree(): void {
+    this.flowTree = buildFlowTree(this.flows);
+    this.refreshVisibleFlowItems();
   }
 
   hasActiveInput(): boolean {
@@ -1066,8 +1147,11 @@ export class InteractiveSessionController {
   getViewModel(layout?: { formContentWidth?: number }): InteractiveSessionViewModel {
     const selectedItem = this.selectedFlowTreeItem();
     const activeFlowId = this.activeFlowId();
-    const selectedFlow = this.flowWithAutoFlowEditor(selectedItem?.kind === "flow" ? selectedItem.flow : null);
-    const progressFlow = this.flowWithAutoFlowEditor(this.state.busy ? this.flowMap.get(activeFlowId) ?? null : selectedFlow);
+    const selectedFlow = selectedItem?.kind === "flow" ? selectedItem.flow : null;
+    const selectedFlowWithEditor = this.flowWithAutoFlowEditor(selectedFlow);
+    const progressFlow = this.state.busy
+      ? this.flowWithAutoFlowEditor(this.flowMap.get(activeFlowId) ?? null)
+      : selectedFlowWithEditor;
     const progressState =
       progressFlow && this.state.flowState.flowId === progressFlow.id
         ? this.state.flowState.executionState
@@ -1078,7 +1162,7 @@ export class InteractiveSessionController {
       failedFlowId: this.state.failedFlowId,
       waitingForUserInput: this.activeFormSession !== null,
     });
-    const helpText = `${HELP_TEXT}\n\nAvailable flows:\n${this.options.flows.map((flow) => `- ${flow.treePath.join("/")}`).join("\n")}`;
+    const helpText = `${HELP_TEXT}\n\nAvailable flows:\n${this.flows.map((flow) => `- ${flow.treePath.join("/")}`).join("\n")}`;
 
     return {
       header: this.buildHeaderText(),
@@ -1099,7 +1183,7 @@ export class InteractiveSessionController {
       selectedFlowIndex: Math.max(0, this.visibleFlowItems.findIndex((item) => item.key === this.state.selectedFlowItemKey)),
       progressTitle: this.panelTitle("Current Flow", "progress"),
       progress: progressViewModel,
-      autoFlow: selectedFlow?.autoFlow ? this.autoFlowViewForFlow(selectedFlow.id) : null,
+      autoFlow: selectedFlowWithEditor?.autoFlow ? this.autoFlowViewForFlow(selectedFlowWithEditor.id) : null,
       progressText: this.renderProgress(progressViewModel),
       progressScrollOffset: this.state.progressScrollOffset,
       descriptionText: this.renderDescription(selectedItem),
@@ -1674,8 +1758,34 @@ export class InteractiveSessionController {
       return;
     }
     const autoFlow = this.autoFlowViewForFlow(selectedItem.flow.id);
-    if (autoFlow && !autoFlow.status.canRun) {
+    if (autoFlow && !autoFlow.status.valid) {
       const message = autoFlow.diagnostics[0]?.message ?? "Auto-flow config has validation errors and cannot be run.";
+      const editor = this.autoFlowEditors.get(selectedItem.flow.id);
+      if (editor) {
+        this.autoFlowEditors.set(selectedItem.flow.id, {
+          ...editor,
+          lastMessage: message,
+        });
+      }
+      this.appendLog(message);
+      this.emitChange();
+      return;
+    }
+    if (autoFlow?.status.canReset) {
+      const message = "Save this auto-flow draft before running it.";
+      const editor = this.autoFlowEditors.get(selectedItem.flow.id);
+      if (editor) {
+        this.autoFlowEditors.set(selectedItem.flow.id, {
+          ...editor,
+          lastMessage: message,
+        });
+      }
+      this.appendLog(message);
+      this.emitChange();
+      return;
+    }
+    if (autoFlow && !autoFlow.status.canRun) {
+      const message = "Auto-flow config cannot be run.";
       const editor = this.autoFlowEditors.get(selectedItem.flow.id);
       if (editor) {
         this.autoFlowEditors.set(selectedItem.flow.id, {

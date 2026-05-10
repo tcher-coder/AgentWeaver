@@ -551,7 +551,7 @@ export function buildAutoFlowEditorViewModel(
       valid,
       canSave: valid,
       canReset,
-      canRun: valid,
+      canRun: valid && !canReset,
       saveTarget: options.saveTarget ?? "project",
       sourceLabel: sourceLabel(definition.source),
       ...(options.lastMessage ? { lastMessage: options.lastMessage } : {}),

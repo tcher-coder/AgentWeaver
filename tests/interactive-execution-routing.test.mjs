@@ -250,4 +250,87 @@ describe("interactive execution routing", () => {
       /\| implement\.run_implement\s+\| Implementation \| opencode \| minimax-coding-plan\/MiniMax-M… \|/,
     );
   });
+
+  it("uses in-memory nested flows when previewing generated auto-flow routing", async () => {
+    const childFlow = {
+      kind: "generated-child",
+      version: 1,
+      constants: {},
+      source: "generated",
+      fileName: "generated-child.json",
+      absolutePath: "in-memory:generated-child.json",
+      phases: [
+        {
+          id: "child",
+          repeatVars: {},
+          steps: [
+            {
+              id: "ask_model",
+              node: "llm-prompt",
+              routingGroup: "planning",
+              repeatVars: {},
+            },
+          ],
+        },
+      ],
+    };
+    const flowEntry = {
+      id: "auto-config:generated",
+      source: "built-in",
+      fileName: "resolved-auto-flow.json",
+      absolutePath: "in-memory:resolved-auto-flow.json",
+      treePath: ["default", "auto-flow", "auto-config:generated"],
+      flow: {
+        kind: "auto-flow",
+        version: 1,
+        constants: {},
+        source: "generated",
+        fileName: "resolved-auto-flow.json",
+        absolutePath: "in-memory:resolved-auto-flow.json",
+        phases: [
+          {
+            id: "generated",
+            repeatVars: {},
+            steps: [
+              {
+                id: "run_child",
+                node: "flow-run",
+                params: {
+                  fileName: { const: "generated-child.json" },
+                },
+                repeatVars: {},
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const seenForms = [];
+    const responses = [
+      { values: { preset: "built-in:balanced" } },
+      { values: { action: "cancel" } },
+    ];
+
+    await assert.rejects(
+      async () => interactiveRoutingModule.requestInteractiveExecutionRouting(flowEntry, async (form) => {
+        seenForms.push(form);
+        const response = responses.shift();
+        assert.ok(response, `unexpected form ${form.formId}`);
+        return response;
+      }, {
+        inMemoryFlows: {
+          "generated-child.json": childFlow,
+        },
+      }),
+      /cancelled/i,
+    );
+
+    const routingPreviewForm = seenForms.find((form) => form.formId === "flow-routing-action");
+    assert.ok(routingPreviewForm, "routing preview form should be shown");
+    assert.match(
+      routingPreviewForm.preview,
+      /\| generated\.run_child > generated-child > child\.ask_model\s+\| Planning\s+\| codex\s+\| gpt-5\.4\s+\|/,
+    );
+  });
 });

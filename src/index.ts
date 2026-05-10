@@ -1063,6 +1063,24 @@ async function loadResolvedAutoFlowExecution(
   };
 }
 
+async function flowCatalogEntryForResolvedAutoFlow(
+  identity: AutoFlowIdentity,
+  resolved: ResolvedAutoFlow,
+): Promise<{ flowEntry: FlowCatalogEntry; inMemoryFlows?: InMemoryDeclarativeFlows }> {
+  const { flow, inMemoryFlows } = await loadResolvedAutoFlowExecution(resolved);
+  return {
+    flowEntry: {
+      id: identity.flowId,
+      source: "built-in",
+      fileName: flow.fileName,
+      absolutePath: flow.absolutePath,
+      treePath: ["default", "auto-flow", identity.flowId],
+      flow,
+    },
+    ...(inMemoryFlows ? { inMemoryFlows } : {}),
+  };
+}
+
 async function runResolvedAutoFlow(
   resolved: ResolvedAutoFlow,
   identity: AutoFlowIdentity,
@@ -2759,6 +2777,45 @@ async function runInteractiveWithSessionFactory(
             if (previousScopeKey !== currentScope.scopeKey || currentScope.jiraIssueKey) {
               syncInteractiveTaskSummary(ui, currentScope, forceRefresh);
             }
+            const resolvedAutoFlow = await resolveAutoFlow(autoFlowSelection, {
+              cwd: process.cwd(),
+              scopeKey: currentScope.scopeKey,
+            });
+            const autoFlowIdentity = autoFlowIdentityForSelection(autoFlowSelection, resolvedAutoFlow);
+            const { flowEntry: autoFlowEntry, inMemoryFlows } = await flowCatalogEntryForResolvedAutoFlow(
+              autoFlowIdentity,
+              resolvedAutoFlow,
+            );
+            const routingGroups = await flowRoutingGroups(autoFlowEntry, process.cwd(), {
+              ...(inMemoryFlows ? { inMemoryFlows } : {}),
+            });
+            const resumeState = launchMode === "resume"
+              ? loadFlowRunState(currentScope.scopeKey, autoFlowIdentity.flowId)
+              : null;
+            const routingSelection = launchMode === "resume"
+              ? (resumeState?.executionRouting
+                  ? {
+                      routing: resumeState.executionRouting,
+                      selectedPreset: resumeState.selectedRoutingPreset ?? { kind: "custom", label: "Saved routing" } as const,
+                    }
+                  : null)
+              : await requestInteractiveExecutionRouting(autoFlowEntry, (form) => ui.requestUserInput(form), {
+                ...(inMemoryFlows ? { inMemoryFlows } : {}),
+              });
+            if (launchMode === "resume" && !routingSelection?.routing) {
+              throw new TaskRunnerError("Resume is impossible because execution routing was not saved. Use restart.");
+            }
+            const launchProfile = routingSelection?.routing?.defaultRoute;
+            if (routingSelection?.routing) {
+              printPanel(
+                "Effective Launch Config",
+                `preset: ${routingSelection.selectedPreset.label}\nmode: ${launchMode}\n${describeExecutionRouting(
+                  routingSelection.routing,
+                  routingGroups,
+                )}`,
+                "cyan",
+              );
+            }
             await executeCommand(
               baseConfig,
               true,
@@ -2767,9 +2824,9 @@ async function runInteractiveWithSessionFactory(
               (markdown) => ui.setSummary(markdown),
               forceRefresh,
               launchMode,
-              undefined,
-              undefined,
-              undefined,
+              launchProfile,
+              routingSelection?.routing,
+              routingSelection?.selectedPreset,
               createRuntimeServices(abortController.signal),
             );
             return;

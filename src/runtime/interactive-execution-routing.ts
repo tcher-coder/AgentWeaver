@@ -2,7 +2,7 @@ import path from "node:path";
 
 import type { FlowCatalogEntry } from "../pipeline/flow-catalog.js";
 import { flowRoutingGroups, flowRoutingKey } from "../pipeline/flow-catalog.js";
-import { loadNamedDeclarativeFlow, type LoadedDeclarativeFlow } from "../pipeline/declarative-flows.js";
+import { loadNamedDeclarativeFlow, type InMemoryDeclarativeFlows, type LoadedDeclarativeFlow } from "../pipeline/declarative-flows.js";
 import { createPipelineRegistryContext, type PipelineRegistryContext } from "../pipeline/plugin-loader.js";
 import {
   EXECUTION_ROUTING_GROUPS,
@@ -388,6 +388,7 @@ function collectEffectiveRoutedStepRows(
   registryContext?: PipelineRegistryContext,
   prefixSegments: string[] = [],
   ancestry: string[] = [],
+  inMemoryFlows?: InMemoryDeclarativeFlows,
 ): Promise<EffectiveRoutedStepRow[]> {
   if (ancestry.includes(flow.absolutePath)) {
     return Promise.resolve([]);
@@ -414,9 +415,10 @@ function collectEffectiveRoutedStepRows(
         if (!nestedFlowName || !("const" in nestedFlowName) || typeof nestedFlowName.const !== "string") {
           continue;
         }
-        const nestedFlow = await loadNamedDeclarativeFlow(nestedFlowName.const, cwd, {
-          ...(registryContext ? { registryContext } : {}),
-        });
+        const nestedFlow = inMemoryFlows?.[nestedFlowName.const]
+          ?? await loadNamedDeclarativeFlow(nestedFlowName.const, cwd, {
+            ...(registryContext ? { registryContext } : {}),
+          });
         const nestedFlowLabel = path.basename(nestedFlow.fileName, path.extname(nestedFlow.fileName));
         rows.push(
           ...await collectEffectiveRoutedStepRows(
@@ -426,6 +428,7 @@ function collectEffectiveRoutedStepRows(
             registryContext,
             [...prefixSegments, stepRef, nestedFlowLabel],
             nextAncestry,
+            inMemoryFlows,
           ),
         );
       }
@@ -440,9 +443,11 @@ export async function describeEffectiveRoutingPreview(
   routing: ResolvedExecutionRouting,
   cwd: string,
   registryContext?: PipelineRegistryContext,
+  inMemoryFlows?: InMemoryDeclarativeFlows,
 ): Promise<string> {
   const previewGroups = await flowRoutingGroups(flowEntry, cwd, {
     ...(registryContext ? { registryContext } : {}),
+    ...(inMemoryFlows ? { inMemoryFlows } : {}),
   });
   const summaryRows = [
     ["Default", routing.defaultRoute.executor, routing.defaultRoute.model],
@@ -457,7 +462,7 @@ export async function describeEffectiveRoutingPreview(
     ...formatAsciiTable(["Scope", "Executor", "Model"], summaryRows, [18, 12, 36]),
   ];
   const routedSteps = collapseRepeatedEffectiveRoutedStepRows(
-    await collectEffectiveRoutedStepRows(flowEntry.flow, cwd, routing, registryContext),
+    await collectEffectiveRoutedStepRows(flowEntry.flow, cwd, routing, registryContext, [], [], inMemoryFlows),
   );
   if (routedSteps.length === 0) {
     return lines.join("\n");
@@ -477,9 +482,17 @@ export async function describeEffectiveRoutingPreview(
 export async function requestInteractiveExecutionRouting(
   flowEntry: FlowCatalogEntry,
   requestUserInput: UserInputRequester,
+  options: {
+    cwd?: string;
+    inMemoryFlows?: InMemoryDeclarativeFlows;
+  } = {},
 ): Promise<{ routing: ResolvedExecutionRouting; selectedPreset: SelectedExecutionPreset }> {
-  const registryContext = await createPipelineRegistryContext(process.cwd());
-  const previewGroups = await flowRoutingGroups(flowEntry, process.cwd(), { registryContext });
+  const cwd = path.resolve(options.cwd ?? process.cwd());
+  const registryContext = await createPipelineRegistryContext(cwd);
+  const previewGroups = await flowRoutingGroups(flowEntry, cwd, {
+    registryContext,
+    ...(options.inMemoryFlows ? { inMemoryFlows: options.inMemoryFlows } : {}),
+  });
   const flowKey = flowRoutingKey(flowEntry);
   const namedPresets = getNamedExecutionPresets();
   const flowDefault = getFlowDefaultExecutionRouting(flowKey);
@@ -541,8 +554,9 @@ export async function requestInteractiveExecutionRouting(
     const previewText = `Preset: ${selectedPreset.label}\n${await describeEffectiveRoutingPreview(
       flowEntry,
       routing,
-      process.cwd(),
+      cwd,
       registryContext,
+      options.inMemoryFlows,
     )}`;
     const actionResult = await requestUserInput(routingActionForm(previewText));
     const action = String(actionResult.values.action ?? "start");

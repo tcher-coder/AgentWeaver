@@ -1656,8 +1656,12 @@
 
   function renderProgressRow(item, index) {
     var depth = Math.max(0, Math.min(12, Math.floor(item.depth)));
+    var detailText = renderableProgressDetail(item);
     var row = document.createElement("div");
     row.className = "progress-row kind-" + item.kind + " status-" + item.status;
+    if (detailText.length > 0) {
+      row.className += " has-detail";
+    }
     row.dataset.kind = item.kind;
     row.dataset.status = item.status;
     row.dataset.depth = String(depth);
@@ -1680,16 +1684,42 @@
     label.textContent = text(item.label, "Untitled progress item");
     body.append(label);
 
-    if (typeof item.detail === "string" && item.detail.length > 0) {
+    if (detailText.length > 0) {
       var detail = document.createElement("span");
       detail.className = "progress-detail";
-      detail.textContent = item.detail;
+      detail.textContent = detailText;
       body.append(detail);
     }
 
     row.append(marker, body);
     row.dataset.index = String(index);
     return row;
+  }
+
+  function renderableProgressDetail(item) {
+    if (typeof item.detail !== "string") {
+      return "";
+    }
+    var detail = item.detail.trim();
+    if (detail.length === 0) {
+      return "";
+    }
+    if (item.kind === "termination") {
+      return detail;
+    }
+    if ([
+      "Slot is configured.",
+      "Locked core block.",
+      "Included by preset default.",
+      "Configured in saved auto-flow config.",
+      "Optional block is disabled.",
+      "No blocks are configured for this optional slot.",
+      "All optional blocks in this slot are disabled.",
+      "Skipped because the slot override omitted this preset default block."
+    ].indexOf(detail) !== -1) {
+      return "";
+    }
+    return detail;
   }
 
   function progressMarker(status) {

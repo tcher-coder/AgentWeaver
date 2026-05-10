@@ -455,6 +455,14 @@ function rememberProgressAnchor(
   }
 }
 
+function diagnosticDetail(reason: string, diagnostics: readonly unknown[]): { detail?: string } {
+  const detail = reason.trim();
+  if (diagnostics.length === 0 || detail.length === 0) {
+    return {};
+  }
+  return { detail };
+}
+
 function buildAutoFlowProgressViewModel(
   flow: InteractiveFlowDefinition,
   flowState: FlowExecutionState | null,
@@ -498,7 +506,7 @@ function buildAutoFlowProgressViewModel(
       label: slot.title,
       depth: 0,
       status,
-      detail: slot.reason,
+      ...diagnosticDetail(slot.reason, slot.diagnostics),
       slotId: slot.slotId,
     });
     for (const { block, status: blockRuntimeStatus } of blockRows) {
@@ -508,7 +516,7 @@ function buildAutoFlowProgressViewModel(
         label: block.title,
         depth: 1,
         status: blockRuntimeStatus,
-        detail: block.reason,
+        ...diagnosticDetail(block.reason, block.diagnostics),
         slotId: block.slotId,
         blockId: block.blockId,
         locked: block.locked,

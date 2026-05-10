@@ -485,6 +485,10 @@ h2 {
   min-height: 32px;
 }
 
+.progress-row.has-detail {
+  min-height: 48px;
+}
+
 .progress-marker {
   @apply inline-flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold;
   border: 1px solid currentColor;
@@ -495,14 +499,17 @@ h2 {
   @apply grid min-w-0 gap-0.5;
 }
 
-.progress-label,
-.progress-detail {
+.progress-label {
   @apply min-w-0 overflow-hidden text-ellipsis whitespace-nowrap;
 }
 
 .progress-detail {
+  @apply min-w-0;
   color: var(--aw-muted);
   font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .progress-row.kind-group .progress-label {

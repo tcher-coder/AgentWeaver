@@ -13,6 +13,7 @@ export type ManualJiraTaskInputNodeParams = {
   outputFile: string;
   attachmentsManifestFile?: string;
   attachmentsContextFile?: string;
+  taskDescription?: string;
 };
 
 export type ManualJiraTaskInputNodeResult = {
@@ -63,29 +64,32 @@ export const manualJiraTaskInputNode: PipelineNodeDefinition<
   kind: "manual-jira-task-input",
   version: 1,
   async run(context, params) {
-    const form: UserInputFormDefinition = {
-      formId: "manual-jira-task-input",
-      title: "Manual Jira Task",
-      description: "Paste the Jira task description when Jira access is unavailable.",
-      submitLabel: "Continue",
-      fields: [
-        {
-          id: "task_description",
-          type: "text",
-          label: "Task description",
-          help: "Paste the Jira task text here. This will be stored as the raw Jira task artifact for this flow.",
-          required: true,
-          multiline: true,
-          rows: 10,
-          placeholder: "Paste Jira task title, description, acceptance criteria, comments, and links here.",
-        },
-      ],
-    };
+    let description = typeof params.taskDescription === "string" ? params.taskDescription.trim() : "";
+    if (!description) {
+      const form: UserInputFormDefinition = {
+        formId: "manual-jira-task-input",
+        title: "Manual Jira Task",
+        description: "Paste the Jira task description when Jira access is unavailable.",
+        submitLabel: "Continue",
+        fields: [
+          {
+            id: "task_description",
+            type: "text",
+            label: "Task description",
+            help: "Paste the Jira task text here. This will be stored as the raw Jira task artifact for this flow.",
+            required: true,
+            multiline: true,
+            rows: 10,
+            placeholder: "Paste Jira task title, description, acceptance criteria, comments, and links here.",
+          },
+        ],
+      };
 
-    const requester = context.requestUserInput ?? requestUserInputInTerminal;
-    const result = await requester(form);
-    validateUserInputValues(form, result.values);
-    const description = String(result.values.task_description ?? "").trim();
+      const requester = context.requestUserInput ?? requestUserInputInTerminal;
+      const result = await requester(form);
+      validateUserInputValues(form, result.values);
+      description = String(result.values.task_description ?? "").trim();
+    }
 
     writeFileSync(params.outputFile, `${JSON.stringify(buildManualJiraPayload(params.taskKey, description), null, 2)}\n`, "utf8");
     if (params.attachmentsManifestFile) {

@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { ensureScopeWorkspaceDir, jiraTaskFile } from "./artifacts.js";
 import { TaskRunnerError } from "./errors.js";
 import { buildJiraApiUrl, buildJiraBrowseUrl, extractIssueKey } from "./jira.js";
-import type { UserInputFormDefinition, UserInputRequester } from "./user-input.js";
+import { validateUserInputValues, type UserInputFormDefinition, type UserInputRequester } from "./user-input.js";
 
 export type ResolvedScope = {
   scopeType: "project";
@@ -25,6 +25,11 @@ export type RequestedJiraContext = {
   jiraIssueKey: string;
   jiraBrowseUrl: string;
   jiraApiUrl: string;
+};
+
+export type RequestedTaskSourceContext = {
+  jiraContext: RequestedJiraContext | null;
+  manualTaskDescription: string | null;
 };
 
 function gitOutput(args: string[]): string | null {
@@ -162,15 +167,31 @@ export function buildJiraTaskInputForm(options: { required?: boolean } = {}): Us
         label: "Jira issue key or browse URL",
         help: required
           ? "Example: DEMO-3288 or https://jira.example.com/browse/DEMO-3288"
-          : "Leave empty to enter the task description manually in the next step.",
+          : "Leave empty and fill Task description below when Jira is unavailable.",
         required,
       },
+      ...(!required
+        ? [
+            {
+              id: "task_description",
+              type: "text" as const,
+              label: "Task description",
+              help: "If Jira is unavailable, paste the task title, description, acceptance criteria, comments, and links here.",
+              required: false,
+              multiline: true,
+              rows: 10,
+              placeholder: "Paste Jira task title, description, acceptance criteria, comments, and links here.",
+            },
+          ]
+        : []),
     ],
   };
 }
 
 export async function requestJiraContext(requestUserInput: UserInputRequester): Promise<RequestedJiraContext> {
-  const result = await requestUserInput(buildJiraTaskInputForm());
+  const form = buildJiraTaskInputForm();
+  const result = await requestUserInput(form);
+  validateUserInputValues(form, result.values);
   const jiraRef = String(result.values.jira_ref ?? "").trim();
   if (!jiraRef) {
     throw new TaskRunnerError("Jira issue key or browse URL is required.");
@@ -178,10 +199,16 @@ export async function requestJiraContext(requestUserInput: UserInputRequester): 
   return parseJiraContext(jiraRef);
 }
 
-export async function requestOptionalJiraContext(
+export async function requestTaskSourceContext(
   requestUserInput: UserInputRequester,
-): Promise<RequestedJiraContext | null> {
-  const result = await requestUserInput(buildJiraTaskInputForm({ required: false }));
+): Promise<RequestedTaskSourceContext> {
+  const form = buildJiraTaskInputForm({ required: false });
+  const result = await requestUserInput(form);
+  validateUserInputValues(form, result.values);
   const jiraRef = String(result.values.jira_ref ?? "").trim();
-  return jiraRef ? parseJiraContext(jiraRef) : null;
+  const manualTaskDescription = String(result.values.task_description ?? "").trim();
+  return {
+    jiraContext: jiraRef ? parseJiraContext(jiraRef) : null,
+    manualTaskDescription: jiraRef ? null : manualTaskDescription,
+  };
 }

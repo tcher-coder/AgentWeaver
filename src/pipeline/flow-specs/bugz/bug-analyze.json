@@ -1,13 +1,14 @@
 {
   "kind": "bug-analyze-flow",
   "version": 1,
-  "description": "Fetches a Bug-type Jira issue, validates the issue type, generates or reuses a cached task summary, and produces structured bug analysis: root cause hypothesis, fix design, and step-by-step fix plan.",
+  "description": "Fetches a Bug-type Jira issue or collects a manual task description when Jira is unavailable, then generates or reuses a cached task summary and produces structured bug analysis: root cause hypothesis, fix design, and step-by-step fix plan.",
   "phases": [
     {
       "id": "bug_analyze",
       "steps": [
         {
           "id": "fetch_jira",
+          "when": { "ref": "params.jiraApiUrl" },
           "node": "jira-fetch",
           "params": {
             "jiraApiUrl": { "ref": "params.jiraApiUrl" },
@@ -32,7 +33,19 @@
           ]
         },
         {
+          "id": "collect_manual_jira_task",
+          "when": { "not": { "ref": "params.jiraApiUrl" } },
+          "node": "flow-run",
+          "params": {
+            "fileName": { "const": "manual-jira-input.json" },
+            "labelText": { "const": "Collecting manual Jira task source" },
+            "taskKey": { "ref": "params.taskKey" },
+            "manualTaskDescription": { "ref": "params.manualTaskDescription" }
+          }
+        },
+        {
           "id": "check_bug_issue_type",
+          "when": { "ref": "params.jiraApiUrl" },
           "node": "jira-issue-check",
           "params": {
             "labelText": { "const": "Checking Jira issue type for bug analysis" },

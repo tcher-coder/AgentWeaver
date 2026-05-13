@@ -248,6 +248,14 @@ export function validateUserInputValues(form: UserInputFormDefinition, values: U
       throw new TaskRunnerError("Provide either Jira URL/key or a short task description, not both.");
     }
   }
+
+  if (form.formId === "jira-task-input" && form.fields.some((field) => field.id === "task_description")) {
+    const jiraRef = typeof values.jira_ref === "string" ? normalizeText(values.jira_ref) : "";
+    const taskDescription = typeof values.task_description === "string" ? normalizeText(values.task_description) : "";
+    if (!jiraRef && !taskDescription) {
+      throw new TaskRunnerError("Provide either Jira URL/key or a task description.");
+    }
+  }
 }
 
 function parseBoolean(value: string): boolean | null {

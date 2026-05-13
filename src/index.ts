@@ -31,6 +31,7 @@ import {
   reviewJsonFile,
   scopeWorkspaceDir,
   flowStateFile,
+  jiraTaskFile,
   taskSummaryFile,
 } from "./artifacts.js";
 import { FlowInterruptedError, TaskRunnerError } from "./errors.js";
@@ -48,7 +49,6 @@ import {
   type FlowLaunchMode,
   type FlowRunState,
 } from "./flow-state.js";
-import { requireJiraTaskFile } from "./jira.js";
 import { validateStructuredArtifacts } from "./structured-artifacts.js";
 import {
   AGENTWEAVER_REVIEW_BLOCKING_SEVERITIES_ENV,
@@ -151,7 +151,7 @@ import { runDoctorCommand } from "./doctor/index.js";
 import {
   attachJiraContext,
   requestJiraContext,
-  requestOptionalJiraContext,
+  requestTaskSourceContext,
   resolveProjectScope,
   type ResolvedScope,
 } from "./scope.js";
@@ -232,6 +232,7 @@ type BaseConfig = {
   reviewFixPoints?: string | null;
   reviewBlockingSeverities: ReviewSeverity[];
   extraPrompt?: string | null;
+  manualTaskDescription?: string | null;
   autoFromPhase?: string | null;
   mdLang?: "en" | "ru" | null;
   dryRun: boolean;
@@ -368,14 +369,14 @@ function usage(): string {
   agentweaver git-commit [--dry] [--verbose] [--prompt <text>] [--scope <name>] [<jira-browse-url|jira-issue-key>]
   agentweaver gitlab-diff-review [--dry] [--verbose] [--prompt <text>] [--scope <name>]
   agentweaver gitlab-review [--dry] [--verbose] [--prompt <text>] [--scope <name>]
-  agentweaver bug-analyze [--dry] [--verbose] [--prompt <text>] <jira-browse-url|jira-issue-key>
-  agentweaver bug-fix [--dry] [--verbose] [--prompt <text>] <jira-browse-url|jira-issue-key>
-  agentweaver design-review [--dry] [--verbose] [--prompt <text>] <jira-browse-url|jira-issue-key>
+  agentweaver bug-analyze [--dry] [--verbose] [--prompt <text>] [<jira-browse-url|jira-issue-key>]
+  agentweaver bug-fix [--dry] [--verbose] [--prompt <text>] [<jira-browse-url|jira-issue-key>]
+  agentweaver design-review [--dry] [--verbose] [--prompt <text>] [<jira-browse-url|jira-issue-key>]
   agentweaver doctor [<category>|<check-id>] [--json]
   agentweaver instant-task [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>]
-  agentweaver mr-description [--dry] [--verbose] [--prompt <text>] <jira-browse-url|jira-issue-key>
+  agentweaver mr-description [--dry] [--verbose] [--prompt <text>] [<jira-browse-url|jira-issue-key>]
   agentweaver plan [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] [<jira-browse-url|jira-issue-key>]
-  agentweaver plan-revise [--dry] [--verbose] [--prompt <text>] <jira-browse-url|jira-issue-key>
+  agentweaver plan-revise [--dry] [--verbose] [--prompt <text>] [<jira-browse-url|jira-issue-key>]
   agentweaver playbook-init [--dry] [--verbose] [--prompt <text>] [--accept-playbook-draft] [--scope <name>]
   agentweaver task-describe [--dry] [--verbose] [--prompt <text>] [<jira-browse-url|jira-issue-key>]
   agentweaver implement [--dry] [--verbose] [--prompt <text>] [--scope <name>] [<jira-browse-url|jira-issue-key>]
@@ -444,7 +445,7 @@ Notes:
   - agentweaver auto defaults to --preset standard, equivalent to auto-common. Use --dry-run-flow to inspect the resolved preset or saved config before execution.
   - Saved auto flow configs are YAML files named .agentweaver/flow-configs/<name>.yaml or ~/.agentweaver/flow-configs/<name>.yaml; project configs take precedence over user configs.
   - Successful configurable auto runs write flow-config.yaml, resolved-flow.json, and resolved-flow-summary.json under the current scope .artifacts directory. --dry-run-flow writes none of them.
-  - auto-golang, auto-common-guided, auto-common, auto-simple, and configurable auto ask for Jira input when Jira is not passed as an argument; leave it empty to paste the task description manually in the next step. task-describe can also work from a manual task description without Jira.
+  - Task-driven flows that can run without a Jira key show Jira input and manual task text in the same first form; leave Jira empty and fill the task description when Jira is unavailable. task-describe can also work from a manual task description without Jira.
   - agentweaver web binds to 127.0.0.1 by default on an operating-system-assigned port and does not require auth unless Web UI credentials are configured.
   - External Web UI binding through --listen-all, --host 0.0.0.0, --host ::, non-loopback IPs, or hostnames other than localhost requires ${WEB_AUTH_USERNAME_ENV} and ${WEB_AUTH_PASSWORD_ENV}.
   - Web UI Basic auth over plain HTTP is suitable only on trusted networks; use TLS termination or a reverse proxy on untrusted networks.
@@ -804,6 +805,7 @@ function buildBaseConfig(
     reviewFixPoints: options.reviewFixPoints ?? null,
     reviewBlockingSeverities: options.reviewBlockingSeverities ?? resolveReviewBlockingSeveritiesFromEnv(),
     extraPrompt: options.extraPrompt ?? null,
+    manualTaskDescription: null,
     autoFromPhase: options.autoFromPhase ?? null,
     mdLang: options.mdLang ?? null,
     dryRun: options.dryRun ?? false,
@@ -818,9 +820,9 @@ function buildBaseConfig(
 function commandRequiresTask(command: string): boolean {
   return (
     command === "auto" ||
+    command === "plan" ||
     command === "plan-revise" ||
     command === "bug-analyze" ||
-    command === "bug-fix" ||
     command === "design-review" ||
     command === "mr-description" ||
     command === "auto-golang" ||
@@ -835,6 +837,11 @@ function commandRequiresTask(command: string): boolean {
 function commandSupportsManualTaskSource(command: string): boolean {
   return (
     command === "auto" ||
+    command === "plan" ||
+    command === "plan-revise" ||
+    command === "bug-analyze" ||
+    command === "design-review" ||
+    command === "mr-description" ||
     command === "auto-golang" ||
     command === "auto-common-guided" ||
     command === "auto-common" ||
@@ -850,6 +857,7 @@ function commandSupportsProjectScope(command: string): boolean {
     command === "gitlab-review" ||
     command === "instant-task" ||
     command === "playbook-init" ||
+    command === "bug-fix" ||
     command === "task-describe" ||
     command === "implement" ||
     command === "review" ||
@@ -898,17 +906,15 @@ async function resolveScopeForCommand(
   if (config.jiraRef?.trim()) {
     return resolveProjectScope(config.scopeName, config.jiraRef);
   }
-  if (config.command === "plan") {
-    return resolveProjectScope(config.scopeName);
-  }
   if (commandRequiresTask(config.command)) {
     try {
       if (commandSupportsManualTaskSource(config.command)) {
         if (launchMode === "resume" || launchMode === "continue") {
           return resolveProjectScope(config.scopeName);
         }
-        const jiraContext = await requestOptionalJiraContext(requestUserInput);
-        return resolveProjectScope(config.scopeName, jiraContext?.jiraRef ?? null);
+        const taskSource = await requestTaskSourceContext(requestUserInput);
+        config.manualTaskDescription = taskSource.manualTaskDescription;
+        return resolveProjectScope(config.scopeName, taskSource.jiraContext?.jiraRef ?? null);
       }
       const jiraContext = await requestJiraContext(requestUserInput);
       return resolveProjectScope(config.scopeName, jiraContext.jiraRef);
@@ -917,7 +923,7 @@ async function resolveScopeForCommand(
         throw new TaskRunnerError(
           commandSupportsManualTaskSource(config.command)
             ? `Command '${config.command}' requires Jira input or a manual task description.\n` +
-              "Pass Jira issue key / browse URL as an argument, or run the command in an interactive terminal, leave Jira empty, and paste the task description in the next step."
+              "Pass Jira issue key / browse URL as an argument, or run the command in an interactive terminal and fill Jira or, when Jira is unavailable, the manual task description in the first form."
             : `Command '${config.command}' requires a Jira task.\n` +
               "Pass Jira issue key / browse URL as an argument, or run the command in an interactive terminal.",
         );
@@ -1233,6 +1239,7 @@ function autoFlowParams(config: Config, forceRefreshSummary = false): Record<str
     extraPrompt: config.extraPrompt,
     reviewFixPoints: config.reviewFixPoints,
     reviewBlockingSeverities: config.reviewBlockingSeverities,
+    manualTaskDescription: config.manualTaskDescription,
     forceRefresh: forceRefreshSummary,
     mdLang: config.mdLang,
     acceptPlaybookDraft: config.command === "auto-common-guided" ? config.acceptPlaybookDraft === true : false,
@@ -1640,6 +1647,7 @@ function defaultDeclarativeFlowParams(
     jiraBrowseUrl: config.jiraBrowseUrl,
     jiraApiUrl: config.jiraApiUrl,
     jiraTaskFile: config.jiraTaskFile,
+    manualTaskDescription: config.manualTaskDescription,
     scopeKey: config.scope.scopeKey,
     workspaceDir: scopeWorkspaceDir(config.taskKey),
     extraPrompt: config.extraPrompt,
@@ -1783,6 +1791,39 @@ function requireJiraConfig(config: Config): asserts config is Config & { jiraBro
   if (!hasJiraConfig(config)) {
     throw new TaskRunnerError(`Command '${config.command}' requires Jira context in the current project scope.`);
   }
+}
+
+async function ensureJiraTaskSourceArtifact(
+  config: Config,
+  flowOverrides: DeclarativeFlowOverrides,
+  requestUserInput: UserInputRequester,
+  setSummary: ((markdown: string) => void) | undefined,
+  launchMode: FlowLaunchMode,
+  runtime: RuntimeServices,
+): Promise<void> {
+  if (hasJiraConfig(config)) {
+    if (existsSync(config.jiraTaskFile)) {
+      return;
+    }
+    if (config.verbose) {
+      process.stdout.write(`Fetching Jira issue from browse URL: ${config.jiraBrowseUrl}\n`);
+      process.stdout.write(`Resolved Jira API URL: ${config.jiraApiUrl}\n`);
+      process.stdout.write(`Saving Jira issue JSON to: ${config.jiraTaskFile}\n`);
+    }
+    await runDeclarativeFlowBySpecFile("task-source/jira-fetch.json", config, {
+      jiraApiUrl: config.jiraApiUrl,
+      taskKey: config.taskKey,
+    }, flowOverrides, requestUserInput, setSummary, launchMode, runtime);
+    return;
+  }
+
+  if (existsSync(jiraTaskFile(config.taskKey))) {
+    return;
+  }
+  await runDeclarativeFlowBySpecFile("task-source/manual-jira-input.json", config, {
+    taskKey: config.taskKey,
+    manualTaskDescription: config.manualTaskDescription,
+  }, flowOverrides, requestUserInput, setSummary, launchMode, runtime);
 }
 
 async function executeCommand(
@@ -2002,6 +2043,7 @@ async function executeCommand(
         taskContextIteration = nextArtifactIteration(config.taskKey, "task-context", "json");
         await runDeclarativeFlowBySpecFile("task-source/manual-jira-input.json", config, {
           taskKey: config.taskKey,
+          manualTaskDescription: config.manualTaskDescription,
         }, flowOverrides, requestUserInput, setSummary, launchMode, runtime);
         await runDeclarativeFlowBySpecFile("normalize-task-source.json", config, {
           taskKey: config.taskKey,
@@ -2032,11 +2074,14 @@ async function executeCommand(
   }
 
   if (config.command === "bug-analyze") {
-    requireJiraConfig(config);
     if (config.verbose) {
-      process.stdout.write(`Fetching Jira issue from browse URL: ${config.jiraBrowseUrl}\n`);
-      process.stdout.write(`Resolved Jira API URL: ${config.jiraApiUrl}\n`);
-      process.stdout.write(`Saving Jira issue JSON to: ${config.jiraTaskFile}\n`);
+      if (hasJiraConfig(config)) {
+        process.stdout.write(`Fetching Jira issue from browse URL: ${config.jiraBrowseUrl}\n`);
+        process.stdout.write(`Resolved Jira API URL: ${config.jiraApiUrl}\n`);
+        process.stdout.write(`Saving Jira issue JSON to: ${config.jiraTaskFile}\n`);
+      } else {
+        process.stdout.write("Jira issue key was not provided; collecting manual task description.\n");
+      }
     }
     await runDeclarativeFlowBySpecFile("bugz/bug-analyze.json", config, {
       jiraApiUrl: config.jiraApiUrl,
@@ -2052,6 +2097,9 @@ async function executeCommand(
   }
 
   if (config.command === "design-review") {
+    if (!hasJiraConfig(config) && config.manualTaskDescription?.trim()) {
+      await ensureJiraTaskSourceArtifact(config, flowOverrides, requestUserInput, undefined, launchMode, runtime);
+    }
     const iteration = nextDesignReviewIterationForTask(config.taskKey);
     const inputContract = resolveDesignReviewInputContract(config.taskKey);
     if (!config.dryRun) {
@@ -2109,6 +2157,9 @@ async function executeCommand(
   }
 
   if (config.command === "plan-revise") {
+    if (!hasJiraConfig(config) && config.manualTaskDescription?.trim()) {
+      await ensureJiraTaskSourceArtifact(config, flowOverrides, requestUserInput, undefined, launchMode, runtime);
+    }
     const inputContract = resolvePlanReviseInputContract(config.taskKey);
     if (!config.dryRun) {
       clearReadyToMergeFile(config.taskKey);
@@ -2230,8 +2281,6 @@ async function executeCommand(
   }
 
   if (config.command === "bug-fix") {
-    requireJiraConfig(config);
-    requireJiraTaskFile(config.jiraTaskFile);
     requireArtifacts(bugAnalyzeArtifacts(config.taskKey), "Bug-fix mode requires bug-analyze artifacts from the bug analysis phase.");
     validateStructuredArtifacts(
       [
@@ -2249,8 +2298,7 @@ async function executeCommand(
   }
 
   if (config.command === "mr-description") {
-    requireJiraConfig(config);
-    requireJiraTaskFile(config.jiraTaskFile);
+    await ensureJiraTaskSourceArtifact(config, flowOverrides, requestUserInput, undefined, launchMode, runtime);
     await runDeclarativeFlowBySpecFile("gitlab/mr-description.json", config, {
       taskKey: config.taskKey,
       iteration: nextArtifactIteration(config.taskKey, "mr-description"),
@@ -2858,8 +2906,9 @@ async function runInteractiveWithSessionFactory(
             const nextScope = await resolveScopeForCommand(baseConfig, (form) => ui.requestUserInput(form), launchMode);
             currentScope = nextScope;
           } else if (flowRequiresTaskScope(flowEntry) && !currentScope.jiraRef) {
-            const jiraContext = await requestJiraContext((form) => ui.requestUserInput(form));
-            currentScope = resolveProjectScope(null, jiraContext.jiraRef);
+            const taskSource = await requestTaskSourceContext((form) => ui.requestUserInput(form));
+            baseConfig.manualTaskDescription = taskSource.manualTaskDescription;
+            currentScope = resolveProjectScope(null, taskSource.jiraContext?.jiraRef ?? null);
           }
           ui.setScope(currentScope.scopeKey, currentScope.jiraIssueKey ?? null, currentScope.gitBranchName);
           if (previousScopeKey !== currentScope.scopeKey || currentScope.jiraIssueKey) {

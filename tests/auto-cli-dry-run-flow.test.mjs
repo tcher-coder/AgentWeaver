@@ -26,6 +26,7 @@ function runCli(args) {
       HOME: process.env.HOME,
       CODEX_BIN: "/bin/echo",
       OPENCODE_BIN: "/bin/echo",
+      JIRA_BASE_URL: "https://jira.example.test",
     },
   });
 }

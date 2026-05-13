@@ -27,7 +27,8 @@
           "params": {
             "fileName": { "const": "manual-jira-input.json" },
             "labelText": { "const": "Collecting manual Jira task source" },
-            "taskKey": { "ref": "params.taskKey" }
+            "taskKey": { "ref": "params.taskKey" },
+            "manualTaskDescription": { "ref": "params.manualTaskDescription" }
           }
         }
       ]

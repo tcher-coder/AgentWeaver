@@ -117,7 +117,7 @@ const HELP_TEXT = renderMarkdownToTerminal(
 );
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const SPINNER_INTERVAL_MS = 200;
+const SPINNER_INTERVAL_MS = 1000;
 const LOG_FLUSH_INTERVAL_MS = 120;
 
 function clamp(value: number, min: number, max: number): number {

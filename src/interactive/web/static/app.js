@@ -18,8 +18,18 @@
     autoFlowHeight: null,
     workspaceSplit: WORKSPACE_SPLIT_DEFAULT,
     logAutoscroll: true,
+    formId: null,
     formValues: {},
+    gitChangedFilesSignature: null,
     modalSignature: null,
+    renderSignatures: {
+      autoFlow: null,
+      artifact: null,
+      flows: null,
+      git: null,
+      help: null,
+      progress: null,
+    },
     artifacts: {
       signature: null,
       loading: false,
@@ -715,10 +725,12 @@
       applyWebUiSettings(message.settings);
       var uiState = captureUiState();
       state.viewModel = message.viewModel || {};
-      state.formValues = state.viewModel.form ? Object.assign({}, state.viewModel.form.values || {}) : {};
-      state.gitSelectedPaths = state.viewModel.gitWorkspace && Array.isArray(state.viewModel.gitWorkspace.selectedPaths)
-        ? state.viewModel.gitWorkspace.selectedPaths.slice()
-        : [];
+      var nextFormId = state.viewModel.form ? state.viewModel.form.formId : null;
+      if (nextFormId !== state.formId) {
+        state.formValues = state.viewModel.form ? Object.assign({}, state.viewModel.form.values || {}) : {};
+        state.formId = nextFormId;
+      }
+      syncGitSelectionFromSnapshot(state.viewModel.gitWorkspace);
       state.scrollSync.suppress = true;
       render();
       restoreUiState(uiState);
@@ -740,6 +752,36 @@
     }
   }
 
+  function syncGitSelectionFromSnapshot(gitWorkspace) {
+    if (!gitWorkspace || !Array.isArray(gitWorkspace.changedFiles)) {
+      state.gitSelectedPaths = [];
+      state.gitChangedFilesSignature = null;
+      return;
+    }
+    var validPaths = gitWorkspace.changedFiles.map(gitFilePath).filter(Boolean);
+    var validSet = new Set(validPaths);
+    var changedFilesSignature = stableJson(validPaths);
+    var serverSelected = Array.isArray(gitWorkspace.selectedPaths)
+      ? gitWorkspace.selectedPaths.filter(function (filePath) {
+        return validSet.has(filePath);
+      })
+      : [];
+    if (state.gitChangedFilesSignature !== changedFilesSignature) {
+      state.gitSelectedPaths = uniqueStrings(serverSelected);
+      state.gitChangedFilesSignature = changedFilesSignature;
+      return;
+    }
+    state.gitSelectedPaths = uniqueStrings(state.gitSelectedPaths.filter(function (filePath) {
+      return validSet.has(filePath);
+    }).concat(serverSelected));
+  }
+
+  function uniqueStrings(values) {
+    return values.filter(function (value, index, allValues) {
+      return typeof value === "string" && value.length > 0 && allValues.indexOf(value) === index;
+    });
+  }
+
   function appendLog(lines) {
     if (!lines) return;
     var wasPinned = elements.log.scrollTop + elements.log.clientHeight >= elements.log.scrollHeight - 8;
@@ -755,20 +797,84 @@
     elements.header.textContent = text(vm.header, "Local operator console");
     elements.status.textContent = text(vm.statusText, "Idle");
     elements.flowsTitle.textContent = text(vm.flowListTitle, "Flows");
-    renderAutoFlowEditor(vm);
+    renderAutoFlowEditorIfChanged(vm);
     elements.progressTitle.textContent = text(vm.progressTitle, "Progress");
-    renderProgress(vm);
+    renderProgressIfChanged(vm);
     elements.logTitle.textContent = text(vm.logTitle, "Activity");
     setTextPreservingScroll(elements.log, text(vm.logText, ""), state.logAutoscroll);
-    elements.helpText.textContent = text(vm.helpText, "No help is available.");
+    renderHelpIfChanged(vm);
     elements.helpPanel.hidden = !vm.helpVisible;
     elements.help.setAttribute("aria-pressed", vm.helpVisible ? "true" : "false");
 
-    renderFlows(vm);
-    renderGitWorkspace(vm);
+    renderFlowsIfChanged(vm);
+    renderGitWorkspaceIfChanged(vm);
     renderGitDiffDrawer(vm);
     renderModal(vm);
-    renderArtifactExplorer(vm);
+    renderArtifactExplorerIfChanged(vm);
+  }
+
+  function renderIfSignatureChanged(name, signature, renderFn) {
+    if (state.renderSignatures[name] === signature) {
+      return;
+    }
+    state.renderSignatures[name] = signature;
+    renderFn();
+  }
+
+  function renderAutoFlowEditorIfChanged(vm) {
+    renderIfSignatureChanged("autoFlow", stableJson({
+      autoFlow: vm && vm.autoFlow,
+      blocked: hasBlockingInput(vm),
+      height: state.autoFlowHeight,
+    }), function () {
+      renderAutoFlowEditor(vm);
+    });
+  }
+
+  function renderArtifactExplorerIfChanged(vm) {
+    renderIfSignatureChanged("artifact", stableJson({
+      explorer: artifactState(vm),
+      blocked: hasBlockingInput(vm),
+    }), function () {
+      renderArtifactExplorer(vm);
+    });
+  }
+
+  function renderFlowsIfChanged(vm) {
+    renderIfSignatureChanged("flows", stableJson({
+      flowItems: vm && vm.flowItems,
+      selectedFlowIndex: vm && vm.selectedFlowIndex,
+    }), function () {
+      renderFlows(vm);
+    });
+  }
+
+  function renderGitWorkspaceIfChanged(vm) {
+    renderIfSignatureChanged("git", stableJson({
+      gitWorkspace: gitWorkspace(vm),
+      blocked: hasBlockingInput(vm),
+      selectedPaths: state.gitSelectedPaths,
+      commitMessage: state.gitCommitMessage,
+    }), function () {
+      renderGitWorkspace(vm);
+    });
+  }
+
+  function renderHelpIfChanged(vm) {
+    renderIfSignatureChanged("help", stableJson({
+      helpText: vm && vm.helpText,
+    }), function () {
+      elements.helpText.textContent = text(vm.helpText, "No help is available.");
+    });
+  }
+
+  function renderProgressIfChanged(vm) {
+    renderIfSignatureChanged("progress", stableJson({
+      progress: vm && vm.progress,
+      progressText: vm && vm.progressText,
+    }), function () {
+      renderProgress(vm);
+    });
   }
 
   function gitWorkspace(vm) {

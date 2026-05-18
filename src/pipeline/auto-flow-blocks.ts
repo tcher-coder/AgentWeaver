@@ -39,6 +39,7 @@ function sourcePhase(): DeclarativePhaseSpec {
           fileName: constant("manual-jira-input.json"),
           labelText: constant("Collecting manual Jira task source"),
           taskKey: ref("params.taskKey"),
+          manualTaskDescription: ref("params.manualTaskDescription"),
         },
       },
     ],

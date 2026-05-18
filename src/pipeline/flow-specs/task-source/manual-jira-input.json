@@ -18,6 +18,7 @@
                 "taskKey": { "ref": "params.taskKey" }
               }
             },
+            "taskDescription": { "ref": "params.manualTaskDescription" },
             "attachmentsManifestFile": {
               "artifact": {
                 "kind": "jira-attachments-manifest-file",

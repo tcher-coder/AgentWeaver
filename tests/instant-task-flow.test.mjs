@@ -214,7 +214,7 @@ describe("instant-task command and flow", () => {
     assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
   });
 
-  it("uses the expected top-level pipeline phases", () => {
+  it("uses the expected top-level pipeline phases", async () => {
     const flow = await loadDeclarativeFlow({ source: "built-in", fileName: "instant-task.json" });
     assert.deepEqual(flow.phases.map((phase) => phase.id), [
       "source",
@@ -226,7 +226,7 @@ describe("instant-task command and flow", () => {
     ]);
   });
 
-  it("reuses the stored instant-task input artifact unless interactive restart requests editing", () => {
+  it("reuses the stored instant-task input artifact unless interactive restart requests editing", async () => {
     const flow = await loadDeclarativeFlow({ source: "built-in", fileName: "task-source/manual-input.json" });
     const sourcePhase = flow.phases.find((phase) => phase.id === "source");
     const editStep = sourcePhase?.steps.find((step) => step.id === "edit_task_source");
@@ -280,7 +280,7 @@ describe("instant-task command and flow", () => {
     });
   });
 
-  it("requires the exact rerun planning iteration artifacts before reporting plan success", () => {
+  it("requires the exact rerun planning iteration artifacts before reporting plan success", async () => {
     const flow = await loadDeclarativeFlow({ source: "built-in", fileName: "plan.json" });
     const planPhase = flow.phases.find((phase) => phase.id === "plan");
     const runPlanStep = planPhase?.steps.find((step) => step.id === "run_plan");

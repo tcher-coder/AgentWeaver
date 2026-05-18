@@ -10,7 +10,9 @@ import { designReviewVerdictNode } from "../src/pipeline/nodes/design-review-ver
 import { flowRunNode } from "../src/pipeline/nodes/flow-run-node.js";
 import { manualJiraTaskInputNode } from "../src/pipeline/nodes/manual-jira-task-input-node.js";
 import type { FlowRunResumeEnvelope } from "../src/pipeline/flow-run-resume.js";
+import type { ExpandedPhaseExecutionState } from "../src/pipeline/spec-types.js";
 import { createArtifactRegistry } from "../src/runtime/artifact-registry.js";
+import type { UserInputFormDefinition } from "../src/user-input.js";
 
 const TEMP_SCOPE = "test-scope-design-review-verdict";
 
@@ -31,6 +33,13 @@ function writeDesignReviewJson(taskKey: string, iteration: number, status: strin
   mkdirSync(artifactsDir, { recursive: true });
   const jsonPath = join(artifactsDir, `design-review-${taskKey}-${iteration}.json`);
   writeFileSync(jsonPath, JSON.stringify({ status, summary }, null, 2));
+}
+
+function requireFlowRunResumeEnvelope(value: FlowRunResumeEnvelope | null): FlowRunResumeEnvelope {
+  if (!value) {
+    throw new Error("Expected persisted flow-run resume envelope.");
+  }
+  return value;
 }
 
 describe("design-review-verdict-node", () => {
@@ -64,7 +73,7 @@ describe("design-review-verdict-node", () => {
       const result = await manualJiraTaskInputNode.run(
         {
           issueKey: "TASK-1",
-          requestUserInput: async (form) => ({
+          requestUserInput: async (form: UserInputFormDefinition) => ({
             formId: form.formId,
             submittedAt: "2026-05-07T00:00:00.000Z",
             values: {
@@ -86,6 +95,32 @@ describe("design-review-verdict-node", () => {
       expect(existsSync(attachmentsManifestFile)).toBe(true);
       expect(existsSync(attachmentsContextFile)).toBe(true);
       expect(result.outputs?.[0]?.manifest?.logicalKey).toBe("artifacts/jira-task.json");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("manual Jira fallback should use the task description collected by the first Jira task form", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "agentweaver-manual-jira-prefilled-"));
+    try {
+      const outputFile = join(tempDir, "TASK-2.json");
+
+      await manualJiraTaskInputNode.run(
+        {
+          issueKey: "TASK-2",
+          requestUserInput: async () => {
+            throw new Error("manual Jira node should not request input when taskDescription is provided");
+          },
+        } as never,
+        {
+          taskKey: "TASK-2",
+          outputFile,
+          taskDescription: "Manual description from the first Jira task form",
+        },
+      );
+
+      const payload = JSON.parse(readFileSync(outputFile, "utf8"));
+      expect(payload.fields.description).toBe("Manual description from the first Jira task form");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -132,6 +167,7 @@ describe("design-review-verdict-node", () => {
     expect(manualStep).toBeDefined();
     expect(manualStep!.when).toEqual({ not: { ref: "params.jiraApiUrl" } });
     expect(manualStep!.params?.fileName).toEqual({ const: "manual-jira-input.json" });
+    expect(manualStep!.params?.manualTaskDescription).toEqual({ ref: "params.manualTaskDescription" });
     expect(manualStep!.params?.repromptInstantTaskInput).toBeUndefined();
   });
 
@@ -144,7 +180,26 @@ describe("design-review-verdict-node", () => {
       expect(manualStep).toBeDefined();
       expect(manualStep!.when).toEqual({ not: { ref: "params.jiraApiUrl" } });
       expect(manualStep!.params?.fileName).toEqual({ const: "manual-jira-input.json" });
+      expect(manualStep!.params?.manualTaskDescription).toEqual({ ref: "params.manualTaskDescription" });
     }
+  });
+
+  it("bug-analyze should support manual task input when Jira is omitted", async () => {
+    const flow = await loadDeclarativeFlow({ source: "built-in", fileName: "bugz/bug-analyze.json" });
+    const phase = flow.phases.find((p) => p.id === "bug_analyze");
+    expect(phase).toBeDefined();
+
+    const jiraStep = phase!.steps.find((s) => s.id === "fetch_jira");
+    const manualStep = phase!.steps.find((s) => s.id === "collect_manual_jira_task");
+    const issueTypeStep = phase!.steps.find((s) => s.id === "check_bug_issue_type");
+
+    expect(jiraStep).toBeDefined();
+    expect(jiraStep!.when).toEqual({ ref: "params.jiraApiUrl" });
+    expect(manualStep).toBeDefined();
+    expect(manualStep!.when).toEqual({ not: { ref: "params.jiraApiUrl" } });
+    expect(manualStep!.params?.fileName).toEqual({ const: "manual-jira-input.json" });
+    expect(manualStep!.params?.manualTaskDescription).toEqual({ ref: "params.manualTaskDescription" });
+    expect(issueTypeStep!.when).toEqual({ ref: "params.jiraApiUrl" });
   });
 
   it("auto-common design_review_loop phase should stop flow if sub-flow is stopped", async () => {
@@ -429,18 +484,24 @@ describe("flow-run nested resume", () => {
       },
     )).rejects.toThrow();
 
-    expect(persistedEnvelope?.resumeKind).toBe("flow-run");
-    expect(persistedEnvelope?.executionState.phases.find((phase) => phase.id === "cleanup")?.steps[0]?.value).toEqual({
+    const persisted = requireFlowRunResumeEnvelope(persistedEnvelope);
+
+    expect(persisted.resumeKind).toBe("flow-run");
+    expect(
+      persisted.executionState.phases.find((phase: ExpandedPhaseExecutionState) => phase.id === "cleanup")?.steps[0]?.value,
+    ).toEqual({
       cleared: true,
     });
-    expect(persistedEnvelope?.executionState.phases.find((phase) => phase.id === "read_target")?.status).toBe("running");
+    expect(
+      persisted.executionState.phases.find((phase: ExpandedPhaseExecutionState) => phase.id === "read_target")?.status,
+    ).toBe("running");
 
     writeFileSync(inputPath, "resume-ok\n");
 
     const resumed = await flowRunNode.run(
       {
         ...baseContext,
-        resumeStepValue: persistedEnvelope ?? undefined,
+        resumeStepValue: persisted,
       },
       {
         fileName: "nested-resume-child.json",
@@ -450,9 +511,13 @@ describe("flow-run nested resume", () => {
     );
 
     expect(resumed.value.resumeKind).toBe("flow-run");
-    expect(resumed.value.executionState.phases.find((phase) => phase.id === "cleanup")?.steps[0]?.value).toEqual({
+    expect(
+      resumed.value.executionState.phases.find((phase: ExpandedPhaseExecutionState) => phase.id === "cleanup")?.steps[0]?.value,
+    ).toEqual({
       cleared: true,
     });
-    expect(resumed.value.executionState.phases.find((phase) => phase.id === "read_target")?.steps[0]?.status).toBe("done");
+    expect(
+      resumed.value.executionState.phases.find((phase: ExpandedPhaseExecutionState) => phase.id === "read_target")?.steps[0]?.status,
+    ).toBe("done");
   });
 });

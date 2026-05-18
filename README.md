@@ -99,7 +99,7 @@ User-invokable built-in commands currently map to these flow specs:
 - `review` — performs code review of current changes against the task design and plan; produces structured review findings with severity levels and a ready-to-merge verdict
 - `review-fix` — takes review findings, auto-selects blockers and criticals (or lets the developer pick manually), builds a targeted fix prompt, and applies fixes locally; runs mandatory checks after modifications
 - `review-loop` — iteratively runs review → review-fix cycles up to 5 times; stops early when ready-to-merge is achieved; each iteration auto-selects blockers and critical findings for fixing
-- `bug-analyze` — fetches a Bug-type Jira issue, validates the issue type, generates or reuses a cached task summary, and produces structured bug analysis: root cause hypothesis, fix design, and step-by-step fix plan
+- `bug-analyze` — fetches a Bug-type Jira issue or accepts manual task text when Jira is unavailable, validates Jira issue type only for Jira-backed runs, generates or reuses a cached task summary, and produces structured bug analysis: root cause hypothesis, fix design, and step-by-step fix plan
 - `bug-fix` — applies the fix designed in bug-analyze; uses the root cause hypothesis, fix design, and fix plan artifacts as the source of truth to implement code changes locally
 - `git-commit` — four-phase commit workflow: collects git status and diff, generates a commit message via LLM, presents a file selection form, then shows the editable message for confirmation and executes the commit
 - `gitlab-diff-review` — prompts for a GitLab merge request URL, fetches the MR diff via GitLab API, and runs LLM-backed code review producing structured findings with severity levels and a ready-to-merge verdict
@@ -352,7 +352,7 @@ Notes:
 - `--force` only affects interactive mode: it skips loading cached summary-pane content on startup so Jira-backed flows that regenerate summary artifacts can repopulate it during the run
 - Saved auto flow configs are discovered at `.agentweaver/flow-configs/<name>.yaml` first and `~/.agentweaver/flow-configs/<name>.yaml` second; the project config wins when both exist
 - Non-dry `agentweaver auto` runs write `flow-config.yaml`, `resolved-flow.json`, and `resolved-flow-summary.json` under `.agentweaver/scopes/<scopeKey>/.artifacts`
-- `auto-golang`, `auto-common-guided`, `auto-common`, `auto-simple`, and configurable `auto` ask for Jira input interactively when Jira input is omitted; leave it empty to paste task text in the next step when Jira is unavailable
+- Task-driven flows that can run without a Jira key show Jira input and manual task text in the same first form; leave Jira empty and fill the task description when Jira is unavailable
 - `task-describe` can also work from manual task description input without Jira
 - `gitlab-review` and `gitlab-diff-review` ask for a GitLab merge request URL interactively
 - `auto-status` and `auto-reset` currently operate on persisted state for `auto-golang`

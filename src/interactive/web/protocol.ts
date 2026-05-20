@@ -1,4 +1,9 @@
-import type { UserInputFormValues } from "../../user-input.js";
+import {
+  isUploadedTextFileValue,
+  validateUploadedTextFileValue,
+  type UserInputFieldValue,
+  type UserInputFormValues,
+} from "../../user-input.js";
 import type { AgentWeaverWebUiSettings, AgentWeaverWebUiSettingsPatch } from "../../runtime/settings.js";
 import type { FocusPane } from "../types.js";
 import type { InteractiveSessionViewModel } from "../view-model.js";
@@ -17,7 +22,7 @@ export type ClientAction =
   | { type: "confirm.accept"; action?: string; actionId?: string }
   | { type: "confirm.cancel"; actionId?: string }
   | { type: "form.update"; values: UserInputFormValues; actionId?: string }
-  | { type: "form.fieldUpdate"; fieldId: string; value: UserInputFormValues[string]; actionId?: string }
+  | { type: "form.fieldUpdate"; fieldId: string; value: UserInputFieldValue; actionId?: string }
   | { type: "form.submit"; values?: UserInputFormValues; actionId?: string }
   | { type: "form.cancel"; actionId?: string }
   | { type: "interrupt.openConfirm"; actionId?: string }
@@ -193,7 +198,30 @@ function requireValues(value: Record<string, unknown>, fieldName = "values"): Us
   if (!isRecord(values)) {
     throw new Error(`${fieldName} must be an object.`);
   }
+  for (const [key, candidate] of Object.entries(values)) {
+    requireFormValue(candidate, `${fieldName}.${key}`);
+  }
   return values as UserInputFormValues;
+}
+
+function requireFormValue(value: unknown, fieldName: string): UserInputFieldValue {
+  if (
+    typeof value === "string"
+    || typeof value === "boolean"
+    || value === null
+    || (Array.isArray(value) && value.every((item) => typeof item === "string"))
+  ) {
+    return value;
+  }
+  if (isUploadedTextFileValue(value)) {
+    try {
+      validateUploadedTextFileValue(value, fieldName);
+    } catch (error) {
+      throw new Error((error as Error).message);
+    }
+    return value;
+  }
+  throw new Error(`${fieldName} must be a string, boolean, string array, null, or text-file upload value.`);
 }
 
 function requireStringArray(value: Record<string, unknown>, fieldName: string): string[] {
@@ -279,14 +307,7 @@ export function parseClientAction(raw: string): ClientAction {
     if (!("value" in parsed)) {
       throw new Error("value is required.");
     }
-    const value = parsed.value;
-    if (
-      typeof value !== "string"
-      && typeof value !== "boolean"
-      && (!Array.isArray(value) || value.some((item) => typeof item !== "string"))
-    ) {
-      throw new Error("value must be a string, boolean, or string array.");
-    }
+    const value = requireFormValue(parsed.value, "value");
     return { type: "form.fieldUpdate", fieldId, value, ...(actionId ? { actionId } : {}) };
   }
   if (parsed.type === "form.submit") {

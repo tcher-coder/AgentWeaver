@@ -8,6 +8,16 @@ const { parseClientAction } = await import(
   pathToFileURL(path.join(distRoot, "interactive/web/protocol.js")).href
 );
 
+const textFileValue = {
+  kind: "text-file",
+  name: "task.md",
+  mediaType: "text/markdown",
+  extension: "md",
+  sizeBytes: 24,
+  sha256: "b".repeat(64),
+  content: "# Task\n",
+};
+
 describe("interactive web protocol", () => {
   it("accepts every semantic client action", () => {
     const actions = [
@@ -21,7 +31,9 @@ describe("interactive web protocol", () => {
       { type: "confirm.cancel" },
       { type: "form.update", values: { name: "Ada" } },
       { type: "form.fieldUpdate", fieldId: "name", value: "Ada" },
+      { type: "form.fieldUpdate", fieldId: "task_file", value: textFileValue },
       { type: "form.submit", values: { name: "Ada" } },
+      { type: "form.submit", values: { task_file: textFileValue } },
       { type: "form.cancel" },
       { type: "interrupt.openConfirm" },
       { type: "flow.interrupt", flowId: "plan" },
@@ -89,6 +101,10 @@ describe("interactive web protocol", () => {
     assert.throws(() => parseClientAction(JSON.stringify({ type: "folder.toggle", key: "" })), /key must be a non-empty string/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "form.update", values: [] })), /values must be an object/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "form.fieldUpdate", fieldId: "name" })), /value is required/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "form.fieldUpdate", fieldId: "task_file", value: { name: "task.md" } })), /value must be/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "form.fieldUpdate", fieldId: "task_file", value: { ...textFileValue, extension: "pdf" } })), /extension is not supported/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "form.fieldUpdate", fieldId: "task_file", value: { ...textFileValue, sizeBytes: "24" } })), /size must be/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "form.submit", values: { task_file: { ...textFileValue, content: 42 } } })), /content must be a string/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "scroll", pane: "bad", delta: 1 })), /scroll pane/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "scroll", pane: "log" })), /requires delta or offset/);
   });

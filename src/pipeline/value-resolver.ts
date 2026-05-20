@@ -54,6 +54,7 @@ import {
   reviewJsonFile,
   runGoLinterResultJsonFile,
   runGoTestsResultJsonFile,
+  resolvedTaskSourceFile,
   taskSummaryFile,
   taskDescribeInputJsonFile,
   taskSummaryJsonFile,
@@ -311,6 +312,8 @@ function resolveArtifact(spec: ArtifactRefSpec, context: ResolverContext): strin
       return taskSummaryJsonFile(taskKey, iteration);
     case "task-describe-input-json-file":
       return taskDescribeInputJsonFile(taskKey);
+    case "task-source-file":
+      return resolvedTaskSourceFile(taskKey);
     case "git-status-json-file":
       return gitStatusJsonFile(taskKey);
     case "git-diff-file":

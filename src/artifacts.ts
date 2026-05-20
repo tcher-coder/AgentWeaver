@@ -1,9 +1,11 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
 import { TaskRunnerError } from "./errors.js";
 export const READY_TO_MERGE_FILE = "ready-to-merge.md";
+export const TASK_SOURCE_FILE_EXTENSIONS = ["md", "markdown", "txt", "xml"] as const;
+export type TaskSourceFileExtension = (typeof TASK_SOURCE_FILE_EXTENSIONS)[number];
 
 export function scopesRootDir(): string {
   return path.join(process.cwd(), ".agentweaver", "scopes");
@@ -260,6 +262,37 @@ export function projectGuidanceJsonFile(taskKey: string, phase: ProjectGuidanceA
 
 export function taskDescribeInputJsonFile(taskKey: string): string {
   return taskArtifactsFile(taskKey, `task-describe-input-${taskKey}.json`);
+}
+
+export function normalizeTaskSourceFileExtension(extension: string): TaskSourceFileExtension {
+  const normalized = extension.trim().replace(/^\./, "").toLowerCase();
+  if (!TASK_SOURCE_FILE_EXTENSIONS.includes(normalized as TaskSourceFileExtension)) {
+    throw new TaskRunnerError(`Unsupported task source file extension '${extension}'.`);
+  }
+  return normalized as TaskSourceFileExtension;
+}
+
+export function taskSourceFile(taskKey: string, extension: TaskSourceFileExtension): string {
+  return taskArtifactsFile(taskKey, `task-source-${taskKey}.${extension}`);
+}
+
+export function taskSourceFileByExtension(taskKey: string, extension: string): string {
+  return taskSourceFile(taskKey, normalizeTaskSourceFileExtension(extension));
+}
+
+export function resolvedTaskSourceFile(taskKey: string): string {
+  const existing = TASK_SOURCE_FILE_EXTENSIONS
+    .map((extension) => taskSourceFile(taskKey, extension))
+    .filter((candidate) => existsSync(candidate))
+    .map((candidate) => ({
+      path: candidate,
+      mtimeMs: statSync(candidate).mtimeMs,
+    }))
+    .sort((left, right) => right.mtimeMs - left.mtimeMs || left.path.localeCompare(right.path));
+  if (existing[0]) {
+    return existing[0].path;
+  }
+  return taskSourceFile(taskKey, "txt");
 }
 
 export function instantTaskInputJsonFile(taskKey: string): string {

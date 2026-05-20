@@ -139,4 +139,20 @@ describe("flow spec routing groups", () => {
     assert.equal(existsSync(path.join(distRoot, "structured-artifact-schemas.json")), true);
     assert.equal(existsSync(path.join(distRoot, "interactive/web/static/index.html")), true);
   });
+
+  it("declares task describe file upload source and raw task-source prompt variable", () => {
+    const spec = JSON.parse(readFileSync(path.join(distRoot, "pipeline/flow-specs/task-describe.json"), "utf8"));
+    const collectStep = spec.phases[0].steps.find((step) => step.id === "collect_task_source");
+    const fields = collectStep.params.fields.list.map((entry) => entry.const);
+    const taskFile = fields.find((field) => field.id === "task_file");
+    const runFromInput = spec.phases[0].steps.find((step) => step.id === "run_task_describe_from_input");
+
+    assert.ok(taskFile);
+    assert.equal(taskFile.type, "text-file");
+    assert.equal(taskFile.maxBytes, 524288);
+    assert.deepEqual(taskFile.accept, [".md", ".markdown", ".txt", ".xml", "text/plain", "text/markdown", "text/xml", "application/xml"]);
+    assert.equal(runFromInput.prompt.vars.task_source_file.artifact.kind, "task-source-file");
+    assert.match(runFromInput.prompt.inlineTemplate, /values\.task_file is present/);
+    assert.match(runFromInput.prompt.inlineTemplate, /raw uploaded task source artifact/);
+  });
 });

@@ -1538,6 +1538,55 @@ h2 {
   @apply grid gap-1.5;
 }
 
+.text-file-field {
+  @apply grid gap-2;
+}
+
+.text-file-controls {
+  @apply flex flex-wrap items-center gap-2;
+}
+
+.text-file-controls input[type="file"] {
+  @apply sr-only;
+}
+
+.text-file-button {
+  @apply inline-flex min-h-8 cursor-pointer items-center justify-center rounded-md px-3 py-1.5 text-sm font-semibold transition;
+  border: 1px solid var(--aw-border-strong);
+  background: var(--aw-control-bg);
+  color: var(--aw-text);
+}
+
+.text-file-button:hover,
+.text-file-button:focus-visible {
+  border-color: var(--aw-accent);
+  color: var(--aw-accent-strong);
+  outline: 2px solid transparent;
+  box-shadow: 0 0 0 3px var(--aw-control-ring);
+}
+
+.text-file-status {
+  min-height: 18px;
+  color: var(--aw-danger);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.text-file-meta {
+  color: var(--aw-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.text-file-preview {
+  @apply max-h-44 overflow-auto rounded-md p-2;
+  border: 1px solid var(--aw-border);
+  background: var(--aw-code-bg);
+  color: var(--aw-text);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
 .error-text {
   color: var(--aw-danger);
   font-weight: 700;

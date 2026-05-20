@@ -676,6 +676,65 @@ describe("static Artifact Explorer app", () => {
     assert.match(harness.document.getElementById("git-feedback").textContent, /No Git remote is configured/);
   });
 
+  it("renders text-file form fields and sends structured file updates", async () => {
+    const harness = createHarness(() => createResponse({ scopeKey: "ag-file", items: [] }));
+    harness.sendSnapshot(progressSnapshot([], {
+      form: {
+        formId: "task-describe-source-input",
+        title: "Task Describe Source",
+        definition: {
+          title: "Task Describe Source",
+          description: "Pick a source",
+          submitLabel: "Generate description",
+        },
+        values: {
+          jira_ref: "",
+          task_file: null,
+          task_description: "",
+        },
+        fields: [
+          {
+            id: "task_file",
+            type: "text-file",
+            label: "Task source file",
+            accept: [".md", ".markdown", ".txt", ".xml"],
+            maxBytes: 524288,
+            buttonLabel: "Upload file",
+          },
+        ],
+      },
+    }));
+
+    const fileField = harness.document.querySelector(".text-file-field");
+    assert.ok(fileField);
+    assert.match(fileField.textContent, /Upload file/);
+
+    const input = fileField.querySelector("input");
+    input.files = [{
+      name: "task.md",
+      type: "",
+      size: 18,
+      text: async () => "# Task\r\nDetails\r\n",
+    }];
+    input.dispatchEvent({ type: "change", target: input });
+    await flush();
+
+    const update = harness.socket.sent.at(-1);
+    assert.equal(update.type, "form.fieldUpdate");
+    assert.equal(update.fieldId, "task_file");
+    assert.equal(update.value.kind, "text-file");
+    assert.equal(update.value.name, "task.md");
+    assert.equal(update.value.extension, "md");
+    assert.equal(update.value.mediaType, "text/markdown");
+    assert.equal(update.value.content, "# Task\nDetails\n");
+
+    const remove = harness.document.querySelector(".text-file-remove");
+    remove.click();
+    assert.equal(harness.socket.sent.at(-1).type, "form.fieldUpdate");
+    assert.equal(harness.socket.sent.at(-1).fieldId, "task_file");
+    assert.equal(harness.socket.sent.at(-1).value, null);
+  });
+
   it("renders structured progress rows with status-specific classes instead of parsing progressText", () => {
     const harness = createHarness(() => createResponse({ scopeKey: "ag-120", items: [] }));
     harness.sendSnapshot(progressSnapshot([

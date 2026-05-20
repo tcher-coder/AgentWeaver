@@ -445,7 +445,7 @@ Notes:
   - agentweaver auto defaults to --preset standard, equivalent to auto-common. Use --dry-run-flow to inspect the resolved preset or saved config before execution.
   - Saved auto flow configs are YAML files named .agentweaver/flow-configs/<name>.yaml or ~/.agentweaver/flow-configs/<name>.yaml; project configs take precedence over user configs.
   - Successful configurable auto runs write flow-config.yaml, resolved-flow.json, and resolved-flow-summary.json under the current scope .artifacts directory. --dry-run-flow writes none of them.
-  - Task-driven flows that can run without a Jira key show Jira input and manual task text in the same first form; leave Jira empty and fill the task description when Jira is unavailable. task-describe can also work from a manual task description without Jira.
+  - Task-driven flows that can run without a Jira key show Jira input and manual task text in the same first form; leave Jira empty and fill the task description when Jira is unavailable. In the Web UI, task-describe also accepts one uploaded UTF-8 .md, .markdown, .txt, or .xml task source file.
   - agentweaver web binds to 127.0.0.1 by default on an operating-system-assigned port and does not require auth unless Web UI credentials are configured.
   - External Web UI binding through --listen-all, --host 0.0.0.0, --host ::, non-loopback IPs, or hostnames other than localhost requires ${WEB_AUTH_USERNAME_ENV} and ${WEB_AUTH_PASSWORD_ENV}.
   - Web UI Basic auth over plain HTTP is suitable only on trusted networks; use TLS termination or a reverse proxy on untrusted networks.

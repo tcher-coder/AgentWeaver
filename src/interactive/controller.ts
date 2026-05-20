@@ -1523,6 +1523,9 @@ export class InteractiveSessionController {
       footer = field.multiline
         ? "Form: Enter newline | Tab switch | Ctrl+S submit | Esc cancel"
         : `Form: Type text | Enter ${isLastField ? "submit" : "next"} | Tab switch | Esc cancel`;
+    } else if (field.type === "text-file") {
+      lines.push("", "File upload is available in the web UI only.");
+      footer = `Form: Enter ${isLastField ? "submit" : "next"} | Tab switch | Esc cancel`;
     } else {
       const preview = session.form.preview?.trim() ?? "";
       if (preview) {

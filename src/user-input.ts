@@ -11,6 +11,22 @@ export type UserInputOption = {
 
 export type UserInputOptionsResolver = (values: UserInputFormValues) => UserInputOption[];
 
+export const TEXT_FILE_FIELD_DEFAULT_MAX_BYTES = 512 * 1024;
+export const TEXT_FILE_ALLOWED_EXTENSIONS = ["md", "markdown", "txt", "xml"] as const;
+export const TEXT_FILE_ALLOWED_MEDIA_TYPES = ["text/plain", "text/markdown", "text/xml", "application/xml"] as const;
+
+export type UploadedTextFileExtension = (typeof TEXT_FILE_ALLOWED_EXTENSIONS)[number];
+export type UploadedTextFileValue = {
+  kind: "text-file";
+  name: string;
+  mediaType: string;
+  extension: UploadedTextFileExtension;
+  sizeBytes: number;
+  sha256: string;
+  content?: string;
+  storedPath?: string;
+};
+
 export type UserInputFieldDefinition =
   | {
       id: string;
@@ -30,6 +46,16 @@ export type UserInputFieldDefinition =
       multiline?: boolean;
       rows?: number;
       placeholder?: string;
+    }
+  | {
+      id: string;
+      type: "text-file";
+      label: string;
+      help?: string;
+      required?: boolean;
+      accept?: string[];
+      maxBytes?: number;
+      buttonLabel?: string;
     }
   | {
       id: string;
@@ -61,7 +87,8 @@ export type UserInputFormDefinition = {
   fields: UserInputFieldDefinition[];
 };
 
-export type UserInputFormValues = Record<string, string | boolean | string[]>;
+export type UserInputFieldValue = string | boolean | string[] | UploadedTextFileValue | null;
+export type UserInputFormValues = Record<string, UserInputFieldValue>;
 
 export type UserInputResult = {
   formId: string;
@@ -75,12 +102,96 @@ function normalizeText(value: string): string {
   return value.trim();
 }
 
-export function defaultValueForField(field: UserInputFieldDefinition): string | boolean | string[] {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function normalizeTextFileContent(content: string): string {
+  return content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+export function normalizeTextFileExtension(extension: string): UploadedTextFileExtension | null {
+  const normalized = extension.trim().replace(/^\./, "").toLowerCase();
+  return (TEXT_FILE_ALLOWED_EXTENSIONS as readonly string[]).includes(normalized)
+    ? (normalized as UploadedTextFileExtension)
+    : null;
+}
+
+export function inferredTextFileMediaType(extension: UploadedTextFileExtension): string {
+  if (extension === "md" || extension === "markdown") {
+    return "text/markdown";
+  }
+  if (extension === "xml") {
+    return "text/xml";
+  }
+  return "text/plain";
+}
+
+export function textFileMaxBytes(field?: Extract<UserInputFieldDefinition, { type: "text-file" }>): number {
+  return Number.isFinite(field?.maxBytes) && Number(field?.maxBytes) > 0
+    ? Number(field?.maxBytes)
+    : TEXT_FILE_FIELD_DEFAULT_MAX_BYTES;
+}
+
+export function isUploadedTextFileValue(value: unknown): value is UploadedTextFileValue {
+  return isRecord(value) && value.kind === "text-file";
+}
+
+export function validateUploadedTextFileValue(
+  value: unknown,
+  label: string,
+  field?: Extract<UserInputFieldDefinition, { type: "text-file" }>,
+): asserts value is UploadedTextFileValue {
+  if (!isUploadedTextFileValue(value)) {
+    throw new TaskRunnerError(`Field '${label}' must be a text-file upload value.`);
+  }
+  if (typeof value.name !== "string" || value.name.trim().length === 0) {
+    throw new TaskRunnerError(`Field '${label}' upload name must be a non-empty string.`);
+  }
+  if (typeof value.mediaType !== "string" || !TEXT_FILE_ALLOWED_MEDIA_TYPES.includes(value.mediaType as typeof TEXT_FILE_ALLOWED_MEDIA_TYPES[number])) {
+    throw new TaskRunnerError(`Field '${label}' upload media type is not supported.`);
+  }
+  if (typeof value.extension !== "string" || !normalizeTextFileExtension(value.extension)) {
+    throw new TaskRunnerError(`Field '${label}' upload extension is not supported.`);
+  }
+  if (typeof value.sizeBytes !== "number" || !Number.isInteger(value.sizeBytes) || value.sizeBytes < 0) {
+    throw new TaskRunnerError(`Field '${label}' upload size must be a non-negative integer.`);
+  }
+  if (value.sizeBytes > textFileMaxBytes(field)) {
+    throw new TaskRunnerError(`Field '${label}' upload exceeds the maximum size of ${textFileMaxBytes(field)} bytes.`);
+  }
+  if (typeof value.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(value.sha256)) {
+    throw new TaskRunnerError(`Field '${label}' upload sha256 must be a lowercase hex digest.`);
+  }
+  if (value.content !== undefined) {
+    if (typeof value.content !== "string") {
+      throw new TaskRunnerError(`Field '${label}' upload content must be a string.`);
+    }
+    const normalized = normalizeTextFileContent(value.content);
+    if (Buffer.byteLength(normalized, "utf8") > textFileMaxBytes(field)) {
+      throw new TaskRunnerError(`Field '${label}' upload exceeds the maximum size of ${textFileMaxBytes(field)} bytes.`);
+    }
+    if (normalized.trim().length === 0) {
+      throw new TaskRunnerError(`Field '${label}' upload content must not be empty.`);
+    }
+    if (normalized.includes("\0")) {
+      throw new TaskRunnerError(`Field '${label}' upload content appears to be binary.`);
+    }
+  }
+  if (value.storedPath !== undefined && (typeof value.storedPath !== "string" || value.storedPath.trim().length === 0)) {
+    throw new TaskRunnerError(`Field '${label}' upload storedPath must be a non-empty string when provided.`);
+  }
+}
+
+export function defaultValueForField(field: UserInputFieldDefinition): UserInputFieldValue {
   if (field.type === "boolean") {
     return field.default ?? false;
   }
   if (field.type === "text") {
     return field.default ?? "";
+  }
+  if (field.type === "text-file") {
+    return null;
   }
   if (field.type === "single-select") {
     return field.default ?? field.options[0]?.value ?? "";
@@ -110,6 +221,9 @@ export function applyInitialUserInputValues(
     }
     if (field.type === "text" && typeof initialValue === "string") {
       return { ...field, default: initialValue };
+    }
+    if (field.type === "text-file") {
+      return field;
     }
     if (field.type === "single-select" && typeof initialValue === "string") {
       return { ...field, default: initialValue };
@@ -158,6 +272,12 @@ export function normalizeUserInputFieldValue(
   field: UserInputFieldDefinition,
   values: UserInputFormValues,
 ): void {
+  if (field.type === "text-file") {
+    if (values[field.id] === undefined) {
+      values[field.id] = null;
+    }
+    return;
+  }
   if (field.type !== "single-select" && field.type !== "multi-select") {
     return;
   }
@@ -196,6 +316,17 @@ export function validateUserInputValues(form: UserInputFormDefinition, values: U
       if (field.required && normalizeText(value).length === 0) {
         throw new TaskRunnerError(`Field '${field.label}' is required.`);
       }
+      continue;
+    }
+
+    if (field.type === "text-file") {
+      if (value === null || value === undefined) {
+        if (field.required) {
+          throw new TaskRunnerError(`Field '${field.label}' is required.`);
+        }
+        continue;
+      }
+      validateUploadedTextFileValue(value, field.label, field);
       continue;
     }
 
@@ -240,20 +371,39 @@ export function validateUserInputValues(form: UserInputFormDefinition, values: U
 
   if (form.formId === "task-describe-source-input") {
     const jiraRef = typeof values.jira_ref === "string" ? normalizeText(values.jira_ref) : "";
+    const taskFile = isUploadedTextFileValue(values.task_file) ? values.task_file : null;
     const taskDescription = typeof values.task_description === "string" ? normalizeText(values.task_description) : "";
-    if (!jiraRef && !taskDescription) {
-      throw new TaskRunnerError("Provide either Jira URL/key or a short task description.");
+    const selectedSourceCount = [Boolean(jiraRef), Boolean(taskFile), Boolean(taskDescription)].filter(Boolean).length;
+    if (selectedSourceCount === 0) {
+      throw new TaskRunnerError("Provide a Jira URL/key, upload a task file, or enter a short task description.");
     }
-    if (jiraRef && taskDescription) {
-      throw new TaskRunnerError("Provide either Jira URL/key or a short task description, not both.");
+    if (selectedSourceCount > 1) {
+      throw new TaskRunnerError("Provide only one task source: Jira URL/key, uploaded file, or task description.");
     }
   }
 
   if (form.formId === "jira-task-input" && form.fields.some((field) => field.id === "task_description")) {
     const jiraRef = typeof values.jira_ref === "string" ? normalizeText(values.jira_ref) : "";
+    const taskFile = isUploadedTextFileValue(values.task_file) ? values.task_file : null;
     const taskDescription = typeof values.task_description === "string" ? normalizeText(values.task_description) : "";
-    if (!jiraRef && !taskDescription) {
-      throw new TaskRunnerError("Provide either Jira URL/key or a task description.");
+    const selectedSourceCount = [Boolean(jiraRef), Boolean(taskFile), Boolean(taskDescription)].filter(Boolean).length;
+    if (selectedSourceCount === 0) {
+      throw new TaskRunnerError("Provide a Jira URL/key, upload a task file, or enter a task description.");
+    }
+    if (selectedSourceCount > 1) {
+      throw new TaskRunnerError("Provide only one task source: Jira URL/key, uploaded file, or task description.");
+    }
+  }
+
+  if (form.formId === "manual-jira-task-input") {
+    const taskFile = isUploadedTextFileValue(values.task_file) ? values.task_file : null;
+    const taskDescription = typeof values.task_description === "string" ? normalizeText(values.task_description) : "";
+    const selectedSourceCount = [Boolean(taskFile), Boolean(taskDescription)].filter(Boolean).length;
+    if (selectedSourceCount === 0) {
+      throw new TaskRunnerError("Upload a task file or enter a task description.");
+    }
+    if (selectedSourceCount > 1) {
+      throw new TaskRunnerError("Provide only one task source: uploaded file or task description.");
     }
   }
 }
@@ -335,6 +485,12 @@ export async function requestUserInputInTerminal(form: UserInputFormDefinition):
           const answer = await rl.question(`${field.label}${current ? ` (${current})` : ""}: `);
           values[field.id] = answer.trim() ? answer : current;
         }
+        continue;
+      }
+
+      if (field.type === "text-file") {
+        values[field.id] = null;
+        process.stdout.write(`${field.label}: file upload is available in the web UI only.\n`);
         continue;
       }
 

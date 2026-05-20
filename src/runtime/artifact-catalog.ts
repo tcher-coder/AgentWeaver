@@ -67,6 +67,7 @@ const ROLE_MAPPINGS: RoleMapping[] = [
   { prefix: "bug-fix-plan", role: "plan", title: "Bug Fix Plan" },
   { prefix: "bug-analyze", role: "analysis", title: "Bug Analysis" },
   { prefix: "task-context", role: "context", title: "Task Context" },
+  { prefix: "task-source", role: "context", title: "Task Source" },
   { prefix: "gitlab-diff", role: "diff", title: "GitLab Diff" },
   { prefix: "jira-description", role: "context", title: "Jira Description" },
   { prefix: "design", role: "design", title: "Design" },

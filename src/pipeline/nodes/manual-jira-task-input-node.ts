@@ -2,6 +2,8 @@ import { writeFileSync } from "node:fs";
 
 import { printSummary } from "../../tui.js";
 import {
+  isUploadedTextFileValue,
+  normalizeTextFileContent,
   requestUserInputInTerminal,
   validateUserInputValues,
   type UserInputFormDefinition,
@@ -69,15 +71,25 @@ export const manualJiraTaskInputNode: PipelineNodeDefinition<
       const form: UserInputFormDefinition = {
         formId: "manual-jira-task-input",
         title: "Manual Jira Task",
-        description: "Paste the Jira task description when Jira access is unavailable.",
+        description: "Upload or paste the Jira task description when Jira access is unavailable.",
         submitLabel: "Continue",
         fields: [
+          {
+            id: "task_file",
+            type: "text-file",
+            label: "Task source file",
+            help: "Upload one UTF-8 .md, .markdown, .txt, or .xml file up to 512 KiB. Leave empty when pasting the task description manually.",
+            required: false,
+            accept: [".md", ".markdown", ".txt", ".xml", "text/plain", "text/markdown", "text/xml", "application/xml"],
+            maxBytes: 512 * 1024,
+            buttonLabel: "Upload file",
+          },
           {
             id: "task_description",
             type: "text",
             label: "Task description",
-            help: "Paste the Jira task text here. This will be stored as the raw Jira task artifact for this flow.",
-            required: true,
+            help: "Paste the Jira task text here when no file is uploaded. This will be stored as the raw Jira task artifact for this flow.",
+            required: false,
             multiline: true,
             rows: 10,
             placeholder: "Paste Jira task title, description, acceptance criteria, comments, and links here.",
@@ -88,7 +100,14 @@ export const manualJiraTaskInputNode: PipelineNodeDefinition<
       const requester = context.requestUserInput ?? requestUserInputInTerminal;
       const result = await requester(form);
       validateUserInputValues(form, result.values);
-      description = String(result.values.task_description ?? "").trim();
+      const taskFile = isUploadedTextFileValue(result.values.task_file) ? result.values.task_file : null;
+      const taskFileContent = taskFile?.content;
+      if (taskFile && typeof taskFileContent !== "string") {
+        throw new Error("Uploaded task file content is missing.");
+      }
+      description = taskFileContent
+        ? normalizeTextFileContent(taskFileContent).trim()
+        : String(result.values.task_description ?? "").trim();
     }
 
     writeFileSync(params.outputFile, `${JSON.stringify(buildManualJiraPayload(params.taskKey, description), null, 2)}\n`, "utf8");

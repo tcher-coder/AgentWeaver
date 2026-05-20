@@ -1,7 +1,7 @@
 {
   "kind": "task-describe-flow",
   "version": 1,
-  "description": "Generates a brief task description from a Jira issue or from manual input. When Jira is provided, fetches the issue and summarizes it; otherwise accepts free-form text and analyzes the codebase to produce a richer description.",
+  "description": "Generates a brief task description from a Jira issue, uploaded task source file, or manual input. When Jira is provided, fetches the issue and summarizes it; otherwise analyzes the supplied source and repository context to produce a richer description.",
   "phases": [
     {
       "id": "task_describe",
@@ -13,7 +13,7 @@
             "formId": { "const": "task-describe-source-input" },
             "title": { "const": "Task Describe Source" },
             "description": {
-              "const": "Provide a Jira issue key / browse URL, or describe the task manually."
+              "const": "Provide exactly one task source: Jira issue key / browse URL, uploaded text file, or manual description. Additional instructions can supplement any source."
             },
             "submitLabel": { "const": "Generate description" },
             "fields": {
@@ -23,8 +23,20 @@
                     "id": "jira_ref",
                     "type": "text",
                     "label": "Jira issue key or browse URL",
-                    "help": "Example: DEMO-3288 or https://jira.example.com/browse/DEMO-3288. Leave empty to describe the task manually.",
+                    "help": "Example: DEMO-3288 or https://jira.example.com/browse/DEMO-3288. Leave empty when using a file upload or manual description.",
                     "required": false
+                  }
+                },
+                {
+                  "const": {
+                    "id": "task_file",
+                    "type": "text-file",
+                    "label": "Task source file",
+                    "help": "Upload one UTF-8 .md, .markdown, .txt, or .xml file up to 512 KiB. Leave empty when using Jira or manual description.",
+                    "required": false,
+                    "accept": [".md", ".markdown", ".txt", ".xml", "text/plain", "text/markdown", "text/xml", "application/xml"],
+                    "maxBytes": 524288,
+                    "buttonLabel": "Upload file"
                   }
                 },
                 {
@@ -44,7 +56,7 @@
                     "id": "task_description",
                     "type": "text",
                     "label": "Task description",
-                    "help": "Briefly describe the task in your own words. Fill this field only if Jira is not used.",
+                    "help": "Briefly describe the task in your own words. Fill this field only if Jira and file upload are not used.",
                     "required": false,
                     "multiline": true,
                     "rows": 3,
@@ -293,11 +305,17 @@
             }
           },
           "prompt": {
-            "inlineTemplate": "Review the user-provided task description in {task_input_file}. Use the values.task_description field as source of truth. Study the repository code relevant to the task before writing the description, and use that analysis to add concise context about the current behavior, existing routes/modules, contracts, DTOs, or missing pieces directly related to the request. The result must be richer than a paraphrase of the input, but do not invent requirements that are not supported by the user text or the code. Formulate a typical Jira task description in simple product language, without overloading with technical details. Description structure: Problem, Context, What needs to be done, Acceptance criteria. Add concrete implementation context when it is supported by the code: mention where changes are likely needed, including specific routes, handlers, services, DTOs, API contracts, validation rules, repository methods, events, or UI screens. If the user description lacks details, do not invent them and keep formulations general enough. The source-of-truth JSON must be in English for all generated semantic string values, while verbatim user-provided source text may be preserved as needed. First write the source-of-truth JSON to {jira_description_json_file} as object { summary: string }, then the markdown version to {jira_description_file}.",
+            "inlineTemplate": "Review the user-provided task source metadata in {task_input_file}. If values.task_file is present, use the raw uploaded task source artifact at {task_source_file} as the primary source of truth and use values.task_file only as metadata. If values.task_file is not present, use values.task_description as the source of truth. Treat XML uploads as plain text; do not parse XML, expand entities, or validate XML schemas. Study the repository code relevant to the task before writing the description, and use that analysis to add concise context about the current behavior, existing routes/modules, contracts, DTOs, or missing pieces directly related to the request. The result must be richer than a paraphrase of the input, but do not invent requirements that are not supported by the user source or the code. Formulate a typical Jira task description in simple product language, without overloading with technical details. Description structure: Problem, Context, What needs to be done, Acceptance criteria. Add concrete implementation context when it is supported by the code: mention where changes are likely needed, including specific routes, handlers, services, DTOs, API contracts, validation rules, repository methods, events, or UI screens. If the user source lacks details, do not invent them and keep formulations general enough. The source-of-truth JSON must be in English for all generated semantic string values, while verbatim user-provided source text may be preserved as needed. First write the source-of-truth JSON to {jira_description_json_file} as object { summary: string }, then the markdown version to {jira_description_file}.",
             "vars": {
               "task_input_file": {
                 "artifact": {
                   "kind": "task-describe-input-json-file",
+                  "taskKey": { "ref": "params.taskKey" }
+                }
+              },
+              "task_source_file": {
+                "artifact": {
+                  "kind": "task-source-file",
                   "taskKey": { "ref": "params.taskKey" }
                 }
               },

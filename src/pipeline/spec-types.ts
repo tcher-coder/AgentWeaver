@@ -69,6 +69,7 @@ export const ARTIFACT_REF_KINDS = [
   "task-summary-file",
   "task-summary-json-file",
   "task-describe-input-json-file",
+  "task-source-file",
   "git-status-json-file",
   "git-diff-file",
   "git-commit-message-json-file",

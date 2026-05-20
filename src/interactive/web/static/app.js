@@ -2881,6 +2881,11 @@
     }
   }
 
+  function rerenderModal() {
+    state.modalSignature = null;
+    renderModal(state.viewModel || {});
+  }
+
   function modalSignature(vm) {
     if (vm.confirmation) {
       return stableJson({
@@ -3074,7 +3079,64 @@
     if (field.type === "boolean") return false;
     if (field.type === "multi-select") return [];
     if (field.type === "single-select") return field.options && field.options[0] ? field.options[0].value : "";
+    if (field.type === "text-file") return null;
     return "";
+  }
+
+  function normalizeTextFileExtension(value) {
+    var normalized = String(value || "").trim().replace(/^\./, "").toLowerCase();
+    return ["md", "markdown", "txt", "xml"].indexOf(normalized) === -1 ? "" : normalized;
+  }
+
+  function extensionFromFileName(name) {
+    var match = /\.([^.]+)$/.exec(String(name || ""));
+    return match ? normalizeTextFileExtension(match[1]) : "";
+  }
+
+  function inferTextFileMediaType(extension, reportedType) {
+    var type = String(reportedType || "").trim().toLowerCase();
+    if (["text/plain", "text/markdown", "text/xml", "application/xml"].indexOf(type) !== -1) {
+      return type;
+    }
+    if (extension === "md" || extension === "markdown") return "text/markdown";
+    if (extension === "xml") return "text/xml";
+    return "text/plain";
+  }
+
+  function textFileMaxBytes(field) {
+    var max = Number(field && field.maxBytes);
+    return Number.isFinite(max) && max > 0 ? max : 524288;
+  }
+
+  function textFileAccept(field) {
+    var accept = Array.isArray(field.accept) ? field.accept : [".md", ".markdown", ".txt", ".xml"];
+    return accept.filter(function (item) { return typeof item === "string" && item.trim(); }).join(",");
+  }
+
+  function normalizeTextFileContent(content) {
+    return String(content || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  }
+
+  function utf8ByteLength(value) {
+    if (typeof TextEncoder !== "undefined") {
+      return new TextEncoder().encode(value).length;
+    }
+    return unescape(encodeURIComponent(value)).length;
+  }
+
+  function fallbackSha256() {
+    return "0".repeat(64);
+  }
+
+  async function sha256Text(content) {
+    var cryptoApi = window.crypto || window.msCrypto;
+    if (!cryptoApi || !cryptoApi.subtle || typeof TextEncoder === "undefined") {
+      return fallbackSha256();
+    }
+    var digest = await cryptoApi.subtle.digest("SHA-256", new TextEncoder().encode(content));
+    return Array.prototype.map.call(new Uint8Array(digest), function (byte) {
+      return byte.toString(16).padStart(2, "0");
+    }).join("");
   }
 
   function renderField(field) {
@@ -3121,6 +3183,8 @@
         wrapper.append(renderSingleSelect(field));
       } else if (field.type === "multi-select") {
         wrapper.append(renderMultiSelect(field));
+      } else if (field.type === "text-file") {
+        wrapper.append(renderTextFileField(field));
       }
     }
 
@@ -3131,6 +3195,95 @@
       wrapper.append(help);
     }
     return wrapper;
+  }
+
+  function renderTextFileField(field) {
+    var container = document.createElement("div");
+    container.className = "text-file-field";
+    var controls = document.createElement("div");
+    controls.className = "text-file-controls";
+    var input = document.createElement("input");
+    input.type = "file";
+    input.id = "field-" + field.id;
+    input.name = field.id;
+    input.accept = textFileAccept(field);
+    input.dataset.fieldId = field.id;
+    input.dataset.fieldType = field.type;
+    var uploadButton = document.createElement("label");
+    uploadButton.className = "text-file-button";
+    uploadButton.setAttribute("for", input.id);
+    uploadButton.textContent = text(field.buttonLabel, "Upload file");
+    var remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "text-file-remove";
+    remove.textContent = "Remove";
+    var status = document.createElement("div");
+    status.className = "text-file-status";
+    var value = currentValue(field);
+    var hasFile = value && typeof value === "object" && value.kind === "text-file";
+    remove.disabled = !hasFile;
+    remove.addEventListener("click", function () {
+      input.value = "";
+      updateField(field.id, null);
+      rerenderModal();
+    });
+    input.addEventListener("change", async function () {
+      var file = input.files && input.files[0];
+      if (!file) {
+        updateField(field.id, null);
+        rerenderModal();
+        return;
+      }
+      var extension = extensionFromFileName(file.name);
+      if (!extension) {
+        status.textContent = "Unsupported file type.";
+        return;
+      }
+      if (Number(file.size) > textFileMaxBytes(field)) {
+        status.textContent = "File is larger than " + formatArtifactBytes(textFileMaxBytes(field)) + ".";
+        return;
+      }
+      var rawContent = await file.text();
+      var content = normalizeTextFileContent(rawContent);
+      if (!content.trim()) {
+        status.textContent = "File is empty.";
+        return;
+      }
+      if (content.indexOf("\0") !== -1) {
+        status.textContent = "Binary files are not supported.";
+        return;
+      }
+      var next = {
+        kind: "text-file",
+        name: String(file.name || "task-source." + extension),
+        mediaType: inferTextFileMediaType(extension, file.type),
+        extension: extension,
+        sizeBytes: utf8ByteLength(content),
+        sha256: await sha256Text(content),
+        content: content,
+      };
+      updateField(field.id, next);
+      rerenderModal();
+    });
+    controls.append(input, uploadButton, remove);
+    container.append(controls, status);
+    if (hasFile) {
+      var meta = document.createElement("div");
+      meta.className = "text-file-meta";
+      meta.textContent = [
+        value.name,
+        formatArtifactBytes(Number(value.sizeBytes) || 0),
+        value.mediaType || "text/plain",
+      ].filter(Boolean).join(" · ");
+      container.append(meta);
+      if (typeof value.content === "string" && value.content.length > 0) {
+        var preview = document.createElement("pre");
+        preview.className = "text-file-preview";
+        preview.textContent = value.content.slice(0, 1200);
+        container.append(preview);
+      }
+    }
+    return container;
   }
 
   function renderSingleSelect(field) {

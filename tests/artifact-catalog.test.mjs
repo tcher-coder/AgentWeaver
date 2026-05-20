@@ -175,6 +175,33 @@ describe("artifact catalog", () => {
     assert.equal(inferArtifactTitle("ag-1", "qa-main", "qa-ag-1.md"), "QA Plan");
     assert.equal(inferArtifactRole("task-context-main", "task-context-ag-1.md"), "context");
     assert.equal(inferArtifactTitle("ag-1", "gitlab-diff-main", ".artifacts/gitlab-diff-ag-1.json"), "GitLab Diff");
+    assert.equal(inferArtifactRole("artifacts/task-source.md", ".artifacts/task-source-ag-1.md"), "context");
+    assert.equal(inferArtifactTitle("ag-1", "artifacts/task-source.md", ".artifacts/task-source-ag-1.md"), "Task Source");
+  });
+
+  it("lists manifest-backed raw task source artifacts as openable text or markdown", () => {
+    const scopeKey = "ag-cat-source";
+    const registry = createArtifactRegistry();
+    const payloadPath = writeScopeFile(scopeKey, ".artifacts/task-source-ag-cat-source.md", "# Uploaded task\n");
+
+    publishMarkdown(registry, scopeKey, payloadPath, {
+      phaseId: "task_describe",
+      stepId: "collect_task_source",
+      logicalKey: "artifacts/task-source.md",
+      payloadFamily: "markdown",
+      schemaId: "markdown/v1",
+      schemaVersion: 1,
+    });
+
+    const catalog = listArtifactCatalog({ scopeKey, artifactRegistry: registry });
+    const item = catalog.items.find((candidate) => candidate.relativePath === ".artifacts/task-source-ag-cat-source.md");
+
+    assert.ok(item);
+    assert.equal(item.source, "manifest");
+    assert.equal(item.kind, "markdown");
+    assert.equal(item.role, "context");
+    assert.equal(item.title, "Task Source");
+    assert.equal(item.schemaId, "markdown/v1");
   });
 
   it("groups phase-less items as unclassified and returns deterministic order", () => {

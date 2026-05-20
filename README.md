@@ -353,7 +353,7 @@ Notes:
 - Saved auto flow configs are discovered at `.agentweaver/flow-configs/<name>.yaml` first and `~/.agentweaver/flow-configs/<name>.yaml` second; the project config wins when both exist
 - Non-dry `agentweaver auto` runs write `flow-config.yaml`, `resolved-flow.json`, and `resolved-flow-summary.json` under `.agentweaver/scopes/<scopeKey>/.artifacts`
 - Task-driven flows that can run without a Jira key show Jira input and manual task text in the same first form; leave Jira empty and fill the task description when Jira is unavailable
-- `task-describe` can also work from manual task description input without Jira
+- In the Web UI, `task-describe` can also work from one uploaded UTF-8 `.md`, `.markdown`, `.txt`, or `.xml` task source file without Jira
 - `gitlab-review` and `gitlab-diff-review` ask for a GitLab merge request URL interactively
 - `auto-status` and `auto-reset` currently operate on persisted state for `auto-golang`
 

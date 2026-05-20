@@ -5,7 +5,13 @@ import { execFileSync } from "node:child_process";
 import { ensureScopeWorkspaceDir, jiraTaskFile } from "./artifacts.js";
 import { TaskRunnerError } from "./errors.js";
 import { buildJiraApiUrl, buildJiraBrowseUrl, extractIssueKey } from "./jira.js";
-import { validateUserInputValues, type UserInputFormDefinition, type UserInputRequester } from "./user-input.js";
+import {
+  isUploadedTextFileValue,
+  normalizeTextFileContent,
+  validateUserInputValues,
+  type UserInputFormDefinition,
+  type UserInputRequester,
+} from "./user-input.js";
 
 export type ResolvedScope = {
   scopeType: "project";
@@ -158,7 +164,7 @@ export function buildJiraTaskInputForm(options: { required?: boolean } = {}): Us
     title: "Jira Task",
     description: required
       ? "Provide a Jira issue key or browse URL for a task-driven flow."
-      : "Provide a Jira issue key or browse URL, or leave it empty to paste the task description manually.",
+      : "Provide a Jira issue key or browse URL, upload a task source file, or paste the task description manually.",
     submitLabel: "Continue",
     fields: [
       {
@@ -167,9 +173,23 @@ export function buildJiraTaskInputForm(options: { required?: boolean } = {}): Us
         label: "Jira issue key or browse URL",
         help: required
           ? "Example: DEMO-3288 or https://jira.example.com/browse/DEMO-3288"
-          : "Leave empty and fill Task description below when Jira is unavailable.",
+          : "Leave empty and upload a task source file or fill Task description below when Jira is unavailable.",
         required,
       },
+      ...(!required
+        ? [
+            {
+              id: "task_file",
+              type: "text-file" as const,
+              label: "Task source file",
+              help: "Upload one UTF-8 .md, .markdown, .txt, or .xml file up to 512 KiB. Leave empty when using Jira or manual description.",
+              required: false,
+              accept: [".md", ".markdown", ".txt", ".xml", "text/plain", "text/markdown", "text/xml", "application/xml"],
+              maxBytes: 512 * 1024,
+              buttonLabel: "Upload file",
+            },
+          ]
+        : []),
       ...(!required
         ? [
             {
@@ -206,7 +226,13 @@ export async function requestTaskSourceContext(
   const result = await requestUserInput(form);
   validateUserInputValues(form, result.values);
   const jiraRef = String(result.values.jira_ref ?? "").trim();
-  const manualTaskDescription = String(result.values.task_description ?? "").trim();
+  const taskFile = isUploadedTextFileValue(result.values.task_file) ? result.values.task_file : null;
+  const taskFileContent = taskFile?.content;
+  if (taskFile && typeof taskFileContent !== "string") {
+    throw new TaskRunnerError("Uploaded task file content is missing.");
+  }
+  const fileTaskDescription = taskFileContent ? normalizeTextFileContent(taskFileContent).trim() : "";
+  const manualTaskDescription = fileTaskDescription || String(result.values.task_description ?? "").trim();
   return {
     jiraContext: jiraRef ? parseJiraContext(jiraRef) : null,
     manualTaskDescription: jiraRef ? null : manualTaskDescription,

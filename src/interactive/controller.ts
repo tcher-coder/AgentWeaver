@@ -28,7 +28,6 @@ import {
 import {
   buildAutoFlowEditorViewModel,
   createConfigAutoFlowDefinition,
-  defaultAutoFlowConfigForPreset,
   insertAutoFlowBlock,
   removeAutoFlowBlock,
   setAutoFlowBlockEnabled,
@@ -716,21 +715,7 @@ export class InteractiveSessionController {
   }
 
   selectAutoFlowPreset(preset: "simple" | "standard"): void {
-    const targetFlowId = this.state.selectedFlowId;
-    const editor = this.autoFlowEditors.get(targetFlowId);
-    if (editor) {
-      const nextConfig = defaultAutoFlowConfigForPreset(preset, editor.config.name);
-      this.autoFlowEditors.set(targetFlowId, {
-        ...editor,
-        config: nextConfig,
-        diagnostics: [],
-        lastMessage: `Selected '${preset}' base preset for this auto-flow draft.`,
-      });
-      this.emitChange();
-      return;
-    }
-    const flowId = preset === "simple" ? "auto-simple" : "auto-common";
-    this.selectFlowId(flowId);
+    throw new TaskRunnerError("--preset is unsupported. Use the base Auto workflow or load a saved auto config.");
   }
 
   loadAutoFlowConfig(name: string, flowId = this.state.selectedFlowId): void {
@@ -852,8 +837,10 @@ export class InteractiveSessionController {
     const targetFlowId = flowId ?? this.state.selectedFlowId;
     const editor = this.requireAutoFlowEditor(targetFlowId);
     const view = this.autoFlowViewForFlow(targetFlowId);
-    if (view && !view.status.canSave) {
-      const message = view.diagnostics[0]?.message ?? "Auto-flow config has validation errors and cannot be saved.";
+    const isSaveAs = Boolean(name?.trim());
+    if (view && !(isSaveAs ? view.status.canSaveAs : view.status.canSave)) {
+      const message = view.diagnostics[0]?.message
+        ?? (view.status.mutable ? "Auto-flow config has validation errors and cannot be saved." : "Base Auto workflow cannot be overwritten. Use Save as custom.");
       this.autoFlowEditors.set(targetFlowId, {
         ...editor,
         lastMessage: message,
@@ -915,7 +902,7 @@ export class InteractiveSessionController {
       label: flowId,
       description: `Saved configurable auto-flow config '${config.name}'.`,
       source: "built-in",
-      treePath: ["default", "auto-configs", config.name],
+      treePath: ["custom", config.name],
       autoFlow: autoFlowDefinition,
       phases: [],
     };

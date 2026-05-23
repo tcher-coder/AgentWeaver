@@ -112,7 +112,7 @@ Fields:
 - `when?` — optional condition; false means the phase is skipped
 - `steps` — ordered list of steps
 
-For resumable flows such as `auto-golang`, phase ids are the identifiers shown in `--help-phases`, persisted in flow state, and used by restart-from-phase logic.
+For resumable flows such as `auto`, phase ids are the identifiers shown in `--help-phases` and persisted in flow state.
 
 They are also the primary units the TUI can present to an operator when showing workflow progress.
 
@@ -460,7 +460,7 @@ Runtime execution state includes:
 - repeat variables
 - termination flags
 
-Persisted resumable state is intentionally smaller and is used mainly for long-running resumable flows such as `auto-golang`.
+Persisted resumable state is intentionally smaller and is used mainly for long-running resumable flows such as `auto`.
 
 Persisted state keeps:
 

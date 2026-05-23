@@ -24,7 +24,6 @@ const targetedSpecs = [
   "plan.json",
   "normalize-task-source.json",
   "implement.json",
-  "auto-common.json",
   "auto-golang.json",
   "instant-task.json",
   "review/review.json",
@@ -71,15 +70,17 @@ describe("flow spec routing groups", () => {
     assert.equal(entryIds.has("review/review-project-loop"), false);
 
     assert.equal(entryIds.has("instant-task"), true);
-    assert.equal(entryIds.has("auto-common"), true);
+    assert.equal(entryIds.has("auto"), true);
+    assert.equal(entryIds.has("auto-common"), false);
+    assert.equal(entryIds.has("auto-simple"), false);
+    assert.equal(entryIds.has("auto-golang"), false);
+    assert.equal(entryIds.has("auto-common-guided"), false);
     assert.equal(entryIds.has("plan"), true);
   });
 
   it("annotates every targeted built-in llm-prompt step with an allowed routing group", async () => {
     for (const relativePath of targetedSpecs) {
-      const spec = relativePath === "auto-common.json"
-        ? await loadDeclarativeFlow({ source: "built-in", fileName: relativePath })
-        : JSON.parse(readFileSync(path.join(distRoot, "pipeline/flow-specs", relativePath), "utf8"));
+      const spec = JSON.parse(readFileSync(path.join(distRoot, "pipeline/flow-specs", relativePath), "utf8"));
       const steps = collectLlmPromptSteps(spec);
       assert.ok(steps.length > 0, `${relativePath} should contain llm-prompt steps`);
       for (const step of steps) {
@@ -89,16 +90,15 @@ describe("flow spec routing groups", () => {
     }
   });
 
-  it("collects the same routing groups the runtime preview needs for auto-golang", async () => {
-    const flowEntry = (await loadInteractiveFlowCatalog(process.cwd())).find((candidate) => candidate.id === "auto-golang");
-    assert.ok(flowEntry, "auto-golang flow should exist");
+  it("collects the same routing groups the runtime preview needs for auto", async () => {
+    const flowEntry = (await loadInteractiveFlowCatalog(process.cwd())).find((candidate) => candidate.id === "auto");
+    assert.ok(flowEntry, "auto flow should exist");
 
     const groups = (await flowRoutingGroups(flowEntry, process.cwd())).sort();
 
     assert.deepEqual(groups, [
       "design-review",
       "implementation",
-      "local-fix-loop",
       "planning",
       "repair-loop",
       "review",
@@ -109,7 +109,7 @@ describe("flow spec routing groups", () => {
     const entries = await loadInteractiveFlowCatalog(process.cwd());
     const routedEntries = [];
     for (const entry of entries) {
-      if (entry.source !== "built-in" || !isBuiltInCommandFlowId(entry.id)) {
+      if (entry.id === "auto" || entry.source !== "built-in" || !isBuiltInCommandFlowId(entry.id)) {
         continue;
       }
       if ((await flowRoutingGroups(entry, process.cwd())).length > 0) {
@@ -127,11 +127,11 @@ describe("flow spec routing groups", () => {
     }
   });
 
-  it("packages required physical specs while auto-simple and auto-common remain virtual", () => {
+  it("packages required physical specs without virtual auto-simple or auto-common specs", () => {
     const builtInFiles = listBuiltInFlowSpecFiles();
 
-    assert.equal(builtInFiles.filter((fileName) => fileName === "auto-simple.json").length, 1);
-    assert.equal(builtInFiles.filter((fileName) => fileName === "auto-common.json").length, 1);
+    assert.equal(builtInFiles.filter((fileName) => fileName === "auto-simple.json").length, 0);
+    assert.equal(builtInFiles.filter((fileName) => fileName === "auto-common.json").length, 0);
     assert.equal(existsSync(path.join(distRoot, "pipeline/flow-specs/auto-simple.json")), false);
     assert.equal(existsSync(path.join(distRoot, "pipeline/flow-specs/auto-common.json")), false);
     assert.equal(existsSync(path.join(distRoot, "pipeline/flow-specs/review/review-loop.json")), true);

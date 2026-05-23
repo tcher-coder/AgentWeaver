@@ -10,6 +10,7 @@ const { resolveAutoFlow } = await import(pathToFileURL(path.join(distRoot, "pipe
 const {
   autoFlowIdentityForSelection,
   isConfigurableAutoConfigFlowId,
+  isConfigurableAutoFlowId,
   isContinuableParentFlowId,
   isRestartArchivingFlowId,
 } = await import(pathToFileURL(path.join(distRoot, "pipeline/auto-flow-identity.js")).href);
@@ -24,56 +25,52 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (originalHome === undefined) {
-    delete process.env.HOME;
-  } else {
-    process.env.HOME = originalHome;
-  }
+  if (originalHome === undefined) delete process.env.HOME;
+  else process.env.HOME = originalHome;
   rmSync(tempDir, { recursive: true, force: true });
 });
 
-function writeProjectConfig(name, body) {
+function writeProjectConfig(name) {
   const filePath = path.join(tempDir, ".agentweaver", "flow-configs", `${name}.yaml`);
   mkdirSync(path.dirname(filePath), { recursive: true });
-  writeFileSync(filePath, body, "utf8");
+  writeFileSync(filePath, `kind: auto-flow-config\nversion: 2\nname: ${name}\n`, "utf8");
 }
 
 describe("auto flow identity", () => {
-  it("keeps legacy flow IDs for standard and simple presets", async () => {
-    const standardSelection = { kind: "preset", preset: "standard" };
-    const simpleSelection = { kind: "preset", preset: "simple" };
-
-    const standard = autoFlowIdentityForSelection(
-      standardSelection,
-      await resolveAutoFlow(standardSelection, { cwd: tempDir, scopeKey: "ag-126@test" }),
-    );
-    const simple = autoFlowIdentityForSelection(
-      simpleSelection,
-      await resolveAutoFlow(simpleSelection, { cwd: tempDir, scopeKey: "ag-126@test" }),
+  it("uses immutable base identity for auto", async () => {
+    const selection = { kind: "base" };
+    const identity = autoFlowIdentityForSelection(
+      selection,
+      await resolveAutoFlow(selection, { cwd: tempDir, scopeKey: "ag-126@test" }),
     );
 
-    assert.equal(standard.flowId, "auto-common");
-    assert.equal(standard.selectedCommand, "auto-common");
-    assert.equal(simple.flowId, "auto-simple");
-    assert.equal(simple.selectedCommand, "auto-simple");
+    assert.deepEqual(identity, {
+      flowId: "auto",
+      displayLabel: "Auto workflow",
+      mutable: false,
+    });
+    assert.equal(isConfigurableAutoFlowId("auto"), true);
   });
 
-  it("uses a non-colliding auto-config flow ID for named configurations", async () => {
-    writeProjectConfig("backend-standard", [
-      "kind: auto-flow-config",
-      "version: 1",
-      "name: backend-standard",
-      "basePreset: standard",
-      "",
-    ].join("\n"));
+  it("uses mutable auto-config flow IDs for named configurations", async () => {
+    writeProjectConfig("backend-standard");
     const selection = { kind: "config", name: "backend-standard" };
     const resolved = await resolveAutoFlow(selection, { cwd: tempDir, scopeKey: "ag-126@test" });
     const identity = autoFlowIdentityForSelection(selection, resolved);
 
-    assert.equal(identity.flowId, "auto-config:backend-standard");
-    assert.equal(identity.selectedCommand, "auto-common");
+    assert.deepEqual(identity, {
+      flowId: "auto-config:backend-standard",
+      displayLabel: "config backend-standard",
+      mutable: true,
+    });
     assert.equal(isConfigurableAutoConfigFlowId(identity.flowId), true);
     assert.equal(isRestartArchivingFlowId(identity.flowId), true);
     assert.equal(isContinuableParentFlowId(identity.flowId), true);
+  });
+
+  it("rejects legacy public auto IDs as configurable IDs", () => {
+    for (const flowId of ["auto-common", "auto-simple", "auto-golang", "auto-common-guided"]) {
+      assert.equal(isConfigurableAutoFlowId(flowId), false, flowId);
+    }
   });
 });

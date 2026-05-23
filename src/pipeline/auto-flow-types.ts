@@ -39,7 +39,6 @@ export type AutoFlowParameterDefinition = AutoFlowIntegerParameterDefinition;
 export type AutoFlowParameterValues = Record<string, unknown>;
 
 export type AutoFlowPhaseFactoryContext = {
-  presetId: AutoFlowPresetId;
   blockId: string;
   slotId: AutoFlowSlotId;
   params: Readonly<AutoFlowParameterValues>;

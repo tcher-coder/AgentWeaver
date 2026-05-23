@@ -290,15 +290,7 @@ Use this command to accept the generated layout non-interactively:
 agentweaver playbook-init --accept-playbook-draft
 ```
 
-The guided workflow uses the playbook through:
-
-```bash
-agentweaver auto-common-guided --help-phases
-agentweaver auto-common-guided DEMO-1234
-agentweaver auto-common-guided --accept-playbook-draft DEMO-1234
-```
-
-`--accept-playbook-draft` in `auto-common-guided` is used for the missing-manifest scenario: the workflow explicitly accepts generated manifest-based playbook content before planning. Without this flag, a missing manifest stops the non-interactive guided run before the LLM prompt.
+The Auto workflow no longer exposes a separate guided command. Use `agentweaver playbook-init --accept-playbook-draft` to explicitly accept generated manifest-based playbook content before running task automation.
 
 ## Validation errors
 
@@ -316,12 +308,12 @@ The validator must fail clearly in these cases:
 
 ## Compact project guidance
 
-`auto-common-guided` uses only `.agentweaver/playbook/manifest.yaml` as the canonical source of project rules. Old `.agentweaver/playbook/playbook.json` and `.agentweaver/playbook/playbook.md` files are not used as semantic fallbacks.
+Project guidance uses only `.agentweaver/playbook/manifest.yaml` as the canonical source of project rules. Old `.agentweaver/playbook/playbook.json` and `.agentweaver/playbook/playbook.md` files are not used as semantic fallbacks.
 
 Before the `plan`, `design-review`, `implement`, `review`, and `repair/review-fix` phases, the workflow writes structured `project-guidance/v1` JSON and derived markdown. Canonical artifact names are `project-guidance-plan`, `project-guidance-design-review`, `project-guidance-implement`, `project-guidance-review`, and `project-guidance-repair-review-fix`.
 
 Guidance selection considers the phase, `always_include`, `priority`, `severity`, keywords, glob paths, languages, and frameworks from task context. Budgets are approximate: `plan` 1200, `design-review` 1000, `implement` 1400, `review` 1000, and `repair/review-fix` 1000 tokens. The default inline-entry threshold is 300 approximate tokens. Long examples remain file references instead of being copied into prompts.
 
-If `manifest.yaml` is missing, the runtime can create an explicit `missing_playbook` artifact where that mode is allowed. In `auto-common-guided`, a missing manifest stops the non-interactive workflow before planning by default unless the user passes `--accept-playbook-draft`. If the manifest is invalid, the standard `fail_before_prompt` policy stops execution before the LLM prompt; `invalid_playbook` is intended only for explicit diagnostic mode.
+If `manifest.yaml` is missing, the runtime can create an explicit `missing_playbook` artifact where that mode is allowed. If the manifest is invalid, the standard `fail_before_prompt` policy stops execution before the LLM prompt; `invalid_playbook` is intended only for explicit diagnostic mode.
 
 Project guidance is additional context. It does not replace task context, design, plan, QA, design-review, or review JSON, which remain the sources of truth. There is no skills integration yet; the playbook generator must remain evidence-backed. Guided prompts receive compact context, and full examples are opened only when they are directly relevant to the current phase.

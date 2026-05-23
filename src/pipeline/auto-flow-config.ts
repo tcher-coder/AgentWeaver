@@ -40,6 +40,13 @@ export type SavedAutoFlowSlot = {
 
 export type SavedAutoFlowConfig = {
   kind: "auto-flow-config";
+  version: 2;
+  name: string;
+  slots?: Partial<Record<AutoFlowSlotName, SavedAutoFlowSlot>>;
+};
+
+export type SavedAutoFlowConfigV1 = {
+  kind: "auto-flow-config";
   version: 1;
   name: string;
   basePreset: AutoFlowPresetName;
@@ -189,7 +196,12 @@ function validateBlock(
   assertConfig(isRecord(rawBlock), configName, configPath, `${objectPath} must be an object`);
   assertOnlyKeys(rawBlock, ["id", "enabled", "maxIterations"], configName, configPath, objectPath);
   const blockId = rawBlock["id"];
-  assertConfig(isBlockId(blockId), configName, configPath, `${objectPath}.id must be a known block id`);
+  assertConfig(
+    isBlockId(blockId),
+    configName,
+    configPath,
+    `${objectPath}.id must be a known block id; received '${String(blockId)}'`,
+  );
   assertConfig(
     SLOT_BLOCKS[slotName].includes(blockId),
     configName,
@@ -242,14 +254,23 @@ export function validateAutoFlowConfigValue(
     ? value["name"].trim()
     : requestedName;
   assertConfig(isRecord(value), configNameForErrors, configPath, "config root must be an object");
-  assertOnlyKeys(value, ["kind", "version", "name", "basePreset", "slots"], configNameForErrors, configPath, "root");
 
   assertConfig(value["kind"] === "auto-flow-config", configNameForErrors, configPath, "kind must be 'auto-flow-config'");
-  assertConfig(value["version"] === 1, configNameForErrors, configPath, "version must be 1");
+  assertConfig(value["version"] === 1 || value["version"] === 2, configNameForErrors, configPath, "version must be 1 or 2");
+  const version = value["version"];
+  assertOnlyKeys(
+    value,
+    version === 1 ? ["kind", "version", "name", "basePreset", "slots"] : ["kind", "version", "name", "slots"],
+    configNameForErrors,
+    configPath,
+    "root",
+  );
   assertConfig(typeof value["name"] === "string" && value["name"].trim().length > 0, configNameForErrors, configPath, "name must be a non-empty string");
   const name = String(value["name"]).trim();
   assertConfig(name === requestedName, name, configPath, `name must match requested config name '${requestedName}'`);
-  assertConfig(isPreset(value["basePreset"]), name, configPath, "basePreset must be simple or standard");
+  if (version === 1) {
+    assertConfig(isPreset(value["basePreset"]), name, configPath, "basePreset must be simple or standard");
+  }
 
   let slots: SavedAutoFlowConfig["slots"];
   const rawSlots = value["slots"];
@@ -268,12 +289,58 @@ export function validateAutoFlowConfigValue(
     }
   }
 
+  if (version === 1) {
+    return normalizeAutoFlowConfigValue({
+      kind: "auto-flow-config",
+      version: 1,
+      name,
+      basePreset: value["basePreset"] as AutoFlowPresetName,
+      ...(slots !== undefined ? { slots } : {}),
+    });
+  }
+
   return {
     kind: "auto-flow-config",
-    version: 1,
+    version: 2,
     name,
-    basePreset: value["basePreset"],
     ...(slots !== undefined ? { slots } : {}),
+  };
+}
+
+export function normalizeAutoFlowConfigValue(config: SavedAutoFlowConfig | SavedAutoFlowConfigV1): SavedAutoFlowConfig {
+  if (config.version === 2) {
+    return {
+      kind: "auto-flow-config",
+      version: 2,
+      name: config.name,
+      ...(config.slots !== undefined ? { slots: config.slots } : {}),
+    };
+  }
+
+  if (config.basePreset === "simple" && !config.slots?.designReview) {
+    return {
+      kind: "auto-flow-config",
+      version: 2,
+      name: config.name,
+      slots: {
+        ...(config.slots ?? {}),
+        designReview: {
+          blocks: [
+            {
+              id: "review.design-loop",
+              enabled: false,
+            },
+          ],
+        },
+      },
+    };
+  }
+
+  return {
+    kind: "auto-flow-config",
+    version: 2,
+    name: config.name,
+    ...(config.slots !== undefined ? { slots: config.slots } : {}),
   };
 }
 

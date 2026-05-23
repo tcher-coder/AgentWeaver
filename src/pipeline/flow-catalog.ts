@@ -1,10 +1,12 @@
 import path from "node:path";
 
 import { TaskRunnerError } from "../errors.js";
-import { loadAutoGolangFlow } from "./auto-flow.js";
 import { collectFlowRoutingGroups, type DeclarativeFlowLoadOptions, type DeclarativeFlowRef, loadDeclarativeFlow, type LoadedDeclarativeFlow } from "./declarative-flows.js";
 import type { ExecutionRoutingGroup } from "./execution-routing-config.js";
 import { globalFlowSpecsDir, listBuiltInFlowSpecFiles, listGlobalFlowSpecFiles, listProjectFlowSpecFiles, projectFlowSpecsDir } from "./spec-loader.js";
+import { listAutoFlowConfigs, loadAutoFlowConfigByName } from "./auto-flow-config.js";
+import { resolveAutoFlow } from "./auto-flow-resolver.js";
+import { AUTO_FLOW_BASE_FLOW_ID, AUTO_FLOW_CONFIG_FLOW_ID_PREFIX } from "./auto-flow-identity.js";
 
 export type FlowCatalogSource = "built-in" | "global" | "project-local";
 
@@ -18,10 +20,7 @@ export type FlowCatalogEntry = {
 };
 
 export const BUILT_IN_COMMAND_FLOW_IDS = [
-  "auto-golang",
-  "auto-common-guided",
-  "auto-common",
-  "auto-simple",
+  "auto",
   "bug-analyze",
   "bug-fix",
   "design-review",
@@ -42,11 +41,7 @@ export const BUILT_IN_COMMAND_FLOW_IDS = [
   "run-go-linter-loop",
 ] as const;
 
-const BUILT_IN_COMMAND_FLOW_FILES: Record<(typeof BUILT_IN_COMMAND_FLOW_IDS)[number], string> = {
-  "auto-golang": "auto-golang.json",
-  "auto-common-guided": "auto-common-guided.json",
-  "auto-common": "auto-common.json",
-  "auto-simple": "auto-simple.json",
+const BUILT_IN_COMMAND_FLOW_FILES: Partial<Record<(typeof BUILT_IN_COMMAND_FLOW_IDS)[number], string>> = {
   "bug-analyze": "bugz/bug-analyze.json",
   "bug-fix": "bugz/bug-fix.json",
   "design-review": "design-review.json",
@@ -84,9 +79,7 @@ async function loadBuiltInCatalogEntry(fileName: string, options: DeclarativeFlo
   const commandId = builtInCommandIdForFile(fileName);
   const relativePath = fileName.replace(/\.json$/i, "").split(/[\\/]+/).filter((segment) => segment.length > 0);
   const id = commandId ?? relativePath.join("/");
-  const flow = id === "auto-golang"
-    ? await loadAutoGolangFlow(options)
-    : await loadDeclarativeFlow({ source: "built-in", fileName }, options);
+  const flow = await loadDeclarativeFlow({ source: "built-in", fileName }, options);
   return {
     id,
     source: "built-in",
@@ -95,6 +88,35 @@ async function loadBuiltInCatalogEntry(fileName: string, options: DeclarativeFlo
     treePath: ["default", ...relativePath],
     flow,
   };
+}
+
+async function loadBaseAutoCatalogEntry(cwd: string): Promise<FlowCatalogEntry> {
+  const resolved = await resolveAutoFlow({ kind: "base" }, { cwd });
+  return {
+    id: AUTO_FLOW_BASE_FLOW_ID,
+    source: "built-in",
+    fileName: resolved.execution.flow.fileName,
+    absolutePath: resolved.execution.flow.absolutePath,
+    treePath: ["recommended", "auto"],
+    flow: resolved.execution.flow,
+  };
+}
+
+async function loadAutoConfigCatalogEntries(cwd: string): Promise<FlowCatalogEntry[]> {
+  const entries: FlowCatalogEntry[] = [];
+  for (const item of listAutoFlowConfigs(cwd)) {
+    const loaded = loadAutoFlowConfigByName(item.name, cwd);
+    const resolved = await resolveAutoFlow({ kind: "config", name: loaded.config.name }, { cwd });
+    entries.push({
+      id: `${AUTO_FLOW_CONFIG_FLOW_ID_PREFIX}${loaded.config.name}`,
+      source: "built-in",
+      fileName: resolved.execution.flow.fileName,
+      absolutePath: resolved.execution.flow.absolutePath,
+      treePath: ["custom", loaded.config.name],
+      flow: resolved.execution.flow,
+    });
+  }
+  return entries;
 }
 
 async function loadProjectCatalogEntry(cwd: string, filePath: string, options: DeclarativeFlowLoadOptions): Promise<FlowCatalogEntry> {
@@ -128,8 +150,12 @@ async function loadGlobalCatalogEntry(filePath: string, options: DeclarativeFlow
 }
 
 export async function loadInteractiveFlowCatalog(cwd: string, options: DeclarativeFlowLoadOptions = {}): Promise<FlowCatalogEntry[]> {
-  const entries: FlowCatalogEntry[] = [];
+  const entries: FlowCatalogEntry[] = [await loadBaseAutoCatalogEntry(cwd)];
+  entries.push(...await loadAutoConfigCatalogEntries(cwd));
   for (const fileName of listBuiltInFlowSpecFiles()) {
+    if (fileName === "auto-golang.json" || fileName === "auto-common-guided.json") {
+      continue;
+    }
     entries.push(await loadBuiltInCatalogEntry(fileName, { ...options, cwd }));
   }
   for (const filePath of listGlobalFlowSpecFiles()) {
@@ -163,6 +189,9 @@ export function isBuiltInCommandFlowId(flowId: string): boolean {
 }
 
 export function toDeclarativeFlowRef(entry: FlowCatalogEntry): DeclarativeFlowRef {
+  if (entry.id === AUTO_FLOW_BASE_FLOW_ID || entry.id.startsWith(AUTO_FLOW_CONFIG_FLOW_ID_PREFIX)) {
+    return { source: "built-in", fileName: entry.fileName };
+  }
   return entry.source === "built-in"
     ? { source: "built-in", fileName: entry.fileName }
     : { source: entry.source, filePath: entry.absolutePath };

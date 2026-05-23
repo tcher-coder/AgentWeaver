@@ -680,9 +680,6 @@
     updateSettings: function (settings) {
       api.send({ type: "settings.update", settings: settings });
     },
-    selectAutoFlowPreset: function (preset) {
-      api.send({ type: "autoFlow.selectPreset", preset: preset });
-    },
     saveAutoFlow: function () {
       api.send({ type: "autoFlow.save" });
     },
@@ -977,22 +974,6 @@
 
     var toolbar = document.createElement("div");
     toolbar.className = "auto-flow-toolbar";
-    var simple = document.createElement("button");
-    simple.type = "button";
-    simple.textContent = "Simple";
-    simple.disabled = blocked;
-    simple.className = model.basePreset === "simple" ? "primary" : "";
-    simple.addEventListener("click", function () {
-      api.selectAutoFlowPreset("simple");
-    });
-    var standard = document.createElement("button");
-    standard.type = "button";
-    standard.textContent = "Standard";
-    standard.disabled = blocked;
-    standard.className = model.basePreset === "standard" ? "primary" : "";
-    standard.addEventListener("click", function () {
-      api.selectAutoFlowPreset("standard");
-    });
     var save = document.createElement("button");
     save.type = "button";
     save.textContent = "Save";
@@ -1000,10 +981,10 @@
     save.addEventListener("click", api.saveAutoFlow);
     var saveAs = document.createElement("button");
     saveAs.type = "button";
-    saveAs.textContent = "Save as flow";
-    saveAs.disabled = blocked || !model.status || !model.status.canSave;
+    saveAs.textContent = "Save as custom";
+    saveAs.disabled = blocked || !model.status || !model.status.canSaveAs;
     saveAs.addEventListener("click", function () {
-      var defaultName = model.configName && model.configName.indexOf("preset-") !== 0
+      var defaultName = model.configName && model.configName !== "auto"
         ? model.configName
         : "";
       var name = window.prompt("Flow config name", defaultName);
@@ -1022,7 +1003,7 @@
     var status = document.createElement("span");
     status.className = "auto-flow-status " + (model.status && model.status.valid ? "valid" : "invalid");
     status.textContent = (model.status && model.status.valid ? "valid" : "invalid") + " | " + text(model.status && model.status.sourceLabel, model.configName || "auto-flow");
-    toolbar.append(simple, standard, save, saveAs, reset, status);
+    toolbar.append(save, saveAs, reset, status);
     elements.autoFlowEditor.append(toolbar);
 
     if (model.status && model.status.lastMessage) {

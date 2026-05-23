@@ -1,19 +1,20 @@
 import type { AutoFlowSelection, ResolvedAutoFlow } from "./auto-flow-resolver.js";
 
-export const AUTO_FLOW_STANDARD_FLOW_ID = "auto-common";
-export const AUTO_FLOW_SIMPLE_FLOW_ID = "auto-simple";
+export const AUTO_FLOW_BASE_FLOW_ID = "auto";
 export const AUTO_FLOW_CONFIG_FLOW_ID_PREFIX = "auto-config:";
+export const LEGACY_AUTO_FLOW_IDS = ["auto-common", "auto-simple", "auto-golang", "auto-common-guided"] as const;
+export const LEGACY_AUTO_FLOW_STATE_ERROR = "This run was created with legacy auto-* flow identity. Restart with `agentweaver auto`.";
 
 const VALID_AUTO_FLOW_CONFIG_ID_RE = /^[A-Za-z0-9._-]+$/;
 
 export type AutoFlowIdentity = {
   flowId: string;
   displayLabel: string;
-  selectedCommand: "auto-common" | "auto-simple";
+  mutable: boolean;
 };
 
 export function defaultAutoFlowSelection(): AutoFlowSelection {
-  return { kind: "preset", preset: "standard" };
+  return { kind: "base" };
 }
 
 export function autoFlowIdentityForSelection(
@@ -24,14 +25,14 @@ export function autoFlowIdentityForSelection(
     return {
       flowId: `${AUTO_FLOW_CONFIG_FLOW_ID_PREFIX}${resolved.config.name}`,
       displayLabel: `config ${resolved.config.name}`,
-      selectedCommand: resolved.document.selectedCommand,
+      mutable: true,
     };
   }
 
   return {
-    flowId: selection.preset === "simple" ? AUTO_FLOW_SIMPLE_FLOW_ID : AUTO_FLOW_STANDARD_FLOW_ID,
-    displayLabel: `${selection.preset} preset`,
-    selectedCommand: selection.preset === "simple" ? AUTO_FLOW_SIMPLE_FLOW_ID : AUTO_FLOW_STANDARD_FLOW_ID,
+    flowId: AUTO_FLOW_BASE_FLOW_ID,
+    displayLabel: "Auto workflow",
+    mutable: false,
   };
 }
 
@@ -44,7 +45,7 @@ export function isConfigurableAutoConfigFlowId(flowId: string): boolean {
 }
 
 export function isConfigurableAutoPresetFlowId(flowId: string): boolean {
-  return flowId === AUTO_FLOW_STANDARD_FLOW_ID || flowId === AUTO_FLOW_SIMPLE_FLOW_ID;
+  return flowId === AUTO_FLOW_BASE_FLOW_ID;
 }
 
 export function isConfigurableAutoFlowId(flowId: string): boolean {
@@ -53,10 +54,7 @@ export function isConfigurableAutoFlowId(flowId: string): boolean {
 
 export function isRestartArchivingFlowId(flowId: string): boolean {
   return (
-    flowId === AUTO_FLOW_STANDARD_FLOW_ID ||
-    flowId === AUTO_FLOW_SIMPLE_FLOW_ID ||
-    flowId === "auto-common-guided" ||
-    flowId === "auto-golang" ||
+    flowId === AUTO_FLOW_BASE_FLOW_ID ||
     flowId === "instant-task" ||
     isConfigurableAutoConfigFlowId(flowId)
   );
@@ -64,10 +62,12 @@ export function isRestartArchivingFlowId(flowId: string): boolean {
 
 export function isContinuableParentFlowId(flowId: string): boolean {
   return (
-    flowId === AUTO_FLOW_STANDARD_FLOW_ID ||
-    flowId === AUTO_FLOW_SIMPLE_FLOW_ID ||
-    flowId === "auto-golang" ||
+    flowId === AUTO_FLOW_BASE_FLOW_ID ||
     flowId === "instant-task" ||
     isConfigurableAutoConfigFlowId(flowId)
   );
+}
+
+export function isLegacyAutoFlowId(flowId: string): boolean {
+  return (LEGACY_AUTO_FLOW_IDS as readonly string[]).includes(flowId);
 }

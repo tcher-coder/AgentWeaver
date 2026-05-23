@@ -21,7 +21,7 @@ See [docs/features.md](docs/features.md) for the expanded feature overview.
 - **Declarative agent workflows**: flows are JSON specs with phases, steps, prompt bindings, params, expectations, and post-step actions. Workflow design stays declarative while runtime behavior lives in typed nodes and executors.
 - **Repository-local project playbook**: stable project conventions live under `.agentweaver/playbook/` as versioned rules, examples, and templates. Guided flows select relevant guidance before planning, implementation, review, and repair so repeated agent runs inherit the same project knowledge.
 - **Artifact-first execution**: each stage produces structured JSON and human-readable markdown artifacts on disk. Artifacts are the contract between stages, which makes runs inspectable, reviewable, and restartable.
-- **Planning and design-review gates**: planning flows produce design, implementation plan, and QA plan artifacts. `design-review` critiques those artifacts before coding starts, and `auto-common` can iterate through `plan-revise` before implementation.
+- **Planning and design-review gates**: planning flows produce design, implementation plan, and QA plan artifacts. `design-review` critiques those artifacts before coding starts, and the built-in `auto` workflow includes a design-review gate before implementation.
 - **Review and repair loops**: review flows produce structured findings with severities. Repair flows can select blockers and critical findings, apply targeted fixes, and run follow-up checks.
 - **Resumable automation**: long-running flows persist compact execution state, support resume/continue/restart semantics, and can restart from selected phases when the artifacts and launch profile are compatible.
 - **Multiple execution backends**: Codex, OpenCode, shell/process checks, Jira, GitLab, Git commit, and Telegram notification integrations run through a common executor model.
@@ -49,7 +49,7 @@ In practice, this means you can treat an agent workflow like an engineered syste
 - `executor`: integration layer for Jira, Codex, OpenCode, GitLab, shell/process execution, Telegram notifications, and related actions
 - `scope`: isolated workspace key for artifacts and flow state; usually based on Jira task, otherwise derived from git context
 - `artifact`: file produced or consumed by flows, used as the stable contract between stages
-- `flow state`: compact persisted execution metadata used for resume/restart in long-running flows such as `auto-golang`
+- `flow state`: compact persisted execution metadata used for resume/restart in long-running flows such as `auto`
 - `project playbook`: local `.agentweaver/playbook/` directory with `manifest.yaml`, practices, examples, and templates; the format is described in [docs/playbook.md](docs/playbook.md)
 
 ## Launch Semantics
@@ -58,7 +58,7 @@ In practice, this means you can treat an agent workflow like an engineered syste
 - `continue` is intended for completed iterative cycles and starts the next iteration from the latest valid artifacts without deleting historical artifacts
 - `restart` is treated as a new run. For end-to-end attempt flows, the current active attempt is archived under `.agentweaver/scopes/<scope>/.artifacts/restart-archives/attempt-XXXX` before the new attempt starts; for independent single-purpose flows, restart only resets that flow's saved state and keeps existing scope artifacts available.
 - For ambiguous launches, the operator must choose the action explicitly: by confirmation in interactive mode, or with `--resume`, `--continue`, or `--restart` in non-interactive mode
-- This contract applies to `auto-common`, `auto-simple`, `auto-golang`, `instant-task`, `review-loop`, `run-go-linter-loop`, and `run-go-tests-loop`
+- This contract applies to `auto`, `auto-config:<name>`, `instant-task`, `review-loop`, `run-go-linter-loop`, and `run-go-tests-loop`
 
 ## Declarative Workflow Model
 
@@ -107,9 +107,7 @@ User-invokable built-in commands currently map to these flow specs:
 - `mr-description` — generates a concise merge request description based on the task context and current code changes; produces both markdown and structured JSON artifacts
 - `run-go-tests-loop` — runs `run_go_tests.py` and analyzes failures; if tests fail, sends the error output to LLM for a fix and retries; repeats up to 5 attempts, stopping early on success
 - `run-go-linter-loop` — runs `run_go_linter.py` and analyzes output; if the linter reports issues, sends them to LLM for a fix and retries; repeats up to 5 attempts, stopping early on success
-- `auto-golang` — end-to-end resumable pipeline for Go projects: plan → implement → linter loop → test loop → review loop → final linter loop → final test loop; supports `--from` to restart from a specific phase and `auto-status`/`auto-reset` for state management
-- `auto-common` — planning-aware pipeline with a mandatory design-review gate before implementation: plan → design-review loop → implement → review loop; design-review can iterate with `plan-revise` up to 3 times, and if the final verdict still requires revision the operator must explicitly choose whether to continue with the latest planning artifacts or stop
-- `auto-simple` — preserved simplified pipeline equivalent to the legacy auto-common behavior: plan → implement → review loop; no planning review gate, suitable for projects that do not need design review before coding
+- `auto` — the single built-in Auto workflow: task source → normalize → plan → design-review loop → implement → review loop. It is immutable; custom variants are saved as `auto-config:<name>`.
 - `doctor` — diagnostics command that runs system, executor, and flow readiness health checks; supports filtering by category or check ID and JSON output
 
 There are also built-in nested/helper flows that are loaded declaratively but are not direct top-level CLI commands, for example `review-project` (project-level code review used internally when no prior design/plan artifacts are present).
@@ -301,12 +299,7 @@ agentweaver mr-description DEMO-1234
 agentweaver run-go-tests-loop DEMO-1234
 agentweaver run-go-linter-loop DEMO-1234
 agentweaver auto DEMO-1234
-agentweaver auto --preset simple DEMO-1234
-agentweaver auto --preset standard --dry-run-flow DEMO-1234
 agentweaver auto --config backend-standard --dry-run-flow DEMO-1234
-agentweaver auto-golang DEMO-1234
-agentweaver auto-common DEMO-1234
-agentweaver auto-simple DEMO-1234
 agentweaver doctor
 agentweaver doctor --json
 agentweaver doctor <category>|<check-id>
@@ -319,9 +312,8 @@ node dist/index.js plan DEMO-1234
 node dist/index.js design-review DEMO-1234
 node dist/index.js implement DEMO-1234
 node dist/index.js review DEMO-1234
-node dist/index.js auto --preset standard --dry-run-flow DEMO-1234
-node dist/index.js auto-golang DEMO-1234
-node dist/index.js auto-common DEMO-1234
+node dist/index.js auto --dry-run-flow DEMO-1234
+node dist/index.js auto --config backend-standard --dry-run-flow DEMO-1234
 ```
 
 Useful commands:
@@ -329,12 +321,11 @@ Useful commands:
 ```bash
 agentweaver --help
 agentweaver --version
-agentweaver auto-golang --help-phases
-agentweaver auto-common --help-phases
-agentweaver auto-simple --help-phases
-agentweaver auto-golang --from <phase> DEMO-1234
+agentweaver auto --help-phases
 agentweaver auto-status DEMO-1234
+agentweaver auto-status --config backend-standard DEMO-1234
 agentweaver auto-reset DEMO-1234
+agentweaver auto-reset --config backend-standard DEMO-1234
 agentweaver doctor
 agentweaver doctor --json
 ```
@@ -343,7 +334,6 @@ Notes:
 
 - `--dry` fetches required context but prints launch commands instead of running Codex/OpenCode steps
 - `--dry-run-flow` applies only to `agentweaver auto`; it validates and previews the resolved flow without running workflow steps or writing resolver artifacts
-- `--preset <simple|standard>` applies only to `agentweaver auto`; raw `agentweaver auto` defaults to `--preset standard`
 - `--config <name>` applies only to `agentweaver auto`; it loads a saved YAML config by name
 - `--verbose` streams child process stdout/stderr in direct CLI mode
 - `--prompt <text>` appends extra instructions to the prompt
@@ -355,31 +345,20 @@ Notes:
 - Task-driven flows that can run without a Jira key show Jira input and manual task text in the same first form; leave Jira empty and fill the task description when Jira is unavailable
 - In the Web UI, `task-describe` can also work from one uploaded UTF-8 `.md`, `.markdown`, `.txt`, or `.xml` task source file without Jira
 - `gitlab-review` and `gitlab-diff-review` ask for a GitLab merge request URL interactively
-- `auto-status` and `auto-reset` currently operate on persisted state for `auto-golang`
+- `auto-status` and `auto-reset` operate on persisted state for `auto` or `auto-config:<name>`
 
-## `auto-golang`, `auto-common`, and `auto-simple`
+## Auto Workflow
 
-`auto-golang` is the main resumable end-to-end automation flow. It stores persisted execution state and supports:
+`agentweaver auto` is the single built-in task automation workflow. It is generated in memory from the immutable base Auto definition and runs task source collection, normalization, planning, design review, implementation, and review.
 
-- phase listing via `--help-phases`
-- restart from a specific phase via `--from <phase>`
-- status inspection via `auto-status`
-- reset via `auto-reset`
-- resume validation against saved launch profile and required artifacts
+Use `agentweaver auto --dry-run-flow <task>` to inspect the generated phases, included/skipped blocks, max-iteration settings, and artifact policy without invoking executors or writing resolver artifacts.
 
-`auto-common` is the planning-aware built-in automation flow. After `plan`, it runs a `design-review` loop and blocks implementation until the verdict is `approved` or `approved_with_warnings`. When the verdict is `needs_revision`, it runs `plan-revise` and then another `design-review`, for up to 3 design-review iterations total. If the final verdict still requires revision, the pipeline asks the operator whether to continue with the latest planning artifacts or stop before `implement`.
-
-`auto-simple` is the preserved simplified pipeline: `plan → implement → review loop`, with no planning review gate and no revise rounds. It is behaviorally equivalent to the legacy `auto-common` before the planning gate was introduced.
-
-`agentweaver auto` is the configurable entrypoint in front of those built-in flows. Without flags it resolves to the standard preset, equivalent to `auto-common`. `--preset simple` resolves to the simplified flow, and `--preset standard` resolves to the design-review-gated flow. Use `--dry-run-flow` to inspect the selected source, phase order, included/skipped blocks, max-iteration settings, and artifact policy without invoking LLM executors, command executors, nested flows, state mutation, or resolver artifact writes.
-
-Saved configs are YAML files named by command flag:
+Saved custom Auto workflows are YAML files named by command flag:
 
 ```yaml
 kind: auto-flow-config
-version: 1
+version: 2
 name: backend-standard
-basePreset: standard
 slots:
   designReview:
     blocks:
@@ -399,7 +378,7 @@ slots:
     blocks: []
 ```
 
-Supported presets are `simple` and `standard`. Supported slots are `designReview`, `postImplementationChecks`, `review`, and `final`. Supported block ids are `review.design-loop`, `checks.go.linter`, `checks.go.tests`, and `review.loop`. `enabled` accepts `true`, `false`, or `auto`; `maxIterations`, when present, must be a positive integer.
+Supported slots are `designReview`, `postImplementationChecks`, `review`, and `final`. Supported block ids are `review.design-loop`, `checks.go.linter`, `checks.go.tests`, and `review.loop`. `enabled` accepts `true`, `false`, or `auto`; `maxIterations`, when present, must be a positive integer. Version 1 configs are read and normalized to version 2; old persisted `auto-*` state must be restarted with `agentweaver auto`.
 
 ## Launch Profiles and Resume
 
@@ -511,9 +490,7 @@ Recommended smoke checks:
 
 ```bash
 node dist/index.js --help
-node dist/index.js auto-golang --help-phases
-node dist/index.js auto-common --help-phases
-node dist/index.js auto-common-guided --help-phases
+node dist/index.js auto --help-phases
 node dist/index.js plan --dry DEMO-1234
 node dist/index.js implement --dry DEMO-1234
 node dist/index.js review --dry DEMO-1234
@@ -530,7 +507,7 @@ Typical playbook content includes:
 - templates for recurring artifact shapes or implementation notes
 - repository context that should remain visible across tasks without overriding task-specific inputs
 
-The guided flow is `auto-common-guided`. It first runs the same Jira fetch and task normalization steps as `auto-common`, then validates `.agentweaver/playbook/manifest.yaml` and generates compact project guidance before the `plan`, `design-review`, `implement`, `review`, and `repair/review-fix` phases. JSON artifacts remain English and machine-readable; workflow markdown artifacts are generated in the workflow-selected language. The markdown language setting does not apply to repository source files, committed documentation, or playbook rules.
+Project playbook guidance can be generated and maintained independently with `playbook-init`. Auto workflow execution no longer exposes a separate guided auto command; custom Auto variants are represented as `auto-config:<name>` saved configs.
 
 The guidance is intentionally phase-aware. A rule can apply only to `plan`, `implement`, `review`, or another supported phase; it can also target languages, frameworks, glob patterns, and keywords. AgentWeaver writes both a structured `project-guidance/v1` JSON artifact and a derivative markdown file, then passes their paths into the phase prompt as supplemental project-local context.
 
@@ -541,14 +518,7 @@ agentweaver playbook-init
 agentweaver playbook-init --accept-playbook-draft
 ```
 
-Use the guided flow with:
-
-```bash
-agentweaver auto-common-guided --help-phases
-agentweaver auto-common-guided --accept-playbook-draft [DEMO-1234]
-```
-
-The workflow does not read old `playbook.json` or `playbook.md` files as fallbacks. In non-interactive runs, a missing manifest stops the workflow before planning and reports the required action: run `agentweaver playbook-init --accept-playbook-draft` first, or rerun `agentweaver auto-common-guided --accept-playbook-draft [<jira>]` in an interactive terminal when manual task input is needed. The `--accept-playbook-draft` flag explicitly accepts the generated playbook without interactive review and allows AgentWeaver to write the manifest-based layout. An invalid manifest stops the guided phase before the LLM prompt.
+The workflow does not read old `playbook.json` or `playbook.md` files as fallbacks. Run `agentweaver playbook-init --accept-playbook-draft` to explicitly accept generated playbook content without interactive review. An invalid manifest stops validation before an LLM prompt.
 
 To inspect whether playbook guidance participated in a run, check the generated artifacts:
 

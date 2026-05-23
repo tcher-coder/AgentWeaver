@@ -565,9 +565,15 @@
 
   function flowMeta(item) {
     var key = String(item && item.key ? item.key : "");
-    if (key.indexOf("project") >= 0) return "project";
-    if (key.indexOf("global") >= 0) return "global";
-    if (key.indexOf("built") >= 0 || key.indexOf("default") >= 0) return "built-in";
+    var pathSegments = Array.isArray(item && item.pathSegments) ? item.pathSegments : [];
+    var root = String(pathSegments[0] || "");
+    var group = String(pathSegments[1] || "");
+    if (root === "recommended" || key.indexOf("recommended") >= 0) return "recommended";
+    if (group === "saved-auto-flows" || key.indexOf("saved-auto-flows") >= 0) return "saved auto";
+    if (group === "project-flows" || key.indexOf("project-flows") >= 0) return "project";
+    if (group === "global-flows" || key.indexOf("global-flows") >= 0) return "global";
+    if (root === "custom" || key.indexOf("custom") >= 0) return "custom";
+    if (root === "built-in-blocks" || key.indexOf("built-in-blocks") >= 0 || key.indexOf("built") >= 0) return "built-in";
     return key;
   }
 
@@ -1938,7 +1944,7 @@
       row.className = "flow-row" + (folder ? " folder" : "") + (index === vm.selectedFlowIndex ? " selected" : "");
       row.setAttribute("role", folder ? "treeitem" : "option");
       row.style.paddingLeft = String(6 + depth * 18) + "px";
-      row.title = item.key || item.label || "";
+      row.title = item.label || item.key || "";
       row.addEventListener("click", function () {
         if (folder) {
           api.toggleFolder(item.key);
@@ -1957,7 +1963,7 @@
       icon.textContent = folder ? (item.expanded ? "▾" : "▸") : "•";
       var label = document.createElement("span");
       label.className = "flow-label";
-      label.textContent = text(item.name, item.label || item.key || "Untitled flow").replace(/^[\s▸▾•]+/, "");
+      label.textContent = text(item.label, item.name || item.key || "Untitled flow").replace(/^[\s▸▾•]+/, "");
       var meta = document.createElement("span");
       meta.className = "flow-meta";
       meta.textContent = flowMeta(item);

@@ -3,6 +3,7 @@ import type { GitWorkspaceSnapshot } from "../git/git-types.js";
 import type { FlowStatusState, FocusPane } from "./types.js";
 import type { ArtifactExplorerViewModel } from "./view-model.js";
 import { buildFlowTree, collectInitiallyExpandedFolderKeys, computeVisibleFlowItems, makeFlowKey } from "./tree.js";
+import { AUTO_FLOW_BASE_FLOW_ID } from "../pipeline/auto-flow-identity.js";
 
 export type InteractiveSessionState = {
   scopeKey: string;
@@ -60,8 +61,19 @@ export function createInitialInteractiveState(options: InteractiveSessionOptions
   const flowTree = buildFlowTree(options.flows);
   const expandedFlowFolders = new Set<string>(collectInitiallyExpandedFolderKeys(flowTree));
   const visibleFlowItems = computeVisibleFlowItems(flowTree, expandedFlowFolders);
-  const initiallySelectedItem = visibleFlowItems.find((item) => item.kind === "flow") ?? visibleFlowItems[0];
-  const selectedFlowId = initiallySelectedItem?.kind === "flow" ? initiallySelectedItem.flow.id : options.flows[0]?.id ?? "auto";
+  const visibleFlowNodes = visibleFlowItems.filter((item): item is Extract<(typeof visibleFlowItems)[number], { kind: "flow" }> => item.kind === "flow");
+  const visibleAutoItem = visibleFlowNodes.find((item) => item.flow.id === AUTO_FLOW_BASE_FLOW_ID);
+  const autoFlow = options.flows.find((flow) => flow.id === AUTO_FLOW_BASE_FLOW_ID);
+  const preferredVisibleItem =
+    visibleAutoItem
+    ?? visibleFlowNodes.find((item) => item.flow.catalogRole === "recipe" || item.pathSegments[0] === "recommended")
+    ?? visibleFlowNodes.find((item) => item.pathSegments[0] === "custom")
+    ?? visibleFlowNodes.find((item) => item.pathSegments[0] === "built-in-blocks")
+    ?? visibleFlowNodes[0];
+  const selectedFlowId = autoFlow?.id ?? preferredVisibleItem?.flow.id ?? options.flows[0]?.id ?? AUTO_FLOW_BASE_FLOW_ID;
+  const selectedFlowItemKey =
+    (autoFlow ? visibleAutoItem?.key : preferredVisibleItem?.key)
+    ?? makeFlowKey(selectedFlowId);
 
   return {
     scopeKey: options.scopeKey,
@@ -71,7 +83,7 @@ export function createInitialInteractiveState(options: InteractiveSessionOptions
     version: options.version ?? "",
     flowTreeKeys: flowTree.map((node) => node.key),
     selectedFlowId,
-    selectedFlowItemKey: initiallySelectedItem?.key ?? makeFlowKey(selectedFlowId),
+    selectedFlowItemKey,
     focusedPane: "flows",
     summaryVisible: options.summaryText.trim().length > 0,
     busy: false,

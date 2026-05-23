@@ -28,6 +28,7 @@ export type InteractiveFlowDefinition = {
   description: string;
   source: "built-in" | "global" | "project-local";
   treePath: string[];
+  catalogRole?: "recipe" | "block" | "tool" | "integration" | "specialized";
   sourcePath?: string;
   autoFlow?: InteractiveAutoFlowDefinition;
   phases: Array<{
@@ -135,6 +136,7 @@ export type FlowTreeFolderNode = {
   kind: "folder";
   key: string;
   name: string;
+  label: string;
   pathSegments: string[];
   children: FlowTreeNode[];
 };
@@ -143,6 +145,7 @@ export type FlowTreeFlowNode = {
   kind: "flow";
   key: string;
   name: string;
+  label: string;
   pathSegments: string[];
   flow: InteractiveFlowDefinition;
 };
@@ -154,6 +157,7 @@ export type VisibleFlowTreeItem =
       kind: "folder";
       key: string;
       name: string;
+      label: string;
       depth: number;
       pathSegments: string[];
     }
@@ -161,6 +165,7 @@ export type VisibleFlowTreeItem =
       kind: "flow";
       key: string;
       name: string;
+      label: string;
       depth: number;
       pathSegments: string[];
       flow: InteractiveFlowDefinition;

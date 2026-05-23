@@ -7,6 +7,17 @@ import { globalFlowSpecsDir, listBuiltInFlowSpecFiles, listGlobalFlowSpecFiles, 
 import { listAutoFlowConfigs, loadAutoFlowConfigByName } from "./auto-flow-config.js";
 import { resolveAutoFlow } from "./auto-flow-resolver.js";
 import { AUTO_FLOW_BASE_FLOW_ID, AUTO_FLOW_CONFIG_FLOW_ID_PREFIX } from "./auto-flow-identity.js";
+import {
+  BUILT_IN_BLOCKS_ROOT,
+  CUSTOM_ROOT,
+  GLOBAL_FLOWS_GROUP,
+  OTHER_BUILT_IN_GROUP,
+  PROJECT_FLOWS_GROUP,
+  RECOMMENDED_ROOT,
+  SAVED_AUTO_FLOWS_GROUP,
+  builtInFlowCatalogMetadata,
+  type BuiltInFlowCatalogRole,
+} from "./flow-catalog-groups.js";
 
 export type FlowCatalogSource = "built-in" | "global" | "project-local";
 
@@ -16,6 +27,8 @@ export type FlowCatalogEntry = {
   fileName: string;
   absolutePath: string;
   treePath: string[];
+  label?: string;
+  catalogRole?: BuiltInFlowCatalogRole;
   flow: LoadedDeclarativeFlow;
 };
 
@@ -79,13 +92,15 @@ async function loadBuiltInCatalogEntry(fileName: string, options: DeclarativeFlo
   const commandId = builtInCommandIdForFile(fileName);
   const relativePath = fileName.replace(/\.json$/i, "").split(/[\\/]+/).filter((segment) => segment.length > 0);
   const id = commandId ?? relativePath.join("/");
+  const metadata = commandId ? builtInFlowCatalogMetadata(commandId) : null;
   const flow = await loadDeclarativeFlow({ source: "built-in", fileName }, options);
   return {
     id,
     source: "built-in",
     fileName,
     absolutePath: flow.absolutePath,
-    treePath: ["default", ...relativePath],
+    treePath: metadata ? [...metadata.treePath] : [BUILT_IN_BLOCKS_ROOT, OTHER_BUILT_IN_GROUP, ...relativePath],
+    ...(metadata ? { label: metadata.label, catalogRole: metadata.role } : {}),
     flow,
   };
 }
@@ -97,7 +112,9 @@ async function loadBaseAutoCatalogEntry(cwd: string): Promise<FlowCatalogEntry> 
     source: "built-in",
     fileName: resolved.execution.flow.fileName,
     absolutePath: resolved.execution.flow.absolutePath,
-    treePath: ["recommended", "auto"],
+    treePath: [RECOMMENDED_ROOT, "auto"],
+    label: "Auto",
+    catalogRole: "recipe",
     flow: resolved.execution.flow,
   };
 }
@@ -112,7 +129,9 @@ async function loadAutoConfigCatalogEntries(cwd: string): Promise<FlowCatalogEnt
       source: "built-in",
       fileName: resolved.execution.flow.fileName,
       absolutePath: resolved.execution.flow.absolutePath,
-      treePath: ["custom", loaded.config.name],
+      treePath: [CUSTOM_ROOT, SAVED_AUTO_FLOWS_GROUP, loaded.config.name],
+      label: `${AUTO_FLOW_CONFIG_FLOW_ID_PREFIX}${loaded.config.name}`,
+      catalogRole: "recipe",
       flow: resolved.execution.flow,
     });
   }
@@ -129,7 +148,7 @@ async function loadProjectCatalogEntry(cwd: string, filePath: string, options: D
     source: "project-local",
     fileName: path.basename(filePath),
     absolutePath: path.resolve(filePath),
-    treePath: ["custom", ...relativeSegments],
+    treePath: [CUSTOM_ROOT, PROJECT_FLOWS_GROUP, ...relativeSegments],
     flow,
   };
 }
@@ -144,7 +163,7 @@ async function loadGlobalCatalogEntry(filePath: string, options: DeclarativeFlow
     source: "global",
     fileName: path.basename(filePath),
     absolutePath: path.resolve(filePath),
-    treePath: ["global", ...relativeSegments],
+    treePath: [CUSTOM_ROOT, GLOBAL_FLOWS_GROUP, ...relativeSegments],
     flow,
   };
 }

@@ -52,6 +52,7 @@ export type InteractiveSessionViewModel = {
     kind: "folder" | "flow";
     name: string;
     depth: number;
+    pathSegments: string[];
     expanded?: boolean;
   }>;
   selectedFlowIndex: number;

@@ -25,7 +25,7 @@ See [docs/features.md](docs/features.md) for the expanded feature overview.
 - **Review and repair loops**: review flows produce structured findings with severities. Repair flows can select blockers and critical findings, apply targeted fixes, and run follow-up checks.
 - **Resumable automation**: long-running flows persist compact execution state, support resume/continue/restart semantics, and can restart from selected phases when the artifacts and launch profile are compatible.
 - **Multiple execution backends**: Codex, OpenCode, shell/process checks, Jira, GitLab, Git commit, and Telegram notification integrations run through a common executor model.
-- **Interactive TUI and direct CLI**: the same workflow model works in an operator-driven terminal UI, direct CLI commands, and non-interactive automation.
+- **Interactive TUI, Web UI, and direct CLI**: the same workflow model works in operator-driven interfaces, direct CLI commands, and non-interactive automation.
 - **Custom flows**: built-in flows can be extended with global or project-local flow specs without changing AgentWeaver source code.
 - **Plugin SDK**: local plugins can add public-SDK-compatible nodes and executors, with manifest validation, version checks, and documented entrypoint rules.
 - **Operational diagnostics**: `doctor` checks system readiness, executor configuration, flow specs, node versions, and runtime environment shape before workflows fail mid-run.
@@ -111,6 +111,22 @@ User-invokable built-in commands currently map to these flow specs:
 - `doctor` — diagnostics command that runs system, executor, and flow readiness health checks; supports filtering by category or check ID and JSON output
 
 There are also built-in nested/helper flows that are loaded declaratively but are not direct top-level CLI commands, for example `review-project` (project-level code review used internally when no prior design/plan artifacts are present).
+
+## Interactive Flow Catalog
+
+The TUI and Web UI organize launchable flows as a display catalog. This changes navigation only; CLI command ids, flow ids, resume state, and routing keys stay stable.
+
+- `Recommended` is first, expanded by default, and contains `Auto` and `Instant task`. `Auto` is selected by default when it is available.
+- `Custom` contains saved Auto configs, project-local flows, and global flows under `Saved auto flows`, `Project flows`, and `Global flows`.
+- `Built-in blocks` is a collapsed library for experienced users. It groups reusable launchable entries under `Core pipeline`, `Quality checks`, `Task utilities`, `Delivery`, `Integrations`, and `Specialized`.
+
+Catalog terms are intentionally separate from runtime implementation:
+
+- A recipe is an end-user scenario such as `auto`, `instant-task`, or `auto-config:<name>`.
+- A block is a reusable pipeline stage such as `plan`, `design-review`, `implement`, `review`, `review-fix`, `review-loop`, `run-go-tests-loop`, or `run-go-linter-loop`.
+- A tool supports an adjacent task, such as `task-describe`, `playbook-init`, `git-commit`, or `mr-description`.
+- An integration works primarily with an external system, such as `gitlab-review` or `gitlab-diff-review`.
+- Specialized flows cover narrower task classes, such as `bug-analyze` and `bug-fix`.
 
 ## Requirements
 
@@ -262,7 +278,8 @@ OPENCODE_MODEL=minimax-coding-plan/MiniMax-M2.7
 
 The full-screen TUI is not a cosmetic wrapper. It is the operator console for the harness:
 
-- browse built-in, global, and project-local workflows
+- browse recommended recipes, custom workflows, and built-in blocks
+- start from `Recommended`, use `Custom` for saved or user-defined flows, and open `Built-in blocks` when you need a specific reusable stage
 - launch flows in the current scope
 - inspect progress by phase and step
 - follow activity, prompts, summaries, and statuses
@@ -352,6 +369,8 @@ Notes:
 `agentweaver auto` is the single built-in task automation workflow. It is generated in memory from the immutable base Auto definition and runs task source collection, normalization, planning, design review, implementation, and review.
 
 Use `agentweaver auto --dry-run-flow <task>` to inspect the generated phases, included/skipped blocks, max-iteration settings, and artifact policy without invoking executors or writing resolver artifacts.
+
+Auto workflow blocks are the assembly units used to build `auto` and `auto-config:<name>`. Launchable catalog entries such as `Plan`, `Review loop`, `Go tests loop`, and `Go linter loop` are related concepts, but the interactive catalog is not the runtime source for Auto assembly.
 
 Saved custom Auto workflows are YAML files named by command flag:
 

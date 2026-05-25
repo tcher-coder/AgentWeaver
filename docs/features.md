@@ -28,7 +28,7 @@ This gives each workflow durable intermediate state: normalized task context, pl
 
 Planning is not only a prompt. The planning flow produces structured design, implementation plan, and QA plan artifacts. `design-review` then critiques those planning artifacts before implementation starts.
 
-For planning-heavy work, `auto-common` can run a design-review loop and iterate through `plan-revise` before coding. This makes implementation less dependent on a single speculative prompt.
+For planning-heavy work, the built-in `auto` workflow runs a design-review loop before coding. This makes implementation less dependent on a single speculative prompt.
 
 ## Review and Repair Loops
 
@@ -40,7 +40,7 @@ Loop flows such as `review-loop`, `run-go-tests-loop`, and `run-go-linter-loop` 
 
 Long-running flows persist compact execution state under `.agentweaver/scopes/<scope>/`. AgentWeaver uses that state with artifacts and launch profile checks to support resume, continue, and restart behavior.
 
-This is especially useful for end-to-end flows such as `auto-common`, `auto-golang`, and review/check loops where restarting from scratch would waste context and work.
+This is especially useful for end-to-end flows such as `auto`, saved `auto-config:<name>` workflows, and review/check loops where restarting from scratch would waste context and work.
 
 ## Execution Backends
 

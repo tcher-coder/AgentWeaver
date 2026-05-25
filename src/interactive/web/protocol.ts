@@ -30,7 +30,6 @@ export type ClientAction =
   | { type: "log.clear"; actionId?: string }
   | { type: "artifactExplorer.open"; actionId?: string }
   | { type: "artifactExplorer.close"; actionId?: string }
-  | { type: "autoFlow.selectPreset"; preset: "simple" | "standard"; actionId?: string }
   | { type: "autoFlow.loadConfig"; name: string; flowId?: string; actionId?: string }
   | { type: "autoFlow.save"; flowId?: string; name?: string; location?: "project" | "user"; actionId?: string }
   | { type: "autoFlow.reset"; flowId?: string; actionId?: string }
@@ -68,7 +67,6 @@ const ACTION_TYPES = new Set([
   "log.clear",
   "artifactExplorer.open",
   "artifactExplorer.close",
-  "autoFlow.selectPreset",
   "autoFlow.loadConfig",
   "autoFlow.save",
   "autoFlow.reset",
@@ -323,13 +321,6 @@ export function parseClientAction(raw: string): ClientAction {
   if (parsed.type === "flow.interrupt") {
     const flowId = optionalNonEmptyString(parsed, "flowId");
     return { type: "flow.interrupt", ...(flowId ? { flowId } : {}), ...(actionId ? { actionId } : {}) };
-  }
-  if (parsed.type === "autoFlow.selectPreset") {
-    const preset = requireNonEmptyString(parsed, "preset");
-    if (preset !== "simple" && preset !== "standard") {
-      throw new Error("preset must be simple or standard.");
-    }
-    return { type: "autoFlow.selectPreset", preset, ...(actionId ? { actionId } : {}) };
   }
   if (parsed.type === "autoFlow.loadConfig") {
     const flowId = optionalNonEmptyString(parsed, "flowId");

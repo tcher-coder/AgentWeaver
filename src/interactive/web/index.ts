@@ -263,10 +263,6 @@ export function createWebInteractiveSession(
         controller.closeArtifactExplorer();
         return;
       }
-      if (action.type === "autoFlow.selectPreset") {
-        controller.selectAutoFlowPreset(action.preset);
-        return;
-      }
       if (action.type === "autoFlow.loadConfig") {
         controller.loadAutoFlowConfig(action.name, action.flowId);
         return;

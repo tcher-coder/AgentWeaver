@@ -61,7 +61,7 @@ export function createInitialInteractiveState(options: InteractiveSessionOptions
   const expandedFlowFolders = new Set<string>(collectInitiallyExpandedFolderKeys(flowTree));
   const visibleFlowItems = computeVisibleFlowItems(flowTree, expandedFlowFolders);
   const initiallySelectedItem = visibleFlowItems.find((item) => item.kind === "flow") ?? visibleFlowItems[0];
-  const selectedFlowId = initiallySelectedItem?.kind === "flow" ? initiallySelectedItem.flow.id : options.flows[0]?.id ?? "auto-golang";
+  const selectedFlowId = initiallySelectedItem?.kind === "flow" ? initiallySelectedItem.flow.id : options.flows[0]?.id ?? "auto";
 
   return {
     scopeKey: options.scopeKey,

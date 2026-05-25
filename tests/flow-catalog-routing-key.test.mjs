@@ -20,6 +20,12 @@ function writeProjectFlow(repoDir, relativeFilePath) {
   }, null, 2)}\n`, "utf8");
 }
 
+function writeAutoConfig(repoDir, name) {
+  const filePath = path.join(repoDir, ".agentweaver", "flow-configs", `${name}.yaml`);
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileSync(filePath, `kind: auto-flow-config\nversion: 2\nname: ${name}\n`, "utf8");
+}
+
 beforeEach(async () => {
   tempRoot = mkdtempSync(path.join(os.tmpdir(), "agentweaver-flow-catalog-"));
   flowCatalogModule = await import(
@@ -48,5 +54,19 @@ describe("flow routing keys", () => {
       flowCatalogModule.flowRoutingKey(firstEntry),
       flowCatalogModule.flowRoutingKey(secondEntry),
     );
+  });
+
+  it("exposes auto and saved configs while hiding legacy public auto flows", async () => {
+    const repo = path.join(tempRoot, "repo");
+    writeAutoConfig(repo, "backend-standard");
+
+    const entries = await flowCatalogModule.loadInteractiveFlowCatalog(repo);
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+
+    assert.deepEqual(byId.get("auto")?.treePath, ["recommended", "auto"]);
+    assert.deepEqual(byId.get("auto-config:backend-standard")?.treePath, ["custom", "backend-standard"]);
+    for (const legacyId of ["auto-common", "auto-simple", "auto-golang", "auto-common-guided"]) {
+      assert.equal(byId.has(legacyId), false, legacyId);
+    }
   });
 });

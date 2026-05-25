@@ -12,6 +12,7 @@ const PLANNING_SLOT = ["planning"] as const satisfies readonly AutoFlowSlotId[];
 const DESIGN_REVIEW_SLOT = ["designReview"] as const satisfies readonly AutoFlowSlotId[];
 const IMPLEMENTATION_SLOT = ["implementation"] as const satisfies readonly AutoFlowSlotId[];
 const REVIEW_SLOT = ["review"] as const satisfies readonly AutoFlowSlotId[];
+const GO_CHECK_SLOT = ["postImplementationChecks", "final"] as const satisfies readonly AutoFlowSlotId[];
 
 const ref = (value: string): ValueSpec => ({ ref: value });
 const constant = (value: string | number | boolean | null): ValueSpec => ({ const: value });
@@ -122,27 +123,23 @@ function designReviewLoopPhase(): DeclarativePhaseSpec {
 }
 
 function implementationPromptVars(context: AutoFlowPhaseFactoryContext): NonNullable<PromptBindingSpec["vars"]> {
-  const vars: NonNullable<PromptBindingSpec["vars"]> = {
+  return {
     design_file: ref("steps.implement.resolve_planning_bundle.value.designFile"),
     design_json_file: ref("steps.implement.resolve_planning_bundle.value.designJsonFile"),
     plan_file: ref("steps.implement.resolve_planning_bundle.value.planFile"),
     plan_json_file: ref("steps.implement.resolve_planning_bundle.value.planJsonFile"),
     qa_file: ref("steps.implement.resolve_planning_bundle.value.qaFile"),
     qa_json_file: ref("steps.implement.resolve_planning_bundle.value.qaJsonFile"),
+    project_guidance_file: constant("not provided"),
+    project_guidance_json_file: constant("not provided"),
   };
-  if (context.presetId === "standard") {
-    vars.project_guidance_file = constant("not provided");
-    vars.project_guidance_json_file = constant("not provided");
-  }
-  return vars;
 }
 
 function implementationPhase(context: AutoFlowPhaseFactoryContext): DeclarativePhaseSpec {
-  const routingGroup: ExecutionRoutingGroup | undefined = context.presetId === "standard" ? "implementation" : undefined;
   const runImplementStep: DeclarativeStepSpec = {
     id: "run_implement",
     node: "llm-prompt",
-    ...(routingGroup ? { routingGroup } : {}),
+    routingGroup: "implementation" satisfies ExecutionRoutingGroup,
     prompt: {
       templateRef: "implement",
       vars: implementationPromptVars(context),
@@ -187,19 +184,15 @@ function reviewLoopPhase(context: AutoFlowPhaseFactoryContext): DeclarativePhase
   const runReviewLoopStep: DeclarativeStepSpec = {
     id: "run_review_loop",
     node: "flow-run",
-    ...(context.presetId === "standard"
-      ? {
-          stopFlowIf: {
-            not: {
-              equals: [
-                ref("steps.review-loop.run_review_loop.value.executionState.terminationOutcome"),
-                constant("success"),
-              ],
-            },
-          },
-          stopFlowOutcome: "stopped" as const,
-        }
-      : {}),
+    stopFlowIf: {
+      not: {
+        equals: [
+          ref("steps.review-loop.run_review_loop.value.executionState.terminationOutcome"),
+          constant("success"),
+        ],
+      },
+    },
+    stopFlowOutcome: "stopped",
     params: {
       fileName: constant("review-loop.json"),
       labelText: constant("Running review-loop"),
@@ -228,6 +221,39 @@ function reviewLoopPhase(context: AutoFlowPhaseFactoryContext): DeclarativePhase
               taskKey: ref("params.taskKey"),
             },
           },
+        },
+      },
+    ],
+  };
+}
+
+function goCheckPhase(context: AutoFlowPhaseFactoryContext): DeclarativePhaseSpec {
+  const isFinal = context.slotId === "final";
+  const isLinter = context.blockId === "checks.go.linter";
+  const phaseId = `${isFinal ? "final" : "post"}_${isLinter ? "go_linter" : "go_tests"}_loop`;
+  return {
+    id: phaseId,
+    steps: [
+      {
+        id: isLinter ? "run_go_linter_loop" : "run_go_tests_loop",
+        node: "flow-run",
+        params: {
+          fileName: constant(isLinter ? "run-go-linter-loop.json" : "run-go-tests-loop.json"),
+          labelText: constant(isLinter ? "Running Go linter loop" : "Running Go tests loop"),
+          taskKey: ref("params.taskKey"),
+          workspaceDir: ref("params.workspaceDir"),
+          extraPrompt: ref("params.extraPrompt"),
+          llmExecutor: ref("params.llmExecutor"),
+          llmModel: ref("params.llmModel"),
+          ...(isLinter
+            ? {
+                runGoLinterScript: ref("params.runGoLinterScript"),
+                runGoLinterIteration: ref("params.runGoLinterIteration"),
+              }
+            : {
+                runGoTestsScript: ref("params.runGoTestsScript"),
+                runGoTestsIteration: ref("params.runGoTestsIteration"),
+              }),
         },
       },
     ],
@@ -316,6 +342,44 @@ export const BUILT_IN_AUTO_FLOW_BLOCKS = [
       },
     },
     createPhase: reviewLoopPhase,
+  },
+  {
+    id: "checks.go.linter",
+    title: "Go linter loop",
+    category: "check",
+    allowedSlots: GO_CHECK_SLOT,
+    requires: ["implementation.result"],
+    provides: ["go.linter.result"],
+    defaultEnabled: false,
+    params: {
+      maxIterations: {
+        type: "integer",
+        min: 1,
+        max: 5,
+        default: 5,
+        supportedExecutableValues: [5],
+      },
+    },
+    createPhase: goCheckPhase,
+  },
+  {
+    id: "checks.go.tests",
+    title: "Go tests loop",
+    category: "check",
+    allowedSlots: GO_CHECK_SLOT,
+    requires: ["implementation.result"],
+    provides: ["go.tests.result"],
+    defaultEnabled: false,
+    params: {
+      maxIterations: {
+        type: "integer",
+        min: 1,
+        max: 5,
+        default: 5,
+        supportedExecutableValues: [5],
+      },
+    },
+    createPhase: goCheckPhase,
   },
 ] as const satisfies readonly AutoFlowBlockDefinition[];
 

@@ -76,6 +76,8 @@ import {
   type ResolvedAutoFlow,
 } from "./pipeline/auto-flow-resolver.js";
 import {
+  AUTO_FLOW_BASE_FLOW_ID,
+  AUTO_FLOW_CONFIG_FLOW_ID_PREFIX,
   autoFlowIdentityForSelection,
   defaultAutoFlowSelection,
   isLegacyAutoFlowId,
@@ -93,6 +95,7 @@ import {
   toDeclarativeFlowRef,
   type FlowCatalogEntry,
 } from "./pipeline/flow-catalog.js";
+import { CUSTOM_ROOT, RECOMMENDED_ROOT, SAVED_AUTO_FLOWS_GROUP } from "./pipeline/flow-catalog-groups.js";
 import type { PipelineRegistryContext } from "./pipeline/plugin-loader.js";
 import { createPipelineRegistryContext } from "./pipeline/plugin-loader.js";
 import {
@@ -1015,13 +1018,18 @@ async function flowCatalogEntryForResolvedAutoFlow(
   resolved: ResolvedAutoFlow,
 ): Promise<{ flowEntry: FlowCatalogEntry; inMemoryFlows?: InMemoryDeclarativeFlows }> {
   const { flow, inMemoryFlows } = await loadResolvedAutoFlowExecution(resolved);
+  const isConfigFlow = identity.flowId.startsWith(AUTO_FLOW_CONFIG_FLOW_ID_PREFIX);
   return {
     flowEntry: {
       id: identity.flowId,
       source: "built-in",
       fileName: flow.fileName,
       absolutePath: flow.absolutePath,
-      treePath: ["default", "auto-flow", identity.flowId],
+      treePath: isConfigFlow
+        ? [CUSTOM_ROOT, SAVED_AUTO_FLOWS_GROUP, identity.flowId.slice(AUTO_FLOW_CONFIG_FLOW_ID_PREFIX.length)]
+        : [RECOMMENDED_ROOT, AUTO_FLOW_BASE_FLOW_ID],
+      label: isConfigFlow ? identity.flowId : "Auto",
+      catalogRole: "recipe",
       flow,
     },
     ...(inMemoryFlows ? { inMemoryFlows } : {}),
@@ -1295,10 +1303,11 @@ function interactiveFlowDefinition(entry: FlowCatalogEntry): InteractiveFlowDefi
   }
   return {
     id: entry.id,
-    label: entry.id,
+    label: entry.label ?? entry.id,
     description: flow.description ?? "No description available for this flow.",
     source: entry.source,
     treePath: [...entry.treePath],
+    ...(entry.catalogRole ? { catalogRole: entry.catalogRole } : {}),
     ...(entry.source !== "built-in" ? { sourcePath: entry.absolutePath } : {}),
     ...(autoFlow ? { autoFlow } : {}),
     phases: flow.phases.map((phase) => ({

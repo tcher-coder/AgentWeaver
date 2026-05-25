@@ -5,7 +5,7 @@ import type {
   VisibleFlowTreeItem,
 } from "./types.js";
 import { buildProgressViewModel } from "./progress.js";
-import { computeVisibleFlowItems } from "./tree.js";
+import { computeVisibleFlowItems, formatFlowTreePath } from "./tree.js";
 
 export function selectVisibleFlowItems(
   flowTree: ReturnType<typeof import("./tree.js").buildFlowTree>,
@@ -21,7 +21,7 @@ export function selectHeaderLabel(
   if (!selectedItem) {
     return fallbackFlowId;
   }
-  return selectedItem.kind === "folder" ? selectedItem.pathSegments.join("/") : selectedItem.flow.label;
+  return selectedItem.kind === "folder" ? formatFlowTreePath(selectedItem.pathSegments) : selectedItem.label;
 }
 
 export function selectProgressViewModel(

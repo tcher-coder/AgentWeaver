@@ -763,6 +763,60 @@ describe("static Artifact Explorer app", () => {
     assert.doesNotMatch(progress.textContent, /parsed-running/);
   });
 
+  it("renders flow catalog labels and keeps folder and flow actions stable", () => {
+    const harness = createHarness(() => createResponse({ scopeKey: "ag-123", items: [] }));
+    harness.sendSnapshot(progressSnapshot([], {
+      flowItems: [
+        {
+          key: "folder:recommended",
+          label: "▾ Recommended",
+          kind: "folder",
+          name: "recommended",
+          depth: 0,
+          pathSegments: ["recommended"],
+          expanded: true,
+        },
+        {
+          key: "flow:auto",
+          label: "• Auto",
+          kind: "flow",
+          name: "auto",
+          depth: 1,
+          pathSegments: ["recommended", "auto"],
+        },
+        {
+          key: "folder:built-in-blocks",
+          label: "▸ Built-in blocks",
+          kind: "folder",
+          name: "built-in-blocks",
+          depth: 0,
+          pathSegments: ["built-in-blocks"],
+          expanded: false,
+        },
+      ],
+      selectedFlowIndex: 1,
+    }));
+
+    const rows = harness.document.querySelectorAll(".flow-row");
+    assert.equal(rows.length, 3);
+    assert.match(rows[0].textContent, /Recommended/);
+    assert.match(rows[1].textContent, /Auto/);
+    assert.match(rows[2].textContent, /Built-in blocks/);
+    assert.doesNotMatch(rows[2].textContent, /built-in-blocks/);
+
+    rows[0].click();
+    assert.equal(harness.socket.sent.at(-1).type, "folder.toggle");
+    assert.equal(harness.socket.sent.at(-1).key, "folder:recommended");
+
+    rows[1].click();
+    assert.equal(harness.socket.sent.at(-1).type, "flow.select");
+    assert.equal(harness.socket.sent.at(-1).key, "flow:auto");
+
+    rows[1].dispatchEvent({ type: "dblclick", target: rows[1], preventDefault() {} });
+    assert.equal(harness.socket.sent.at(-1).type, "run.openConfirm");
+    assert.equal(harness.socket.sent.at(-1).key, "flow:auto");
+  });
+
   it("renders configurable auto-flow slot rows and sends structured edit actions", () => {
     const harness = createHarness(() => createResponse({ scopeKey: "ag-127", items: [] }));
     harness.sendSnapshot(progressSnapshot([

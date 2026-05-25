@@ -32,7 +32,7 @@ function createOptions(overrides = {}) {
         label: "Plan",
         description: "Plan work.",
         source: "built-in",
-        treePath: ["default", "plan"],
+        treePath: ["recommended", "plan"],
         phases: [],
       },
     ],

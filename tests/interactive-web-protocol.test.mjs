@@ -23,7 +23,7 @@ describe("interactive web protocol", () => {
     const actions = [
       { type: "flow.select", index: 0 },
       { type: "flow.select", key: "flow:plan" },
-      { type: "folder.toggle", key: "folder:default" },
+      { type: "folder.toggle", key: "folder:built-in-blocks" },
       { type: "run.openConfirm", flowId: "plan" },
       { type: "confirm.select", action: "restart" },
       { type: "confirm.accept" },

@@ -52,7 +52,8 @@ function createController() {
         label: "Auto Common",
         description: "Run the common auto flow.",
         source: "built-in",
-        treePath: ["default", "auto-common"],
+        treePath: ["recommended", "auto-common"],
+        catalogRole: "recipe",
         phases: [],
       },
       {
@@ -60,7 +61,7 @@ function createController() {
         label: "Custom Review",
         description: "Run the custom review flow.",
         source: "project-local",
-        treePath: ["custom", "review", "custom-review"],
+        treePath: ["custom", "project-flows", "review", "custom-review"],
         sourcePath: "flows/custom-review.json",
         phases: [],
       },
@@ -86,7 +87,7 @@ function createBusyController(overrides = {}) {
         label: "First Flow",
         description: "First flow.",
         source: "built-in",
-        treePath: ["default", "first-flow"],
+        treePath: ["recommended", "first-flow"],
         phases: [],
       },
       {
@@ -94,7 +95,7 @@ function createBusyController(overrides = {}) {
         label: "Second Flow",
         description: "Second flow.",
         source: "built-in",
-        treePath: ["default", "second-flow"],
+        treePath: ["recommended", "second-flow"],
         phases: [],
       },
     ],
@@ -120,7 +121,7 @@ function createProgressController() {
         label: "Progress Flow",
         description: "Flow with progress rows.",
         source: "built-in",
-        treePath: ["default", "progress-flow"],
+        treePath: ["recommended", "progress-flow"],
         phases: [
           {
             id: "phase_one_1",
@@ -136,6 +137,17 @@ function createProgressController() {
       },
     ],
   });
+}
+
+function createAutoFlowDefinition() {
+  const definition = autoFlowModule.createBaseAutoFlowDefinition();
+  return {
+    ...definition,
+    config: {
+      ...definition.config,
+      name: "preset-standard",
+    },
+  };
 }
 
 function createAutoFlowController(overrides = {}) {
@@ -156,8 +168,9 @@ function createAutoFlowController(overrides = {}) {
         label: "Auto Common",
         description: "Run configurable standard auto flow.",
         source: "built-in",
-        treePath: ["default", "auto-common"],
-        autoFlow: autoFlowModule.createPresetAutoFlowDefinition("standard"),
+        treePath: ["recommended", "auto-common"],
+        catalogRole: "recipe",
+        autoFlow: createAutoFlowDefinition(),
         phases: [
           { id: "source", repeatVars: {}, steps: [{ id: "fetch_jira_source" }] },
           { id: "normalize", repeatVars: {}, steps: [{ id: "run_normalize_source" }] },
@@ -213,25 +226,29 @@ describe("interactive controller", () => {
 
     let view = controller.getViewModel();
     assert.ok(view.flowItems.length > 2);
-    assert.equal(view.flowItems[0]?.label, "▸ custom");
+    assert.equal(view.flowItems[0]?.label, "▾ Recommended");
     assert.equal(view.flowItems[0]?.kind, "folder");
     assert.equal(view.flowItems[0]?.depth, 0);
-    assert.equal(view.flowItems[0]?.expanded, false);
-    assert.equal(view.flowItems[1]?.label, "▾ default");
-    assert.equal(view.flowItems.some((item) => item.label.includes("custom-review")), false);
-
-    controller.selectFlowIndex(0);
-    await controller.handleKeypress("", { name: "right" });
-    view = controller.getViewModel();
-    assert.equal(view.flowItems[0]?.label, "▾ custom");
     assert.equal(view.flowItems[0]?.expanded, true);
-    assert.equal(view.flowItems[1]?.label, "  ▸ review");
-    assert.equal(view.flowItems[1]?.depth, 1);
+    assert.equal(view.flowItems[1]?.label, "  • Auto Common");
+    assert.equal(view.flowItems[2]?.label, "▾ Custom");
+    assert.equal(view.flowItems[2]?.expanded, true);
+    assert.equal(view.flowItems.some((item) => item.label.includes("Custom Review")), false);
 
-    controller.selectFlowIndex(1);
+    controller.selectFlowKey("folder:custom/project-flows");
     await controller.handleKeypress("", { name: "right" });
     view = controller.getViewModel();
-    assert.ok(view.flowItems.some((item) => item.label.includes("custom-review")));
+    const projectFlows = view.flowItems.find((item) => item.key === "folder:custom/project-flows");
+    assert.equal(projectFlows?.label, "  ▾ Project flows");
+    assert.equal(projectFlows?.expanded, true);
+    const reviewFolder = view.flowItems.find((item) => item.key === "folder:custom/project-flows/review");
+    assert.equal(reviewFolder?.label, "    ▸ review");
+    assert.equal(reviewFolder?.depth, 2);
+
+    controller.selectFlowKey("folder:custom/project-flows/review");
+    await controller.handleKeypress("", { name: "right" });
+    view = controller.getViewModel();
+    assert.ok(view.flowItems.some((item) => item.label.includes("Custom Review")));
 
     await controller.handleKeypress("", { name: "tab" });
     view = controller.getViewModel();
@@ -401,24 +418,25 @@ describe("interactive controller", () => {
     controller.destroy();
   });
 
-  it("changes the current auto-flow draft preset without selecting another flow", () => {
+  it("rejects legacy auto-flow preset switching without selecting another flow", () => {
     const controller = createAutoFlowController();
     controller.mount();
     controller.selectFlowId("auto-common");
 
-    controller.selectAutoFlowPreset("simple");
+    assert.throws(
+      () => controller.selectAutoFlowPreset("simple"),
+      /--preset is unsupported/,
+    );
     const view = controller.getViewModel();
 
     assert.equal(view.flowItems[view.selectedFlowIndex].key, "flow:auto-common");
-    assert.equal(view.autoFlow.basePreset, "simple");
-    assert.equal(view.autoFlow.status.canReset, true);
-    assert.equal(view.autoFlow.status.canRun, false);
-    assert.equal(view.autoFlow.status.lastMessage, "Selected 'simple' base preset for this auto-flow draft.");
-    assert.equal(view.autoFlow.slots.find((slot) => slot.slotId === "designReview").blocks.length, 0);
+    assert.equal(view.autoFlow.status.canReset, false);
+    assert.equal(view.autoFlow.status.canRun, true);
+    assert.equal(view.autoFlow.slots.find((slot) => slot.slotId === "designReview").blocks[0].blockId, "review.design-loop");
     assert.equal(view.progress.flow.id, "auto-common");
     assert.equal(
       view.progress.items.some((item) => item.kind === "block" && item.blockId === "review.design-loop"),
-      false,
+      true,
     );
     controller.destroy();
   });
@@ -427,7 +445,7 @@ describe("interactive controller", () => {
     const controller = createAutoFlowController();
     controller.mount();
     controller.selectFlowId("auto-common");
-    controller.selectAutoFlowPreset("simple");
+    controller.toggleAutoFlowBlock("auto-common", "review.design-loop", false);
 
     await controller.openRunConfirm("auto-common");
     const view = controller.getViewModel();
@@ -454,7 +472,7 @@ describe("interactive controller", () => {
         true,
       );
 
-      controller.saveAutoFlowConfig("auto-common");
+      controller.saveAutoFlowConfig("auto-common", "preset-standard");
       view = controller.getViewModel();
 
       assert.equal(view.flowItems[view.selectedFlowIndex].key, "flow:auto-config:preset-standard");
@@ -693,7 +711,8 @@ describe("interactive controller", () => {
           label: "Auto Common",
           description: "Run the common auto flow.",
           source: "built-in",
-          treePath: ["default", "auto-common"],
+          treePath: ["recommended", "auto-common"],
+          catalogRole: "recipe",
           phases: [],
         },
       ],
@@ -775,7 +794,7 @@ describe("interactive controller", () => {
     const runningTask = controller.handleKeypress("", { name: "enter" });
     await Promise.resolve();
 
-    controller.selectFlowIndex(2);
+    controller.selectFlowIndex(1);
     await controller.handleKeypress("", { name: "enter" });
 
     assert.equal(confirmationCalls, 1);
@@ -799,7 +818,7 @@ describe("interactive controller", () => {
     view = controller.getViewModel();
     assert.equal(view.flowListTitle, "▶ Flows");
 
-    controller.selectFlowIndex(2);
+    controller.selectFlowIndex(1);
     await controller.handleKeypress("", { name: "enter" });
     view = controller.getViewModel();
     assert.match(view.confirmText ?? "", /\[ Restart \]/);
@@ -1065,9 +1084,9 @@ describe("interactive controller", () => {
     assert.equal(controller.getViewModel().flowItems[controller.getViewModel().selectedFlowIndex].key, "flow:auto-common");
 
     controller.toggleFolder("folder:custom");
-    assert.equal(controller.getViewModel().flowItems[0].label, "▾ custom");
+    assert.equal(controller.getViewModel().flowItems.find((item) => item.key === "folder:custom")?.label, "▸ Custom");
     assert.throws(() => controller.toggleFolder("folder:missing"), /Unknown visible folder key/);
-    assert.equal(controller.getViewModel().flowItems[0].label, "▾ custom");
+    assert.equal(controller.getViewModel().flowItems.find((item) => item.key === "folder:custom")?.label, "▸ Custom");
 
     controller.showHelp(true);
     assert.equal(controller.getViewModel().helpVisible, true);

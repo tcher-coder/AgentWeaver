@@ -12,6 +12,7 @@ import {
   type SavedAutoFlowConfig,
 } from "../pipeline/auto-flow-config.js";
 import type { AutoFlowValidationDiagnostic } from "../pipeline/auto-flow-types.js";
+import { CUSTOM_ROOT, SAVED_AUTO_FLOWS_GROUP } from "../pipeline/flow-catalog-groups.js";
 import type { FlowExecutionState } from "../pipeline/spec-types.js";
 import { runCommand } from "../runtime/process-runner.js";
 import { setOutputAdapter, stripAnsi, type OutputAdapter } from "../tui.js";
@@ -37,7 +38,7 @@ import { buildProgressViewModel } from "./progress.js";
 import type { InteractiveSessionOptions } from "./session.js";
 import { selectHeaderLabel } from "./selectors.js";
 import { createInitialInteractiveState, type InteractiveSessionState } from "./state.js";
-import { buildFlowTree, collectInitiallyExpandedFolderKeys, computeVisibleFlowItems, makeFlowKey, makeFolderKey } from "./tree.js";
+import { buildFlowTree, collectInitiallyExpandedFolderKeys, computeVisibleFlowItems, formatFlowTreePath, makeFlowKey, makeFolderKey } from "./tree.js";
 import type { AutoFlowEditorViewModel, FocusPane, FlowTreeNode, InteractiveAutoFlowDefinition, InteractiveFlowDefinition, ProgressDisplayStatus, VisibleFlowTreeItem } from "./types.js";
 import type {
   ArtifactExplorerStatus,
@@ -902,7 +903,8 @@ export class InteractiveSessionController {
       label: flowId,
       description: `Saved configurable auto-flow config '${config.name}'.`,
       source: "built-in",
-      treePath: ["custom", config.name],
+      treePath: [CUSTOM_ROOT, SAVED_AUTO_FLOWS_GROUP, config.name],
+      catalogRole: "recipe",
       autoFlow: autoFlowDefinition,
       phases: [],
     };
@@ -1149,7 +1151,7 @@ export class InteractiveSessionController {
       failedFlowId: this.state.failedFlowId,
       waitingForUserInput: this.activeFormSession !== null,
     });
-    const helpText = `${HELP_TEXT}\n\nAvailable flows:\n${this.flows.map((flow) => `- ${flow.treePath.join("/")}`).join("\n")}`;
+    const helpText = `${HELP_TEXT}\n\nAvailable flows:\n${this.flows.map((flow) => `- ${formatFlowTreePath(flow.treePath)}`).join("\n")}`;
 
     return {
       header: this.buildHeaderText(),
@@ -1165,6 +1167,7 @@ export class InteractiveSessionController {
         kind: item.kind,
         name: item.name,
         depth: item.depth,
+        pathSegments: [...item.pathSegments],
         ...(item.kind === "folder" ? { expanded: this.expandedFlowFolders.has(item.key) } : {}),
       })),
       selectedFlowIndex: Math.max(0, this.visibleFlowItems.findIndex((item) => item.key === this.state.selectedFlowItemKey)),
@@ -1338,9 +1341,9 @@ export class InteractiveSessionController {
     const indent = "  ".repeat(item.depth);
     if (item.kind === "folder") {
       const expanded = this.expandedFlowFolders.has(item.key);
-      return `${indent}${expanded ? "▾" : "▸"} ${item.name}`;
+      return `${indent}${expanded ? "▾" : "▸"} ${item.label}`;
     }
-    return `${indent}• ${item.name}`;
+    return `${indent}• ${item.label}`;
   }
 
   private renderDescription(selectedItem: VisibleFlowTreeItem | undefined): string {
@@ -1349,9 +1352,16 @@ export class InteractiveSessionController {
     }
     if (selectedItem.kind === "folder") {
       const rootName = selectedItem.pathSegments[0];
-      const kindLabel = rootName === "custom" ? "project-local" : rootName === "global" ? "global" : "built-in";
+      const kindLabel =
+        rootName === "custom"
+          ? "custom"
+          : rootName === "recommended"
+            ? "recommended"
+            : rootName === "built-in-blocks"
+              ? "built-in"
+              : rootName ?? "unknown";
       return [
-        `Flow folder '${selectedItem.pathSegments.join("/")}'.`,
+        `Flow folder '${formatFlowTreePath(selectedItem.pathSegments)}'.`,
         "",
         `Source: ${kindLabel}`,
         `State: ${this.expandedFlowFolders.has(selectedItem.key) ? "expanded" : "collapsed"}`,
@@ -1387,7 +1397,7 @@ export class InteractiveSessionController {
       ].filter((line) => line.length > 0).join("\n")));
     }
     const details = [
-      `Path: ${flow.treePath.join("/")}`,
+      `Path: ${formatFlowTreePath(flow.treePath)}`,
       `Source: ${flow.source === "project-local" ? "project-local" : flow.source === "global" ? "global" : "built-in"}`,
       flow.source !== "built-in" && flow.sourcePath ? `File: ${flow.sourcePath}` : "",
     ]

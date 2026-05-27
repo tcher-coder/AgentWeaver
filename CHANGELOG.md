@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Replaced the public preset-style Auto surface with one built-in `agentweaver auto` workflow and saved custom workflows addressed as `auto-config:<name>`.
+- Removed public legacy Auto commands and `--preset`; old persisted `auto-*` state now reports: `This run was created with legacy auto-* flow identity. Restart with \`agentweaver auto\`.`
+- Saved Auto configs now normalize to version 2 without `basePreset`; version 1 configs remain readable and are migrated before use.
+
 ## v0.1.20
 
 Release range: `v0.1.19...v0.1.20`

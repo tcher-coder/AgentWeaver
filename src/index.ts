@@ -67,7 +67,7 @@ import {
   type LoadedDeclarativeFlow,
 } from "./pipeline/declarative-flows.js";
 import { runExpandedPhase } from "./pipeline/declarative-flow-runner.js";
-import { listAutoFlowConfigs, loadAutoFlowConfigByName, type AutoFlowPresetName } from "./pipeline/auto-flow-config.js";
+import { loadAutoFlowConfigByName } from "./pipeline/auto-flow-config.js";
 import {
   formatAutoFlowDryRunPreview,
   persistResolvedAutoFlowArtifacts,
@@ -76,8 +76,13 @@ import {
   type ResolvedAutoFlow,
 } from "./pipeline/auto-flow-resolver.js";
 import {
+  AUTO_FLOW_BASE_FLOW_ID,
+  AUTO_FLOW_CONFIG_FLOW_ID_PREFIX,
   autoFlowIdentityForSelection,
   defaultAutoFlowSelection,
+  isLegacyAutoFlowId,
+  LEGACY_AUTO_FLOW_IDS,
+  LEGACY_AUTO_FLOW_STATE_ERROR,
   isRestartArchivingFlowId,
   type AutoFlowIdentity,
 } from "./pipeline/auto-flow-identity.js";
@@ -90,6 +95,7 @@ import {
   toDeclarativeFlowRef,
   type FlowCatalogEntry,
 } from "./pipeline/flow-catalog.js";
+import { CUSTOM_ROOT, RECOMMENDED_ROOT, SAVED_AUTO_FLOWS_GROUP } from "./pipeline/flow-catalog-groups.js";
 import type { PipelineRegistryContext } from "./pipeline/plugin-loader.js";
 import { createPipelineRegistryContext } from "./pipeline/plugin-loader.js";
 import {
@@ -131,7 +137,7 @@ import type { InteractiveFlowDefinition } from "./interactive/types.js";
 import {
   autoFlowSelectionForFlowId,
   createConfigAutoFlowDefinition,
-  createPresetAutoFlowDefinition,
+  createBaseAutoFlowDefinition,
 } from "./interactive/auto-flow.js";
 import {
   bye,
@@ -158,10 +164,6 @@ import {
 
 const COMMANDS = [
   "auto",
-  "auto-golang",
-  "auto-common-guided",
-  "auto-common",
-  "auto-simple",
   "auto-status",
   "auto-reset",
   "bug-analyze",
@@ -385,18 +387,10 @@ function usage(): string {
   agentweaver review-loop [--dry] [--verbose] [--prompt <text>] [--scope <name>] [--blocking-severities <list>] [<jira-browse-url|jira-issue-key>]
   agentweaver run-go-tests-loop [--dry] [--verbose] [--prompt <text>] [--scope <name>] [<jira-browse-url|jira-issue-key>]
   agentweaver run-go-linter-loop [--dry] [--verbose] [--prompt <text>] [--scope <name>] [<jira-browse-url|jira-issue-key>]
-  agentweaver auto [--preset <simple|standard>|--config <name>] [--dry-run-flow] [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] [<jira-browse-url|jira-issue-key>]
+  agentweaver auto [--config <name>] [--dry-run-flow] [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] [<jira-browse-url|jira-issue-key>]
   agentweaver auto --help-phases
-  agentweaver auto-golang [--dry] [--verbose] [--prompt <text>] [<jira-browse-url|jira-issue-key>]
-  agentweaver auto-golang [--dry] [--verbose] [--prompt <text>] --from <phase> [<jira-browse-url|jira-issue-key>]
-  agentweaver auto-golang --help-phases
-  agentweaver auto-common-guided [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] [--accept-playbook-draft] [<jira-browse-url|jira-issue-key>]
-  agentweaver auto-common [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] [<jira-browse-url|jira-issue-key>]
-  agentweaver auto-common --help-phases
-  agentweaver auto-simple [--dry] [--verbose] [--prompt <text>] [--md-lang <en|ru>] [<jira-browse-url|jira-issue-key>]
-  agentweaver auto-simple --help-phases
-  agentweaver auto-status [--preset <simple|standard>|--config <name>] [<jira-browse-url|jira-issue-key>]
-  agentweaver auto-reset [--preset <simple|standard>|--config <name>] [<jira-browse-url|jira-issue-key>]
+  agentweaver auto-status [--config <name>] [<jira-browse-url|jira-issue-key>]
+  agentweaver auto-reset [--config <name>] [<jira-browse-url|jira-issue-key>]
 
 Interactive Mode:
   When started without a command, the script opens an interactive UI.
@@ -410,7 +404,6 @@ Flags:
   --host          Web command only: bind Web UI to this host (default: 127.0.0.1)
   --listen-all    Web command only: bind Web UI to 0.0.0.0
   --dry           Fetch or collect task context, but print codex/opencode commands instead of executing them
-  --preset        Auto, auto-status, and auto-reset: resolve the simple or standard preset (default: standard)
   --config        Auto, auto-status, and auto-reset: load .agentweaver/flow-configs/<name>.yaml or ~/.agentweaver/flow-configs/<name>.yaml
   --dry-run-flow  Auto command only: validate and preview flow resolution without running workflow steps or writing resolver artifacts
   --verbose       Show live stdout/stderr of launched commands
@@ -421,7 +414,7 @@ Flags:
   --restart       Start a fresh run; end-to-end attempt flows archive the active attempt first
   --blocking-severities  Comma-separated severities that block merge and drive review-fix auto-selection
   --md-lang       Language for workflow markdown artifacts only: en (English) or ru (Russian, default)
-  --accept-playbook-draft  Non-interactively accept generated playbook content for playbook-init or auto-common-guided missing-manifest runs
+  --accept-playbook-draft  Non-interactively accept generated playbook content for playbook-init missing-manifest runs
 
 Required environment variables:
   JIRA_API_KEY    Jira API token used for Jira-backed flows (Bearer by default, or Basic with Jira Cloud)
@@ -442,7 +435,7 @@ Optional environment variables:
   ${WEB_AUTH_PASSWORD_ENV}  Web UI Basic auth password; required for external Web UI binding
 
 Notes:
-  - agentweaver auto defaults to --preset standard, equivalent to auto-common. Use --dry-run-flow to inspect the resolved preset or saved config before execution.
+  - agentweaver auto runs the immutable built-in Auto workflow. Use --config <name> for saved custom Auto workflows and --dry-run-flow to inspect the generated flow before execution.
   - Saved auto flow configs are YAML files named .agentweaver/flow-configs/<name>.yaml or ~/.agentweaver/flow-configs/<name>.yaml; project configs take precedence over user configs.
   - Successful configurable auto runs write flow-config.yaml, resolved-flow.json, and resolved-flow-summary.json under the current scope .artifacts directory. --dry-run-flow writes none of them.
   - Task-driven flows that can run without a Jira key show Jira input and manual task text in the same first form; leave Jira empty and fill the task description when Jira is unavailable. In the Web UI, task-describe also accepts one uploaded UTF-8 .md, .markdown, .txt, or .xml task source file.
@@ -615,16 +608,8 @@ async function validateDeclarativeFlowResumeState(
   executionRouting?: ResolvedExecutionRouting,
   runtime: RuntimeServices = runtimeServices,
 ): Promise<void> {
-  if (state.flowId === "auto-common") {
-    const persistedPhaseIds = state.executionState.phases.map((p) => p.id);
-    const hasLegacyPlanningGatePhases = persistedPhaseIds.some((id) =>
-      ["design_review", "verdict", "plan_revision", "design_review_repeat", "verdict_repeat"].includes(id),
-    );
-    if (hasLegacyPlanningGatePhases) {
-      throw new TaskRunnerError(
-        "Resume is impossible because the persisted state was created with the legacy phase graph. Use restart.",
-      );
-    }
+  if (isLegacyAutoFlowId(state.flowId)) {
+    throw new TaskRunnerError(LEGACY_AUTO_FLOW_STATE_ERROR);
   }
 
   const persistedFingerprint = state.routingFingerprint ?? state.executionRouting?.fingerprint ?? state.launchProfile?.fingerprint;
@@ -674,11 +659,7 @@ function scopeWithRestoredJiraContext(scope: ResolvedScope, state: FlowRunState 
 
 function buildInteractiveBaseConfig(flowId: string, scope: ResolvedScope): BaseConfig {
   const autoFlowSelection = autoFlowSelectionForFlowId(flowId);
-  const command = autoFlowSelection
-    ? autoFlowSelection.kind === "preset" && autoFlowSelection.preset === "simple"
-      ? "auto-simple"
-      : "auto-common"
-    : flowId;
+  const command = autoFlowSelection ? "auto" : flowId;
   return buildBaseConfig(command, {
     ...(flowId !== "instant-task" && scope.jiraRef ? { jiraRef: scope.jiraRef } : {}),
     ...(autoFlowSelection ? { autoFlowSelection } : {}),
@@ -747,29 +728,10 @@ async function lookupInteractiveAutoFlowResume(
 }
 
 async function printAutoPhasesHelp(): Promise<void> {
-  const phaseLines = ["Available auto-golang phases:", "", ...(await autoPhaseIds())];
-  phaseLines.push("", "You can resume auto-golang from a phase with:", "agentweaver auto-golang --from <phase> [<jira>]", "or in interactive mode:", "/auto-golang --from <phase>");
-  printPanel("Auto-Golang Phases", phaseLines.join("\n"), "magenta");
-}
-
-async function autoCommonPhaseIds(fileName = "auto-common.json"): Promise<string[]> {
-  return (await loadDeclarativeFlow({ source: "built-in", fileName })).phases.map((phase) => phase.id);
-}
-
-async function printAutoCommonPhasesHelp(command = "auto-common", fileName = "auto-common.json"): Promise<void> {
-  const phaseLines = [`Available ${command} phases:`, "", ...(await autoCommonPhaseIds(fileName))];
-  phaseLines.push("", `You can run ${command} with:`, `agentweaver ${command} [<jira>]`);
-  printPanel(command === "auto-common-guided" ? "Auto-Common Guided Phases" : "Auto-Common Phases", phaseLines.join("\n"), "magenta");
-}
-
-async function autoSimplePhaseIds(): Promise<string[]> {
-  return (await loadDeclarativeFlow({ source: "built-in", fileName: "auto-simple.json" })).phases.map((phase) => phase.id);
-}
-
-async function printAutoSimplePhasesHelp(): Promise<void> {
-  const phaseLines = ["Available auto-simple phases:", "", ...(await autoSimplePhaseIds())];
-  phaseLines.push("", "You can run auto-simple with:", "agentweaver auto-simple [<jira>]");
-  printPanel("Auto-Simple Phases", phaseLines.join("\n"), "magenta");
+  const resolved = await resolveAutoFlow({ kind: "base" }, { cwd: process.cwd() });
+  const phaseLines = ["Available auto phases:", "", ...resolved.execution.flow.phases.map((phase) => phase.id)];
+  phaseLines.push("", "You can run Auto with:", "agentweaver auto [<jira>]");
+  printPanel("Auto Phases", phaseLines.join("\n"), "magenta");
 }
 
 function nextReviewIterationForTask(taskKey: string): number {
@@ -825,10 +787,6 @@ function commandRequiresTask(command: string): boolean {
     command === "bug-analyze" ||
     command === "design-review" ||
     command === "mr-description" ||
-    command === "auto-golang" ||
-    command === "auto-common-guided" ||
-    command === "auto-common" ||
-    command === "auto-simple" ||
     command === "auto-status" ||
     command === "auto-reset"
   );
@@ -841,11 +799,7 @@ function commandSupportsManualTaskSource(command: string): boolean {
     command === "plan-revise" ||
     command === "bug-analyze" ||
     command === "design-review" ||
-    command === "mr-description" ||
-    command === "auto-golang" ||
-    command === "auto-common-guided" ||
-    command === "auto-common" ||
-    command === "auto-simple"
+    command === "mr-description"
   );
 }
 
@@ -1041,28 +995,18 @@ async function checkResolvedAutoPrerequisites(
   launchProfile?: ResolvedLaunchProfile,
   executionRouting?: ResolvedExecutionRouting,
 ): Promise<void> {
-  const groups = resolved.execution.kind === "built-in"
-    ? await collectFlowRoutingGroups(
-      await loadDeclarativeFlow({ source: "built-in", fileName: resolved.execution.specFile }),
-      process.cwd(),
-    )
-    : await collectFlowRoutingGroups(
-      resolved.execution.flow,
-      process.cwd(),
-      new Set<string>(),
-      { inMemoryFlows: resolved.execution.inMemoryFlows },
-    );
+  const groups = await collectFlowRoutingGroups(
+    resolved.execution.flow,
+    process.cwd(),
+    new Set<string>(),
+    { inMemoryFlows: resolved.execution.inMemoryFlows },
+  );
   await checkPrerequisitesForRoutingGroups(groups, launchProfile, executionRouting);
 }
 
 async function loadResolvedAutoFlowExecution(
   resolved: ResolvedAutoFlow,
 ): Promise<{ flow: LoadedDeclarativeFlow; inMemoryFlows?: InMemoryDeclarativeFlows }> {
-  if (resolved.execution.kind === "built-in") {
-    return {
-      flow: await loadDeclarativeFlow({ source: "built-in", fileName: resolved.execution.specFile }),
-    };
-  }
   return {
     flow: resolved.execution.flow,
     inMemoryFlows: resolved.execution.inMemoryFlows,
@@ -1074,13 +1018,18 @@ async function flowCatalogEntryForResolvedAutoFlow(
   resolved: ResolvedAutoFlow,
 ): Promise<{ flowEntry: FlowCatalogEntry; inMemoryFlows?: InMemoryDeclarativeFlows }> {
   const { flow, inMemoryFlows } = await loadResolvedAutoFlowExecution(resolved);
+  const isConfigFlow = identity.flowId.startsWith(AUTO_FLOW_CONFIG_FLOW_ID_PREFIX);
   return {
     flowEntry: {
       id: identity.flowId,
       source: "built-in",
       fileName: flow.fileName,
       absolutePath: flow.absolutePath,
-      treePath: ["default", "auto-flow", identity.flowId],
+      treePath: isConfigFlow
+        ? [CUSTOM_ROOT, SAVED_AUTO_FLOWS_GROUP, identity.flowId.slice(AUTO_FLOW_CONFIG_FLOW_ID_PREFIX.length)]
+        : [RECOMMENDED_ROOT, AUTO_FLOW_BASE_FLOW_ID],
+      label: isConfigFlow ? identity.flowId : "Auto",
+      catalogRole: "recipe",
       flow,
     },
     ...(inMemoryFlows ? { inMemoryFlows } : {}),
@@ -1119,8 +1068,8 @@ async function runResolvedAutoFlow(
 
 function formatAutoFlowSource(resolved: ResolvedAutoFlow): string {
   const source = resolved.document.source;
-  if (source.type === "preset") {
-    return `preset ${source.preset}`;
+  if (source.type === "base") {
+    return "base Auto workflow";
   }
   const shadowed = source.shadowedUserPath ? ` (shadowed user config: ${source.shadowedUserPath})` : "";
   return `${source.type} ${source.configName} at ${source.path}${shadowed}`;
@@ -1139,6 +1088,14 @@ function resolverArtifactStatusLines(resolved: ResolvedAutoFlow): string[] {
   ];
 }
 
+function assertNoLegacyAutoState(scopeKey: string): void {
+  for (const legacyFlowId of LEGACY_AUTO_FLOW_IDS) {
+    if (existsSync(flowStateFile(scopeKey, legacyFlowId))) {
+      throw new TaskRunnerError(LEGACY_AUTO_FLOW_STATE_ERROR);
+    }
+  }
+}
+
 async function printConfigurableAutoStatus(
   config: Config,
   resolved: ResolvedAutoFlow,
@@ -1151,10 +1108,8 @@ async function printConfigurableAutoStatus(
   const lines = [
     `Issue: ${config.taskKey}`,
     `Target: ${identity.displayLabel}`,
-    `Selected command: ${identity.selectedCommand}`,
     `Effective flow ID: ${identity.flowId}`,
     `Source: ${formatAutoFlowSource(resolved)}`,
-    `Base preset: ${resolved.document.basePreset}`,
     `Execution target: ${resolved.document.executionTarget.kind}`,
     `Resolver fingerprint: ${resolved.document.fingerprint}`,
     `State file: ${stateFile}`,
@@ -1242,8 +1197,8 @@ function autoFlowParams(config: Config, forceRefreshSummary = false): Record<str
     manualTaskDescription: config.manualTaskDescription,
     forceRefresh: forceRefreshSummary,
     mdLang: config.mdLang,
-    acceptPlaybookDraft: config.command === "auto-common-guided" ? config.acceptPlaybookDraft === true : false,
-    launchMode: config.command === "auto-common-guided" ? config.autoFromPhase ?? "restart" : undefined,
+    acceptPlaybookDraft: false,
+    launchMode: undefined,
     runGoTestsScript: path.join(agentweaverHome(PACKAGE_ROOT), "run_go_tests.py"),
     runGoLinterScript: path.join(agentweaverHome(PACKAGE_ROOT), "run_go_linter.py"),
     runGoTestsIteration: nextArtifactIteration(config.taskKey, "run-go-tests-result", "json"),
@@ -1333,15 +1288,26 @@ function loadInstantTaskInputDefaults(taskKey: string): UserInputFormValues | nu
 function interactiveFlowDefinition(entry: FlowCatalogEntry): InteractiveFlowDefinition {
   const flow = entry.flow;
   const autoFlowSelection = autoFlowSelectionForFlowId(entry.id);
-  const autoFlow = autoFlowSelection?.kind === "preset"
-    ? createPresetAutoFlowDefinition(autoFlowSelection.preset)
-    : null;
+  let autoFlow = autoFlowSelection?.kind === "base" ? createBaseAutoFlowDefinition() : null;
+  if (autoFlowSelection?.kind === "config") {
+    const loaded = loadAutoFlowConfigByName(autoFlowSelection.name, process.cwd());
+    autoFlow = createConfigAutoFlowDefinition({
+      config: loaded.config,
+      source: {
+        type: loaded.source.type === "project" ? "project-config" : "user-config",
+        configName: loaded.config.name,
+        path: loaded.source.path,
+        ...(loaded.source.shadowedUserPath ? { shadowedUserPath: loaded.source.shadowedUserPath } : {}),
+      },
+    });
+  }
   return {
     id: entry.id,
-    label: entry.id,
+    label: entry.label ?? entry.id,
     description: flow.description ?? "No description available for this flow.",
     source: entry.source,
     treePath: [...entry.treePath],
+    ...(entry.catalogRole ? { catalogRole: entry.catalogRole } : {}),
     ...(entry.source !== "built-in" ? { sourcePath: entry.absolutePath } : {}),
     ...(autoFlow ? { autoFlow } : {}),
     phases: flow.phases.map((phase) => ({
@@ -1357,32 +1323,7 @@ function interactiveFlowDefinition(entry: FlowCatalogEntry): InteractiveFlowDefi
 }
 
 function savedAutoFlowDefinitions(cwd: string): InteractiveFlowDefinition[] {
-  const definitions: InteractiveFlowDefinition[] = [];
-  for (const item of listAutoFlowConfigs(cwd)) {
-    try {
-      const loaded = loadAutoFlowConfigByName(item.name, cwd);
-      definitions.push({
-        id: `auto-config:${loaded.config.name}`,
-        label: `auto-config:${loaded.config.name}`,
-        description: `Saved configurable auto-flow config '${loaded.config.name}'.`,
-        source: "built-in",
-        treePath: ["default", "auto-configs", loaded.config.name],
-        autoFlow: createConfigAutoFlowDefinition({
-          config: loaded.config,
-          source: {
-            type: loaded.source.type === "project" ? "project-config" : "user-config",
-            configName: loaded.config.name,
-            path: loaded.source.path,
-            ...(loaded.source.shadowedUserPath ? { shadowedUserPath: loaded.source.shadowedUserPath } : {}),
-          },
-        }),
-        phases: [],
-      });
-    } catch (error) {
-      printError((error as Error).message);
-    }
-  }
-  return definitions;
+  return [];
 }
 
 function interactiveFlowDefinitions(catalog: FlowCatalogEntry[], cwd = process.cwd()): InteractiveFlowDefinition[] {
@@ -1871,9 +1812,7 @@ async function executeCommand(
     ? autoFlowIdentityForSelection(configurableAutoSelection, resolvedConfigurableAuto)
     : null;
   if (resolvedConfigurableAuto && configurableAutoIdentity) {
-    if (config.command !== "auto-status" && config.command !== "auto-reset") {
-      config.command = configurableAutoIdentity.selectedCommand;
-    }
+    assertNoLegacyAutoState(config.scope.scopeKey);
     if (config.dryRunFlow) {
       writeStdoutSync(formatAutoFlowDryRunPreview(resolvedConfigurableAuto));
       return false;
@@ -1936,82 +1875,6 @@ async function executeCommand(
       runtime,
     );
     return !config.dryRun && existsSync(readyToMergeFile(config.taskKey));
-  }
-  if (config.command === "auto-golang") {
-    syncJiraEnv(config);
-
-    let effectiveLaunchMode = launchMode;
-    let effectiveLaunchProfile = launchProfile;
-    let effectiveExecutionRouting = executionRouting;
-    if (config.autoFromPhase) {
-      config.autoFromPhase = await validateAutoPhaseId(config.autoFromPhase);
-      const flow = await loadDeclarativeFlow({ source: "built-in", fileName: "auto-golang.json" });
-      const persistedState = loadFlowRunState(config.scope.scopeKey, "auto-golang");
-      if (!persistedState) {
-        throw new TaskRunnerError(
-          `Cannot restart auto-golang from phase '${config.autoFromPhase}' because persisted flow state was not found.`,
-        );
-      }
-      rewindFlowRunStateToPhase(persistedState, flow.phases, config.autoFromPhase);
-      saveFlowRunState(persistedState);
-      effectiveLaunchMode = "resume";
-      effectiveLaunchProfile ??= persistedState.launchProfile;
-      effectiveExecutionRouting ??= persistedState.executionRouting;
-      printPanel("Auto-Golang Resume", `Auto-golang pipeline will continue from phase: ${config.autoFromPhase}`, "yellow");
-    }
-    await checkAutoPrerequisites(config, effectiveLaunchProfile, effectiveExecutionRouting);
-
-    await runDeclarativeFlowBySpecFile(
-      "auto-golang.json",
-      config,
-      autoFlowParams(config, forceRefreshSummary),
-      effectiveExecutionRouting
-        ? {
-            launchProfile: effectiveExecutionRouting.defaultRoute,
-            executionRouting: effectiveExecutionRouting,
-            ...(selectedRoutingPreset ? { selectedRoutingPreset } : {}),
-          }
-        : effectiveLaunchProfile
-          ? { launchProfile: effectiveLaunchProfile }
-          : {},
-      requestUserInput,
-      setSummary,
-      effectiveLaunchMode,
-      runtime,
-    );
-    return false;
-  }
-  if (config.command === "auto-common" || config.command === "auto-common-guided") {
-    await checkAutoPrerequisites(config, launchProfile, executionRouting);
-    syncJiraEnv(config);
-
-    await runDeclarativeFlowBySpecFile(
-      config.command === "auto-common-guided" ? "auto-common-guided.json" : "auto-common.json",
-      config,
-      autoFlowParams(config, forceRefreshSummary),
-      flowOverrides,
-      requestUserInput,
-      setSummary,
-      launchMode,
-      runtime,
-    );
-    return false;
-  }
-  if (config.command === "auto-simple") {
-    await checkAutoPrerequisites(config, launchProfile, executionRouting);
-    syncJiraEnv(config);
-
-    await runDeclarativeFlowBySpecFile(
-      "auto-simple.json",
-      config,
-      autoFlowParams(config, forceRefreshSummary),
-      flowOverrides,
-      requestUserInput,
-      setSummary,
-      launchMode,
-      runtime,
-    );
-    return false;
   }
   await checkPrerequisites(config, launchProfile, executionRouting);
   syncJiraEnv(config);
@@ -2458,7 +2321,6 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
   let mdLang: "en" | "ru" | undefined;
   let launchMode: FlowLaunchMode | undefined;
   let acceptPlaybookDraft = false;
-  let autoPreset: AutoFlowPresetName | undefined;
   let autoConfigName: string | undefined;
   let webNoOpen = process.env.AGENTWEAVER_WEB_NO_OPEN === "1";
   let webHost: string | undefined;
@@ -2471,14 +2333,6 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
       process.exit(1);
     }
     return value;
-  };
-
-  const parsePresetValue = (value: string): AutoFlowPresetName => {
-    if (value === "simple" || value === "standard") {
-      return value;
-    }
-    writeStderrSync("Error: --preset accepts only 'simple' or 'standard'.\n");
-    process.exit(1);
   };
 
   for (let index = 1; index < argv.length; index += 1) {
@@ -2500,26 +2354,12 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
       continue;
     }
     if (token === "--preset") {
-      if (!supportsAutoFlowSelection) {
-        writeStderrSync("Error: --preset is only supported after auto, auto-status, or auto-reset.\n");
-        process.exit(1);
-      }
-      autoPreset = parsePresetValue(readRequiredValue("--preset", index));
-      index += 1;
-      continue;
+      writeStderrSync("Error: --preset is unsupported. Use agentweaver auto or agentweaver auto --config <name>.\n");
+      process.exit(1);
     }
     if (token.startsWith("--preset=")) {
-      if (!supportsAutoFlowSelection) {
-        writeStderrSync("Error: --preset is only supported after auto, auto-status, or auto-reset.\n");
-        process.exit(1);
-      }
-      const value = token.slice("--preset=".length).trim();
-      if (!value) {
-        writeStderrSync("Error: --preset requires a value.\n");
-        process.exit(1);
-      }
-      autoPreset = parsePresetValue(value);
-      continue;
+      writeStderrSync("Error: --preset is unsupported. Use agentweaver auto or agentweaver auto --config <name>.\n");
+      process.exit(1);
     }
     if (token === "--config") {
       if (!supportsAutoFlowSelection) {
@@ -2654,34 +2494,15 @@ async function parseCliArgs(argv: string[]): Promise<ParsedArgs> {
     }
   }
 
-  if (autoPreset && autoConfigName) {
-    writeStderrSync("Error: --preset and --config are mutually exclusive.\n");
-    process.exit(1);
-  }
-
   const autoFlowSelection: AutoFlowSelection | undefined = supportsAutoFlowSelection
     ? autoConfigName
       ? { kind: "config", name: autoConfigName }
-      : autoPreset
-        ? { kind: "preset", preset: autoPreset }
-        : defaultAutoFlowSelection()
+      : defaultAutoFlowSelection()
     : undefined;
-  const command = isConfigurableAutoCommand
-    ? autoFlowSelection?.kind === "preset" && autoFlowSelection.preset === "simple"
-      ? "auto-simple"
-      : "auto-common"
-    : rawCommand;
+  const command = rawCommand;
 
-  if (command === "auto-golang" && helpPhases) {
+  if (command === "auto" && helpPhases) {
     await printAutoPhasesHelp();
-    process.exit(0);
-  }
-  if ((command === "auto-common" || command === "auto-common-guided") && helpPhases) {
-    await printAutoCommonPhasesHelp(command, command === "auto-common-guided" ? "auto-common-guided.json" : "auto-common.json");
-    process.exit(0);
-  }
-  if (command === "auto-simple" && helpPhases) {
-    await printAutoSimplePhasesHelp();
     process.exit(0);
   }
 

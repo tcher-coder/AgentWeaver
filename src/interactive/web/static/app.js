@@ -565,9 +565,15 @@
 
   function flowMeta(item) {
     var key = String(item && item.key ? item.key : "");
-    if (key.indexOf("project") >= 0) return "project";
-    if (key.indexOf("global") >= 0) return "global";
-    if (key.indexOf("built") >= 0 || key.indexOf("default") >= 0) return "built-in";
+    var pathSegments = Array.isArray(item && item.pathSegments) ? item.pathSegments : [];
+    var root = String(pathSegments[0] || "");
+    var group = String(pathSegments[1] || "");
+    if (root === "recommended" || key.indexOf("recommended") >= 0) return "recommended";
+    if (group === "saved-auto-flows" || key.indexOf("saved-auto-flows") >= 0) return "saved auto";
+    if (group === "project-flows" || key.indexOf("project-flows") >= 0) return "project";
+    if (group === "global-flows" || key.indexOf("global-flows") >= 0) return "global";
+    if (root === "custom" || key.indexOf("custom") >= 0) return "custom";
+    if (root === "built-in-blocks" || key.indexOf("built-in-blocks") >= 0 || key.indexOf("built") >= 0) return "built-in";
     return key;
   }
 
@@ -679,9 +685,6 @@
     },
     updateSettings: function (settings) {
       api.send({ type: "settings.update", settings: settings });
-    },
-    selectAutoFlowPreset: function (preset) {
-      api.send({ type: "autoFlow.selectPreset", preset: preset });
     },
     saveAutoFlow: function () {
       api.send({ type: "autoFlow.save" });
@@ -977,22 +980,6 @@
 
     var toolbar = document.createElement("div");
     toolbar.className = "auto-flow-toolbar";
-    var simple = document.createElement("button");
-    simple.type = "button";
-    simple.textContent = "Simple";
-    simple.disabled = blocked;
-    simple.className = model.basePreset === "simple" ? "primary" : "";
-    simple.addEventListener("click", function () {
-      api.selectAutoFlowPreset("simple");
-    });
-    var standard = document.createElement("button");
-    standard.type = "button";
-    standard.textContent = "Standard";
-    standard.disabled = blocked;
-    standard.className = model.basePreset === "standard" ? "primary" : "";
-    standard.addEventListener("click", function () {
-      api.selectAutoFlowPreset("standard");
-    });
     var save = document.createElement("button");
     save.type = "button";
     save.textContent = "Save";
@@ -1000,10 +987,10 @@
     save.addEventListener("click", api.saveAutoFlow);
     var saveAs = document.createElement("button");
     saveAs.type = "button";
-    saveAs.textContent = "Save as flow";
-    saveAs.disabled = blocked || !model.status || !model.status.canSave;
+    saveAs.textContent = "Save as custom";
+    saveAs.disabled = blocked || !model.status || !model.status.canSaveAs;
     saveAs.addEventListener("click", function () {
-      var defaultName = model.configName && model.configName.indexOf("preset-") !== 0
+      var defaultName = model.configName && model.configName !== "auto"
         ? model.configName
         : "";
       var name = window.prompt("Flow config name", defaultName);
@@ -1022,7 +1009,7 @@
     var status = document.createElement("span");
     status.className = "auto-flow-status " + (model.status && model.status.valid ? "valid" : "invalid");
     status.textContent = (model.status && model.status.valid ? "valid" : "invalid") + " | " + text(model.status && model.status.sourceLabel, model.configName || "auto-flow");
-    toolbar.append(simple, standard, save, saveAs, reset, status);
+    toolbar.append(save, saveAs, reset, status);
     elements.autoFlowEditor.append(toolbar);
 
     if (model.status && model.status.lastMessage) {
@@ -1957,7 +1944,7 @@
       row.className = "flow-row" + (folder ? " folder" : "") + (index === vm.selectedFlowIndex ? " selected" : "");
       row.setAttribute("role", folder ? "treeitem" : "option");
       row.style.paddingLeft = String(6 + depth * 18) + "px";
-      row.title = item.key || item.label || "";
+      row.title = item.label || item.key || "";
       row.addEventListener("click", function () {
         if (folder) {
           api.toggleFolder(item.key);
@@ -1976,7 +1963,7 @@
       icon.textContent = folder ? (item.expanded ? "▾" : "▸") : "•";
       var label = document.createElement("span");
       label.className = "flow-label";
-      label.textContent = text(item.name, item.label || item.key || "Untitled flow").replace(/^[\s▸▾•]+/, "");
+      label.textContent = text(item.label, item.name || item.key || "Untitled flow").replace(/^[\s▸▾•]+/, "");
       var meta = document.createElement("span");
       meta.className = "flow-meta";
       meta.textContent = flowMeta(item);

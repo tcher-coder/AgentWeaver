@@ -32,25 +32,26 @@ describe("interactive state bootstrap", () => {
       onExit: () => {},
       flows: [
         {
-          id: "auto-common",
-          label: "Auto Common",
-          description: "Run the common auto flow.",
+          id: "auto",
+          label: "Auto",
+          description: "Run the base auto flow.",
           source: "built-in",
-          treePath: ["default", "auto-common"],
+          treePath: ["recommended", "auto"],
+          catalogRole: "recipe",
           phases: [],
         },
       ],
     });
 
-    assert.equal(state.selectedFlowId, "auto-common");
-    assert.equal(state.selectedFlowItemKey, "flow:auto-common");
+    assert.equal(state.selectedFlowId, "auto");
+    assert.equal(state.selectedFlowItemKey, "flow:auto");
     assert.equal(state.focusedPane, "flows");
     assert.equal(state.summaryVisible, true);
-    assert.equal(state.flowTreeKeys[0], "folder:default");
+    assert.equal(state.flowTreeKeys[0], "folder:recommended");
     assert.equal(state.gitBranchName, "feature/ink");
   });
 
-  it("keeps technical subfolders collapsed by default and selects the first visible flow", () => {
+  it("selects auto by default even when Custom and Built-in blocks contain other flows", () => {
     const state = stateModule.createInitialInteractiveState({
       scopeKey: "ag-86",
       jiraIssueKey: "AG-86",
@@ -74,28 +75,39 @@ describe("interactive state bootstrap", () => {
           label: "Custom Review",
           description: "Run the custom review flow.",
           source: "project-local",
-          treePath: ["custom", "review", "custom-review"],
+          treePath: ["custom", "project-flows", "review", "custom-review"],
           phases: [],
         },
         {
-          id: "auto-common",
-          label: "Auto Common",
-          description: "Run the common auto flow.",
+          id: "auto",
+          label: "Auto",
+          description: "Run the base auto flow.",
           source: "built-in",
-          treePath: ["default", "auto-common"],
+          treePath: ["recommended", "auto"],
+          catalogRole: "recipe",
+          phases: [],
+        },
+        {
+          id: "plan",
+          label: "Plan",
+          description: "Run the planning block.",
+          source: "built-in",
+          treePath: ["built-in-blocks", "core-pipeline", "plan"],
+          catalogRole: "block",
           phases: [],
         },
       ],
     });
 
-    assert.equal(state.selectedFlowId, "auto-common");
-    assert.equal(state.selectedFlowItemKey, "flow:auto-common");
+    assert.equal(state.selectedFlowId, "auto");
+    assert.equal(state.selectedFlowItemKey, "flow:auto");
+    assert.deepEqual(state.flowTreeKeys, ["folder:recommended", "folder:custom", "folder:built-in-blocks"]);
   });
 });
 
 describe("interactive auto-flow model", () => {
-  it("renders the simple preset as all eight fixed slots", () => {
-    const definition = autoFlowModule.createPresetAutoFlowDefinition("simple");
+  it("renders the base Auto definition as all eight slots", () => {
+    const definition = autoFlowModule.createBaseAutoFlowDefinition();
     const model = autoFlowModule.buildAutoFlowEditorViewModel(definition);
 
     assert.equal(model.status.canReset, false);
@@ -110,14 +122,14 @@ describe("interactive auto-flow model", () => {
       "final",
     ]);
     assert.equal(model.slots.find((slot) => slot.slotId === "source").blocks[0].blockId, "source.jira");
-    assert.equal(model.slots.find((slot) => slot.slotId === "designReview").status, "empty");
+    assert.equal(model.slots.find((slot) => slot.slotId === "designReview").blocks[0].blockId, "review.design-loop");
     assert.equal(model.slots.find((slot) => slot.slotId === "postImplementationChecks").status, "empty");
     assert.equal(model.slots.find((slot) => slot.slotId === "final").status, "empty");
     assert.equal(model.slots.find((slot) => slot.slotId === "review").blocks[0].blockId, "review.loop");
   });
 
-  it("renders the standard preset review blocks and locked core actions", () => {
-    const definition = autoFlowModule.createPresetAutoFlowDefinition("standard");
+  it("renders default review blocks and locked core actions", () => {
+    const definition = autoFlowModule.createBaseAutoFlowDefinition();
     const model = autoFlowModule.buildAutoFlowEditorViewModel(definition);
 
     assert.equal(model.status.canReset, false);
@@ -131,7 +143,7 @@ describe("interactive auto-flow model", () => {
   });
 
   it("keeps locked core blocks immutable and exposes invalid maxIterations diagnostics", () => {
-    const definition = autoFlowModule.createPresetAutoFlowDefinition("standard");
+    const definition = autoFlowModule.createBaseAutoFlowDefinition();
     const locked = autoFlowModule.setAutoFlowBlockEnabled(definition.config, "implementation.default", false);
     assert.equal(locked.diagnostics[0].code, "locked-block-disabled");
     const blockedModel = autoFlowModule.buildAutoFlowEditorViewModel(definition, {
@@ -153,7 +165,7 @@ describe("interactive auto-flow model", () => {
   });
 
   it("edits and removes repeated optional block ids by slot", () => {
-    const definition = autoFlowModule.createPresetAutoFlowDefinition("standard");
+    const definition = autoFlowModule.createBaseAutoFlowDefinition();
     const config = {
       ...definition.config,
       slots: {

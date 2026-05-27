@@ -10,12 +10,11 @@ import {
   type SavedAutoFlowConfig,
 } from "../pipeline/auto-flow-config.js";
 import { getBuiltInAutoFlowBlockDefinition, listBuiltInAutoFlowBlockDefinitions } from "../pipeline/auto-flow-blocks.js";
-import { getBuiltInAutoFlowPreset } from "../pipeline/auto-flow-presets.js";
+import { AUTO_FLOW_BASE_FLOW_ID, AUTO_FLOW_CONFIG_FLOW_ID_PREFIX } from "../pipeline/auto-flow-identity.js";
 import type { AutoFlowSelection } from "../pipeline/auto-flow-resolver.js";
 import {
   AUTO_FLOW_SLOT_IDS,
   type AutoFlowParameterDefinition,
-  type AutoFlowPresetId,
   type AutoFlowSlotId,
   type AutoFlowValidationDiagnostic,
 } from "../pipeline/auto-flow-types.js";
@@ -121,32 +120,35 @@ function resolveOptionalBlockSlot(
   };
 }
 
-function defaultOptionalBlocksForPreset(
-  presetId: AutoFlowPresetId,
+function defaultOptionalBlocksForSlot(
   slotId: AutoFlowSlotName,
 ): SavedAutoFlowBlock[] {
-  const preset = getBuiltInAutoFlowPreset(presetId);
-  return preset.blocks
-    .filter((placement) => placement.slot === slotId && isSavedBlockId(placement.blockId))
-    .map((placement) => ({
-      id: placement.blockId as AutoFlowBlockId,
-      enabled: placement.defaultEnabled === false ? false : "auto",
-    }));
+  if (slotId === "designReview") {
+    return [{ id: "review.design-loop", enabled: "auto" }];
+  }
+  if (slotId === "review") {
+    return [{ id: "review.loop", enabled: "auto" }];
+  }
+  return [];
 }
 
 function coreBlockForSlot(
-  presetId: AutoFlowPresetId,
   slotId: AutoFlowSlotId,
   diagnostics: readonly AutoFlowValidationDiagnostic[],
 ): AutoFlowBlockViewModel[] {
-  const preset = getBuiltInAutoFlowPreset(presetId);
-  const placement = preset.blocks.find((candidate) => candidate.slot === slotId && candidate.locked);
-  if (!placement) {
+  const blockIdBySlot: Partial<Record<AutoFlowSlotId, string>> = {
+    source: "source.jira",
+    normalize: "normalize.task-source",
+    planning: "planning.plan",
+    implementation: "implementation.default",
+  };
+  const blockId = blockIdBySlot[slotId];
+  if (!blockId) {
     return [];
   }
-  const definition = getBuiltInAutoFlowBlockDefinition(placement.blockId);
-  const phaseId = phaseIdForBlock(slotId, placement.blockId);
-  const blockDiagnostics = diagnosticsFor(diagnostics, { slotId, blockId: placement.blockId });
+  const definition = getBuiltInAutoFlowBlockDefinition(blockId);
+  const phaseId = phaseIdForBlock(slotId, blockId);
+  const blockDiagnostics = diagnosticsFor(diagnostics, { slotId, blockId });
   const status = blockDiagnostics.some((diagnostic) => (
     diagnostic.code === "locked-block-disabled"
     || diagnostic.code === "locked-block-removed"
@@ -156,8 +158,8 @@ function coreBlockForSlot(
     : blockDiagnostics.length > 0 ? "invalid" : "pending";
   return [
     {
-      blockId: placement.blockId,
-      title: definition?.title ?? placement.blockId,
+      blockId,
+      title: definition?.title ?? blockId,
       slotId,
       status,
       reason: blockDiagnostics[0]?.message ?? "Locked core block.",
@@ -329,12 +331,12 @@ function optionalBlocksForSlot(
   config: SavedAutoFlowConfig,
   slotId: AutoFlowSlotName,
 ): Array<{ block: SavedAutoFlowBlock; statusReason: string; canRemove: boolean }> {
-  const defaultBlocks = defaultOptionalBlocksForPreset(config.basePreset, slotId);
+  const defaultBlocks = defaultOptionalBlocksForSlot(slotId);
   const configuredBlocks = config.slots?.[slotId]?.blocks;
   if (!configuredBlocks) {
     return defaultBlocks.map((block) => ({
       block,
-      statusReason: "Included by preset default.",
+      statusReason: "Included by base default.",
       canRemove: true,
     }));
   }
@@ -353,7 +355,7 @@ function optionalBlocksForSlot(
         ...defaultBlock,
         enabled: false,
       },
-      statusReason: "Skipped because the slot override omitted this preset default block.",
+      statusReason: "Skipped because the slot override omitted this base default block.",
       canRemove: false,
     });
   }
@@ -454,7 +456,7 @@ function slotView(config: SavedAutoFlowConfig, slotId: AutoFlowSlotId, diagnosti
   const slotDiagnostics = diagnosticsFor(diagnostics, { slotId });
   const blocks = isOptionalSlot(slotId)
     ? optionalBlocksForSlot(config, slotId).map(({ block, statusReason, canRemove }) => optionalBlockView(slotId, block, statusReason, canRemove, diagnostics))
-    : coreBlockForSlot(config.basePreset, slotId, diagnostics);
+    : coreBlockForSlot(slotId, diagnostics);
   return {
     slotId,
     title: SLOT_TITLES[slotId],
@@ -466,43 +468,36 @@ function slotView(config: SavedAutoFlowConfig, slotId: AutoFlowSlotId, diagnosti
 }
 
 function sourceLabel(source: AutoFlowEditorSource): string {
-  if (source.type === "preset") {
-    return `preset ${source.preset}`;
+  if (source.type === "base") {
+    return "base Auto workflow";
   }
   return `${source.type} ${source.configName}`;
 }
 
-export function defaultAutoFlowConfigForPreset(
-  presetId: AutoFlowPresetId,
-  name = `preset-${presetId}`,
-): SavedAutoFlowConfig {
+export function defaultBaseAutoFlowConfig(name = "auto"): SavedAutoFlowConfig {
   return {
     kind: "auto-flow-config",
-    version: 1,
+    version: 2,
     name,
-    basePreset: presetId,
   };
 }
 
-export function createPresetAutoFlowDefinition(presetId: AutoFlowPresetId): InteractiveAutoFlowDefinition {
+export function createBaseAutoFlowDefinition(): InteractiveAutoFlowDefinition {
   return {
-    selection: { kind: "preset", preset: presetId },
-    basePreset: presetId,
-    config: defaultAutoFlowConfigForPreset(presetId),
+    selection: { kind: "base" },
+    config: defaultBaseAutoFlowConfig(),
     source: {
-      type: "preset",
-      preset: presetId,
+      type: "base",
     },
   };
 }
 
 export function createConfigAutoFlowDefinition(input: {
   config: SavedAutoFlowConfig;
-  source: Exclude<AutoFlowEditorSource, { type: "preset" }>;
+  source: Exclude<AutoFlowEditorSource, { type: "base" }>;
 }): InteractiveAutoFlowDefinition {
   return {
     selection: { kind: "config", name: input.config.name },
-    basePreset: input.config.basePreset,
     config: cloneJson(input.config),
     source: input.source,
   };
@@ -526,22 +521,11 @@ export function buildAutoFlowEditorViewModel(
       title: block.title,
       allowedSlots: [...block.allowedSlots],
     })),
-    {
-      blockId: "checks.go.linter",
-      title: "Go linter loop",
-      allowedSlots: ["postImplementationChecks", "final"],
-    },
-    {
-      blockId: "checks.go.tests",
-      title: "Go tests loop",
-      allowedSlots: ["postImplementationChecks", "final"],
-    },
   ];
   const valid = diagnostics.length === 0;
   const canReset = JSON.stringify(config) !== JSON.stringify(definition.config);
   return {
     selection: definition.selection,
-    basePreset: config.basePreset,
     configName: config.name,
     source: definition.source,
     slots,
@@ -549,9 +533,11 @@ export function buildAutoFlowEditorViewModel(
     availableBlocks,
     status: {
       valid,
-      canSave: valid,
+      canSave: valid && definition.source.type !== "base",
+      canSaveAs: valid,
       canReset,
-      canRun: valid && !canReset,
+      canRun: valid && (definition.source.type === "base" || !canReset),
+      mutable: definition.source.type !== "base",
       saveTarget: options.saveTarget ?? "project",
       sourceLabel: sourceLabel(definition.source),
       ...(options.lastMessage ? { lastMessage: options.lastMessage } : {}),
@@ -560,14 +546,11 @@ export function buildAutoFlowEditorViewModel(
 }
 
 export function autoFlowSelectionForFlowId(flowId: string): AutoFlowSelection | null {
-  if (flowId === "auto-simple") {
-    return { kind: "preset", preset: "simple" };
+  if (flowId === AUTO_FLOW_BASE_FLOW_ID) {
+    return { kind: "base" };
   }
-  if (flowId === "auto-common") {
-    return { kind: "preset", preset: "standard" };
-  }
-  if (flowId.startsWith("auto-config:")) {
-    const name = flowId.slice("auto-config:".length);
+  if (flowId.startsWith(AUTO_FLOW_CONFIG_FLOW_ID_PREFIX)) {
+    const name = flowId.slice(AUTO_FLOW_CONFIG_FLOW_ID_PREFIX.length);
     if (/^[A-Za-z0-9._-]+$/.test(name)) {
       return { kind: "config", name };
     }
@@ -582,7 +565,7 @@ function ensureOptionalSlot(config: SavedAutoFlowConfig, slotName: AutoFlowSlotN
   const existing = nextSlots[slotName]?.blocks;
   const blocks = existing
     ? existing.map((block) => ({ ...block }))
-    : defaultOptionalBlocksForPreset(config.basePreset, slotName);
+    : defaultOptionalBlocksForSlot(slotName);
   nextSlots[slotName] = { blocks };
   config.slots = nextSlots;
   return blocks;

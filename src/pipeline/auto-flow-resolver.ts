@@ -11,7 +11,6 @@ import { TaskRunnerError } from "../errors.js";
 import { getBuiltInAutoFlowBlockDefinition } from "./auto-flow-blocks.js";
 import {
   getBuiltInAutoFlowPreset,
-  getBuiltInAutoFlowPresetByFileName,
 } from "./auto-flow-presets.js";
 import {
   AUTO_FLOW_SLOT_NAMES,
@@ -54,7 +53,7 @@ import type {
 } from "./spec-types.js";
 
 export type AutoFlowSelection =
-  | { kind: "preset"; preset: AutoFlowPresetName }
+  | { kind: "base" }
   | { kind: "config"; name: string };
 
 export type AutoFlowBlockDecision = {
@@ -77,8 +76,7 @@ export type ResolvedAutoFlowPhase = {
 
 export type ResolvedAutoFlowSource =
   | {
-      type: "preset";
-      preset: AutoFlowPresetName;
+      type: "base";
     }
   | {
       type: "project-config" | "user-config";
@@ -91,8 +89,6 @@ export type ResolvedAutoFlowDocument = {
   schemaVersion: 1;
   source: ResolvedAutoFlowSource;
   requested: AutoFlowSelection;
-  basePreset: AutoFlowPresetName;
-  selectedCommand: "auto-common" | "auto-simple";
   phases: ResolvedAutoFlowPhase[];
   blockDecisions: AutoFlowBlockDecision[];
   artifactPolicy: {
@@ -104,18 +100,13 @@ export type ResolvedAutoFlowDocument = {
       resolvedFlowSummaryJson: string;
     };
   };
-  executionTarget:
-    | {
-        kind: "built-in";
-        specFile: "auto-common.json" | "auto-simple.json";
-      }
-    | {
-        kind: "generated";
-        fileName: string;
-        nestedFlowFiles: string[];
-        flowSpec: DeclarativeFlowSpec;
-        nestedFlowSpecs: Record<string, DeclarativeFlowSpec>;
-      };
+  executionTarget: {
+    kind: "generated";
+    fileName: string;
+    nestedFlowFiles: string[];
+    flowSpec: DeclarativeFlowSpec;
+    nestedFlowSpecs: Record<string, DeclarativeFlowSpec>;
+  };
   validationDiagnostics: string[];
   fingerprint: string;
 };
@@ -123,26 +114,19 @@ export type ResolvedAutoFlowDocument = {
 export type ResolvedAutoFlowSummary = {
   schemaVersion: 1;
   source: ResolvedAutoFlowSource;
-  basePreset: AutoFlowPresetName;
-  selectedCommand: "auto-common" | "auto-simple";
   phaseOrder: string[];
   includedBlocks: AutoFlowBlockDecision[];
   skippedBlocks: AutoFlowBlockDecision[];
-  executionTarget: ResolvedAutoFlowDocument["executionTarget"]["kind"];
+  executionTarget: "generated";
   artifactPolicy: ResolvedAutoFlowDocument["artifactPolicy"];
   fingerprint: string;
 };
 
-export type ResolvedAutoFlowExecution =
-  | {
-      kind: "built-in";
-      specFile: "auto-common.json" | "auto-simple.json";
-    }
-  | {
-      kind: "generated";
-      flow: LoadedDeclarativeFlow;
-      inMemoryFlows: InMemoryDeclarativeFlows;
-    };
+export type ResolvedAutoFlowExecution = {
+  kind: "generated";
+  flow: LoadedDeclarativeFlow;
+  inMemoryFlows: InMemoryDeclarativeFlows;
+};
 
 export type ResolvedAutoFlow = {
   config: SavedAutoFlowConfig;
@@ -214,15 +198,14 @@ const DEFAULT_BLOCKS: Record<AutoFlowPresetName, Record<AutoFlowSlotName, AutoFl
   },
 };
 
+const BASE_DEFAULT_BLOCKS: Record<AutoFlowSlotName, AutoFlowBlockId[]> = {
+  designReview: ["review.design-loop"],
+  postImplementationChecks: [],
+  review: ["review.loop"],
+  final: [],
+};
+
 const slotOrder = new Map<string, number>(AUTO_FLOW_SLOT_IDS.map((slot, index) => [slot, index]));
-
-function selectedCommandForPreset(preset: AutoFlowPresetName): "auto-common" | "auto-simple" {
-  return preset === "standard" ? "auto-common" : "auto-simple";
-}
-
-function builtInSpecFileForPreset(preset: AutoFlowPresetName): "auto-common.json" | "auto-simple.json" {
-  return preset === "standard" ? "auto-common.json" : "auto-simple.json";
-}
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -467,14 +450,21 @@ function fingerprint(value: unknown): string {
 function defaultConfigForPreset(preset: AutoFlowPresetName): SavedAutoFlowConfig {
   return {
     kind: "auto-flow-config",
-    version: 1,
+    version: 2,
     name: `preset-${preset}`,
-    basePreset: preset,
   };
 }
 
-function sourceForPreset(preset: AutoFlowPresetName): ResolvedAutoFlowSource {
-  return { type: "preset", preset };
+function defaultBaseConfig(): SavedAutoFlowConfig {
+  return {
+    kind: "auto-flow-config",
+    version: 2,
+    name: "auto",
+  };
+}
+
+function sourceForBase(): ResolvedAutoFlowSource {
+  return { type: "base" };
 }
 
 function sourceForLoadedConfig(loaded: LoadedAutoFlowConfig): ResolvedAutoFlowSource {
@@ -487,11 +477,10 @@ function sourceForLoadedConfig(loaded: LoadedAutoFlowConfig): ResolvedAutoFlowSo
 }
 
 function resolveSlot(
-  preset: AutoFlowPresetName,
   config: SavedAutoFlowConfig,
   slot: AutoFlowSlotName,
 ): SlotResolution {
-  const defaults = DEFAULT_BLOCKS[preset][slot];
+  const defaults = BASE_DEFAULT_BLOCKS[slot];
   const override = config.slots?.[slot];
   const configuredBlocks = override?.blocks;
   const rawBlocks: SavedAutoFlowBlock[] = configuredBlocks ?? defaults.map((id) => ({ id, enabled: "auto" }));
@@ -510,7 +499,7 @@ function resolveSlot(
       reason: included
         ? configuredBlocks
           ? "included by saved config"
-          : "included by preset default"
+          : "included by base default"
         : "disabled by saved config",
       ...(maxIterations !== undefined ? { maxIterations } : {}),
       ...(registry.defaultMaxIterations !== undefined ? { defaultMaxIterations: registry.defaultMaxIterations } : {}),
@@ -530,7 +519,7 @@ function resolveSlot(
         blockId: defaultBlockId,
         enabled: false,
         included: false,
-        reason: "skipped because the slot override omitted this preset default block",
+        reason: "skipped because the slot override omitted this base default block",
         ...(registry.defaultMaxIterations !== undefined ? { defaultMaxIterations: registry.defaultMaxIterations } : {}),
         ...(registry.defaultMaxIterations !== undefined ? { maxIterations: registry.defaultMaxIterations } : {}),
         ...(registry.builtInFlowFileName ? { flowFileName: registry.builtInFlowFileName } : {}),
@@ -553,7 +542,7 @@ function resolveAllSlots(config: SavedAutoFlowConfig): { decisions: AutoFlowBloc
   };
   const decisions: AutoFlowBlockDecision[] = [];
   for (const slot of AUTO_FLOW_SLOT_NAMES) {
-    const resolution = resolveSlot(config.basePreset, config, slot);
+    const resolution = resolveSlot(config, slot);
     decisions.push(...resolution.decisions);
     includedBySlot[slot] = resolution.included;
   }
@@ -790,12 +779,17 @@ async function buildGeneratedFlow(
   nestedFlowSpecs: Record<string, DeclarativeFlowSpec>;
   phases: ResolvedAutoFlowPhase[];
 }> {
-  const baseSpec = loadBuiltInFlowSpecSync(builtInSpecFileForPreset(config.basePreset));
-  const commonSpec = loadBuiltInFlowSpecSync("auto-common.json");
+  const createBlockPhase = (blockId: string, slotId: string, params: Record<string, unknown> = {}): DeclarativePhaseSpec => {
+    const definition = getBuiltInAutoFlowBlockDefinition(blockId);
+    if (!definition) {
+      throw new TaskRunnerError(`Unknown auto-flow block '${blockId}'.`);
+    }
+    return definition.createPhase({ blockId, slotId: slotId as AutoFlowSlotId, params });
+  };
   const phases: DeclarativePhaseSpec[] = [
-    builtInPhase(baseSpec, "source"),
-    builtInPhase(baseSpec, "normalize"),
-    builtInPhase(baseSpec, "plan"),
+    createBlockPhase("source.jira", "source"),
+    createBlockPhase("normalize.task-source", "normalize"),
+    createBlockPhase("planning.plan", "planning"),
   ];
   const resolvedPhases: ResolvedAutoFlowPhase[] = [
     resolvedPhase("source"),
@@ -810,11 +804,14 @@ async function buildGeneratedFlow(
       continue;
     }
     const fileName = await resolveNestedFlowName(decision, cwd, inMemoryFlows, nestedFlowSpecs);
-    phases.push(setFirstFlowRunFileName(builtInPhase(commonSpec, "design_review_loop"), fileName));
+    phases.push(setFirstFlowRunFileName(
+      createBlockPhase(decision.blockId, decision.slot, { maxIterations: decision.maxIterations }),
+      fileName,
+    ));
     resolvedPhases.push(resolvedPhase("design_review_loop", decision));
   }
 
-  phases.push(builtInPhase(baseSpec, "implement"));
+  phases.push(createBlockPhase("implementation.default", "implementation"));
   resolvedPhases.push(resolvedPhase("implement"));
 
   for (const decision of includedBySlot.postImplementationChecks) {
@@ -822,7 +819,10 @@ async function buildGeneratedFlow(
       continue;
     }
     const fileName = await resolveNestedFlowName(decision, cwd, inMemoryFlows, nestedFlowSpecs);
-    phases.push(checkPhase(decision, fileName));
+    phases.push(setFirstFlowRunFileName(
+      createBlockPhase(decision.blockId, decision.slot, { maxIterations: decision.maxIterations }),
+      fileName,
+    ));
     resolvedPhases.push(resolvedPhase(checkPhaseId(decision.slot, decision.blockId), decision));
   }
 
@@ -831,7 +831,10 @@ async function buildGeneratedFlow(
       continue;
     }
     const fileName = await resolveNestedFlowName(decision, cwd, inMemoryFlows, nestedFlowSpecs);
-    phases.push(setFirstFlowRunFileName(builtInPhase(baseSpec, "review-loop"), fileName));
+    phases.push(setFirstFlowRunFileName(
+      createBlockPhase(decision.blockId, decision.slot, { maxIterations: decision.maxIterations }),
+      fileName,
+    ));
     resolvedPhases.push(resolvedPhase("review-loop", decision));
   }
 
@@ -840,14 +843,17 @@ async function buildGeneratedFlow(
       continue;
     }
     const fileName = await resolveNestedFlowName(decision, cwd, inMemoryFlows, nestedFlowSpecs);
-    phases.push(checkPhase(decision, fileName));
+    phases.push(setFirstFlowRunFileName(
+      createBlockPhase(decision.blockId, decision.slot, { maxIterations: decision.maxIterations }),
+      fileName,
+    ));
     resolvedPhases.push(resolvedPhase(checkPhaseId(decision.slot, decision.blockId), decision));
   }
 
   const flowSpec: DeclarativeFlowSpec = {
     kind: "auto-flow",
     version: 1,
-    description: `Generated configurable auto flow from the ${config.basePreset} preset.`,
+    description: `Generated Auto workflow from config '${config.name}'.`,
     phases,
   };
   const flow = await loadDeclarativeFlowFromSpec(flowSpec, { fileName: "resolved-auto-flow.json" }, {
@@ -877,8 +883,6 @@ function buildSummary(document: ResolvedAutoFlowDocument): ResolvedAutoFlowSumma
   return {
     schemaVersion: 1,
     source: document.source,
-    basePreset: document.basePreset,
-    selectedCommand: document.selectedCommand,
     phaseOrder: document.phases.map((phase) => phase.label),
     includedBlocks: document.blockDecisions.filter((decision) => decision.included),
     skippedBlocks: document.blockDecisions.filter((decision) => !decision.included),
@@ -897,62 +901,32 @@ export async function resolveAutoFlow(
 ): Promise<ResolvedAutoFlow> {
   const cwd = path.resolve(options.cwd ?? process.cwd());
   const loadedConfig = selection.kind === "config" ? loadAutoFlowConfigByName(selection.name, cwd) : null;
-  const config = loadedConfig?.config ?? defaultConfigForPreset(selection.kind === "preset" ? selection.preset : "standard");
+  const config = loadedConfig?.config ?? defaultBaseConfig();
   const normalizedConfigYaml = loadedConfig?.normalizedYaml ?? normalizeAutoFlowConfigYaml(config);
-  const source = loadedConfig ? sourceForLoadedConfig(loadedConfig) : sourceForPreset(config.basePreset);
-  const selectedCommand = selectedCommandForPreset(config.basePreset);
+  const source = loadedConfig ? sourceForLoadedConfig(loadedConfig) : sourceForBase();
   const { decisions, includedBySlot } = resolveAllSlots(config);
   const policy = artifactPolicy(options.scopeKey);
-
-  let execution: ResolvedAutoFlowExecution;
-  let phases: ResolvedAutoFlowPhase[];
-  let executionTarget: ResolvedAutoFlowDocument["executionTarget"];
-
-  if (usesBuiltInShape(config.basePreset, includedBySlot)) {
-    const specFile = builtInSpecFileForPreset(config.basePreset);
-    phases = config.basePreset === "standard"
-      ? [
-          resolvedPhase("source"),
-          resolvedPhase("normalize"),
-          resolvedPhase("plan"),
-          resolvedPhase("design_review_loop", includedBySlot.designReview[0]),
-          resolvedPhase("implement"),
-          resolvedPhase("review-loop", includedBySlot.review[0]),
-        ]
-      : [
-          resolvedPhase("source"),
-          resolvedPhase("normalize"),
-          resolvedPhase("plan"),
-          resolvedPhase("implement"),
-          resolvedPhase("review-loop", includedBySlot.review[0]),
-        ];
-    execution = { kind: "built-in", specFile };
-    executionTarget = { kind: "built-in", specFile };
-  } else {
-    const generated = await buildGeneratedFlow(config, includedBySlot, cwd);
-    phases = generated.phases;
-    execution = {
-      kind: "generated",
-      flow: generated.flow,
-      inMemoryFlows: generated.inMemoryFlows,
-    };
-    executionTarget = {
-      kind: "generated",
-      fileName: generated.flow.fileName,
-      nestedFlowFiles: Object.keys(generated.inMemoryFlows).sort((left, right) => left.localeCompare(right)),
-      flowSpec: generated.flowSpec,
-      nestedFlowSpecs: Object.fromEntries(
-        Object.entries(generated.nestedFlowSpecs).sort(([left], [right]) => left.localeCompare(right)),
-      ),
-    };
-  }
+  const generated = await buildGeneratedFlow(config, includedBySlot, cwd);
+  const phases = generated.phases;
+  const execution: ResolvedAutoFlowExecution = {
+    kind: "generated",
+    flow: generated.flow,
+    inMemoryFlows: generated.inMemoryFlows,
+  };
+  const executionTarget: ResolvedAutoFlowDocument["executionTarget"] = {
+    kind: "generated",
+    fileName: generated.flow.fileName,
+    nestedFlowFiles: Object.keys(generated.inMemoryFlows).sort((left, right) => left.localeCompare(right)),
+    flowSpec: generated.flowSpec,
+    nestedFlowSpecs: Object.fromEntries(
+      Object.entries(generated.nestedFlowSpecs).sort(([left], [right]) => left.localeCompare(right)),
+    ),
+  };
 
   const documentWithoutFingerprint = {
     schemaVersion: 1 as const,
     source,
     requested: selection,
-    basePreset: config.basePreset,
-    selectedCommand,
     phases,
     blockDecisions: decisions,
     artifactPolicy: policy,
@@ -977,8 +951,8 @@ export function formatAutoFlowDryRunPreview(resolved: ResolvedAutoFlow): string 
     "Auto flow dry-run preview",
     `Source: ${resolved.document.source.type}`,
   ];
-  if (resolved.document.source.type === "preset") {
-    lines.push(`Preset: ${resolved.document.source.preset}`);
+  if (resolved.document.source.type === "base") {
+    lines.push("Base: Auto workflow");
   } else {
     lines.push(`Config: ${resolved.document.source.configName}`);
     lines.push(`Config path: ${resolved.document.source.path}`);
@@ -986,7 +960,6 @@ export function formatAutoFlowDryRunPreview(resolved: ResolvedAutoFlow): string 
       lines.push(`Precedence: project config selected; user config shadowed at ${resolved.document.source.shadowedUserPath}`);
     }
   }
-  lines.push(`Base preset: ${resolved.document.basePreset}`);
   lines.push(`Execution target: ${resolved.document.executionTarget.kind}`);
   lines.push("", "Phases:");
   resolved.document.phases.forEach((phase, index) => {
@@ -1138,7 +1111,6 @@ function buildSpec(preset: AutoFlowPreset, placements: readonly WorkingPlacement
         throw new TaskRunnerError(`Cannot generate phase for invalid auto-flow block '${placement.blockId}'.`);
       }
       return definition.createPhase({
-        presetId: preset.id,
         blockId: placement.blockId,
         slotId: placement.slot,
         params: placement.params,
@@ -1187,14 +1159,5 @@ export function resolveAutoFlowPreset(
 }
 
 export function resolveBuiltInAutoFlowSpecByFileName(fileName: string): DeclarativeFlowSpec | null {
-  const preset = getBuiltInAutoFlowPresetByFileName(fileName);
-  if (!preset) {
-    return null;
-  }
-  const result = resolveAutoFlowPreset(preset);
-  if (!result.spec) {
-    const details = result.diagnostics.map((diagnostic) => diagnostic.message).join("\n");
-    throw new TaskRunnerError(`Failed to resolve built-in auto-flow '${fileName}'.\n${details}`);
-  }
-  return result.spec;
+  return null;
 }

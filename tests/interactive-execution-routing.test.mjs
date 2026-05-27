@@ -85,8 +85,8 @@ describe("interactive execution routing", () => {
   });
 
   it("lets operators edit the fallback default route before starting a routed flow", async () => {
-    const flowEntry = (await flowCatalogModule.loadInteractiveFlowCatalog(process.cwd())).find((entry) => entry.id === "auto-golang");
-    assert.ok(flowEntry, "auto-golang flow should exist");
+    const flowEntry = (await flowCatalogModule.loadInteractiveFlowCatalog(process.cwd())).find((entry) => entry.id === "auto");
+    assert.ok(flowEntry, "auto flow should exist");
 
     const seenForms = [];
     const responses = [
@@ -146,8 +146,8 @@ describe("interactive execution routing", () => {
   });
 
   it("rebuilds model options from the selected executor in the routing editor", async () => {
-    const flowEntry = (await flowCatalogModule.loadInteractiveFlowCatalog(process.cwd())).find((entry) => entry.id === "auto-common");
-    assert.ok(flowEntry, "auto-common flow should exist");
+    const flowEntry = (await flowCatalogModule.loadInteractiveFlowCatalog(process.cwd())).find((entry) => entry.id === "auto");
+    assert.ok(flowEntry, "auto flow should exist");
 
     const seenForms = [];
     const responses = [
@@ -200,8 +200,8 @@ describe("interactive execution routing", () => {
   });
 
   it("describes effective routed steps in the preview before launch", async () => {
-    const flowEntry = (await flowCatalogModule.loadInteractiveFlowCatalog(process.cwd())).find((entry) => entry.id === "auto-common");
-    assert.ok(flowEntry, "auto-common flow should exist");
+    const flowEntry = (await flowCatalogModule.loadInteractiveFlowCatalog(process.cwd())).find((entry) => entry.id === "auto");
+    assert.ok(flowEntry, "auto flow should exist");
 
     const routing = routingModule.resolveExecutionRouting({ presetId: "balanced" });
     const preview = await interactiveRoutingModule.describeEffectiveRoutingPreview(flowEntry, routing, process.cwd());
@@ -218,8 +218,8 @@ describe("interactive execution routing", () => {
   });
 
   it("shows the effective routing table in the routing preview form", async () => {
-    const flowEntry = (await flowCatalogModule.loadInteractiveFlowCatalog(process.cwd())).find((entry) => entry.id === "auto-common");
-    assert.ok(flowEntry, "auto-common flow should exist");
+    const flowEntry = (await flowCatalogModule.loadInteractiveFlowCatalog(process.cwd())).find((entry) => entry.id === "auto");
+    assert.ok(flowEntry, "auto flow should exist");
 
     const seenForms = [];
     const responses = [
@@ -279,7 +279,7 @@ describe("interactive execution routing", () => {
       source: "built-in",
       fileName: "resolved-auto-flow.json",
       absolutePath: "in-memory:resolved-auto-flow.json",
-      treePath: ["default", "auto-flow", "auto-config:generated"],
+      treePath: ["custom", "saved-auto-flows", "generated"],
       flow: {
         kind: "auto-flow",
         version: 1,

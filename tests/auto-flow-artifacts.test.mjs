@@ -33,19 +33,22 @@ afterEach(() => {
 describe("auto flow resolver artifacts", () => {
   it("persists normalized config, resolved flow, and summary JSON", async () => {
     const scopeKey = "ag-123@test";
-    const resolved = await resolveAutoFlow({ kind: "preset", preset: "standard" }, { cwd: tempDir, scopeKey });
+    const resolved = await resolveAutoFlow({ kind: "base" }, { cwd: tempDir, scopeKey });
 
     persistResolvedAutoFlowArtifacts(scopeKey, resolved);
 
     assert.equal(existsSync(flowConfigYamlFile(scopeKey)), true);
     assert.equal(existsSync(resolvedFlowJsonFile(scopeKey)), true);
     assert.equal(existsSync(resolvedFlowSummaryJsonFile(scopeKey)), true);
-    assert.match(readFileSync(flowConfigYamlFile(scopeKey), "utf8"), /basePreset: standard/);
+    const configYaml = readFileSync(flowConfigYamlFile(scopeKey), "utf8");
+    assert.match(configYaml, /version: 2/);
+    assert.doesNotMatch(configYaml, /basePreset/);
 
     const document = JSON.parse(readFileSync(resolvedFlowJsonFile(scopeKey), "utf8"));
     const summary = JSON.parse(readFileSync(resolvedFlowSummaryJsonFile(scopeKey), "utf8"));
-    assert.equal(document.source.type, "preset");
-    assert.equal(document.executionTarget.kind, "built-in");
+    assert.equal(document.source.type, "base");
+    assert.equal(document.executionTarget.kind, "generated");
+    assert.equal("selectedCommand" in document, false);
     assert.equal(summary.fingerprint, document.fingerprint);
   });
 });

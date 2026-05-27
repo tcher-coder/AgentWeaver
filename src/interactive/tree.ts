@@ -1,7 +1,47 @@
 import type { FlowTreeFolderNode, FlowTreeNode, InteractiveFlowDefinition, VisibleFlowTreeItem } from "./types.js";
+import {
+  BUILT_IN_BLOCKS_ROOT,
+  CUSTOM_ROOT,
+  RECOMMENDED_ROOT,
+  builtInFlowCatalogMetadata,
+  catalogPathOrder,
+  treePathLabels,
+  treeSegmentLabel,
+} from "../pipeline/flow-catalog-groups.js";
 
 function compareTreeNames(left: string, right: string): number {
   return left.localeCompare(right, "ru");
+}
+
+function flowTreeLabel(flow: InteractiveFlowDefinition): string {
+  return flow.source === "built-in"
+    ? builtInFlowCatalogMetadata(flow.id)?.label ?? flow.label
+    : flow.label;
+}
+
+function nodeOrder(node: FlowTreeNode): number | null {
+  return catalogPathOrder(node.pathSegments, node.kind === "flow" ? node.flow.id : undefined);
+}
+
+function compareTreeNodes(left: FlowTreeNode, right: FlowTreeNode): number {
+  const leftOrder = nodeOrder(left);
+  const rightOrder = nodeOrder(right);
+  if (leftOrder !== null || rightOrder !== null) {
+    if (leftOrder === null) {
+      return 1;
+    }
+    if (rightOrder === null) {
+      return -1;
+    }
+    if (leftOrder !== rightOrder) {
+      return leftOrder - rightOrder;
+    }
+  }
+
+  if (left.kind !== right.kind) {
+    return left.kind === "folder" ? -1 : 1;
+  }
+  return compareTreeNames(left.label, right.label);
 }
 
 export function makeFolderKey(pathSegments: string[]): string {
@@ -30,6 +70,7 @@ export function buildFlowTree(flows: InteractiveFlowDefinition[]): FlowTreeNode[
         kind: "folder",
         key: makeFolderKey([firstSegment]),
         name: firstSegment,
+        label: treeSegmentLabel(firstSegment),
         pathSegments: [firstSegment],
         children: [],
       };
@@ -47,6 +88,7 @@ export function buildFlowTree(flows: InteractiveFlowDefinition[]): FlowTreeNode[
           kind: "folder",
           key: makeFolderKey(folderPath),
           name: segment,
+          label: treeSegmentLabel(segment),
           pathSegments: folderPath,
           children: [],
         };
@@ -69,6 +111,7 @@ export function buildFlowTree(flows: InteractiveFlowDefinition[]): FlowTreeNode[
       kind: "flow",
       key: makeFlowKey(flow.id),
       name: leafName,
+      label: flowTreeLabel(flow),
       pathSegments: [...flow.treePath],
       flow,
     });
@@ -76,12 +119,7 @@ export function buildFlowTree(flows: InteractiveFlowDefinition[]): FlowTreeNode[
 
   const sortNodes = (nodes: FlowTreeNode[]): FlowTreeNode[] =>
     [...nodes]
-      .sort((left, right) => {
-        if (left.kind !== right.kind) {
-          return left.kind === "folder" ? -1 : 1;
-        }
-        return compareTreeNames(left.name, right.name);
-      })
+      .sort(compareTreeNodes)
       .map((node) =>
         node.kind === "folder"
           ? {
@@ -91,23 +129,7 @@ export function buildFlowTree(flows: InteractiveFlowDefinition[]): FlowTreeNode[
           : node,
       );
 
-  const orderedRootNames = ["global", "custom", "default"];
-  const sortedRoots = [...roots.values()].sort((left, right) => {
-    const leftIndex = orderedRootNames.indexOf(left.name);
-    const rightIndex = orderedRootNames.indexOf(right.name);
-    if (leftIndex !== -1 || rightIndex !== -1) {
-      if (leftIndex === -1) {
-        return 1;
-      }
-      if (rightIndex === -1) {
-        return -1;
-      }
-      return leftIndex - rightIndex;
-    }
-    return compareTreeNames(left.name, right.name);
-  });
-
-  return sortNodes(sortedRoots);
+  return sortNodes([...roots.values()]);
 }
 
 export function computeVisibleFlowItems(
@@ -123,6 +145,7 @@ export function computeVisibleFlowItems(
           kind: "folder",
           key: node.key,
           name: node.name,
+          label: node.label,
           depth,
           pathSegments: [...node.pathSegments],
         });
@@ -136,6 +159,7 @@ export function computeVisibleFlowItems(
         kind: "flow",
         key: node.key,
         name: node.name,
+        label: node.label,
         depth,
         pathSegments: [...node.pathSegments],
         flow: node.flow,
@@ -167,12 +191,20 @@ export function collectFolderKeys(flowTree: FlowTreeNode[]): string[] {
 export function collectInitiallyExpandedFolderKeys(flowTree: FlowTreeNode[]): string[] {
   const keys: string[] = [];
 
+  const folderContainsFlow = (node: FlowTreeFolderNode): boolean =>
+    node.children.some((child) => child.kind === "flow" || folderContainsFlow(child));
+
   const walk = (nodes: FlowTreeNode[]): void => {
     for (const node of nodes) {
       if (node.kind !== "folder") {
         continue;
       }
-      const expandedByDefault = node.pathSegments.length === 1 && (node.name === "default" || node.name === "global");
+      const expandedByDefault =
+        node.pathSegments.length === 1
+        && (
+          node.name === RECOMMENDED_ROOT
+          || (node.name === CUSTOM_ROOT && folderContainsFlow(node))
+        );
       if (expandedByDefault) {
         keys.push(node.key);
       }
@@ -182,4 +214,12 @@ export function collectInitiallyExpandedFolderKeys(flowTree: FlowTreeNode[]): st
 
   walk(flowTree);
   return keys;
+}
+
+export function formatFlowTreePath(pathSegments: readonly string[]): string {
+  return treePathLabels(pathSegments).join("/");
+}
+
+export function isBuiltInBlocksPath(pathSegments: readonly string[]): boolean {
+  return pathSegments[0] === BUILT_IN_BLOCKS_ROOT;
 }

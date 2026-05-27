@@ -17,7 +17,7 @@ const flows = [
     label: "Project Review",
     description: "Review a project-local flow.",
     source: "project-local",
-    treePath: ["custom", "review", "project-review"],
+    treePath: ["custom", "project-flows", "review", "project-review"],
     phases: [
       {
         id: "collect",
@@ -27,11 +27,12 @@ const flows = [
     ],
   },
   {
-    id: "auto-common",
-    label: "Auto Common",
-    description: "Run the common auto flow.",
+    id: "auto",
+    label: "Auto",
+    description: "Run the base auto flow.",
     source: "built-in",
-    treePath: ["default", "auto-common"],
+    treePath: ["recommended", "auto"],
+    catalogRole: "recipe",
     phases: [
       {
         id: "plan_1",
@@ -50,30 +51,56 @@ const flows = [
       },
     ],
   },
+  {
+    id: "plan",
+    label: "Plan",
+    description: "Run the planning block.",
+    source: "built-in",
+    treePath: ["built-in-blocks", "core-pipeline", "plan"],
+    catalogRole: "block",
+    phases: [],
+  },
 ];
 
 describe("interactive tree selectors", () => {
-  it("orders custom roots ahead of default and only reveals expanded children", () => {
+  it("orders catalog roots and applies default expansion rules", () => {
     const flowTree = treeModule.buildFlowTree(flows);
 
     const collapsed = treeModule.computeVisibleFlowItems(flowTree, new Set());
     assert.deepEqual(
       collapsed.map((item) => item.key),
-      ["folder:custom", "folder:default"],
+      ["folder:recommended", "folder:custom", "folder:built-in-blocks"],
     );
 
+    const initiallyExpanded = new Set(treeModule.collectInitiallyExpandedFolderKeys(flowTree));
     const expanded = treeModule.computeVisibleFlowItems(
       flowTree,
-      new Set(["folder:custom", "folder:custom/review", "folder:default"]),
+      initiallyExpanded,
     );
     assert.deepEqual(
-      expanded.map((item) => item.key),
+      expanded.map((item) => [item.key, item.label]),
       [
+        ["folder:recommended", "Recommended"],
+        ["flow:auto", "Auto"],
+        ["folder:custom", "Custom"],
+        ["folder:custom/project-flows", "Project flows"],
+        ["folder:built-in-blocks", "Built-in blocks"],
+      ],
+    );
+
+    const builtInExpanded = treeModule.computeVisibleFlowItems(
+      flowTree,
+      new Set([...initiallyExpanded, "folder:built-in-blocks"]),
+    );
+    assert.deepEqual(
+      builtInExpanded.map((item) => item.key),
+      [
+        "folder:recommended",
+        "flow:auto",
         "folder:custom",
-        "folder:custom/review",
-        "flow:project-review",
-        "folder:default",
-        "flow:auto-common",
+        "folder:custom/project-flows",
+        "folder:built-in-blocks",
+        "folder:built-in-blocks/core-pipeline",
       ],
     );
   });
@@ -84,28 +111,30 @@ describe("interactive tree selectors", () => {
       selectorsModule.selectHeaderLabel(
         {
           kind: "folder",
-          key: "folder:custom/review",
-          name: "review",
+          key: "folder:custom/project-flows",
+          name: "project-flows",
+          label: "Project flows",
           depth: 1,
-          pathSegments: ["custom", "review"],
+          pathSegments: ["custom", "project-flows"],
         },
         "auto-common",
       ),
-      "custom/review",
+      "Custom/Project flows",
     );
     assert.equal(
       selectorsModule.selectHeaderLabel(
         {
           kind: "flow",
-          key: "flow:auto-common",
-          name: "auto-common",
+          key: "flow:auto",
+          name: "auto",
+          label: "Auto",
           depth: 1,
-          pathSegments: ["default", "auto-common"],
+          pathSegments: ["recommended", "auto"],
           flow: flows[1],
         },
         "fallback",
       ),
-      "Auto Common",
+      "Auto",
     );
   });
 });
@@ -137,7 +166,7 @@ describe("interactive progress selectors", () => {
       ],
     });
 
-    assert.equal(progress.flow.id, "auto-common");
+    assert.equal(progress.flow.id, "auto");
     assert.deepEqual(
       progress.items.map((item) => [item.kind, item.label, item.status]),
       [

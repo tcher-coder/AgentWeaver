@@ -1,12 +1,11 @@
 import type { FlowExecutionState } from "../pipeline/spec-types.js";
 import type { AutoFlowConfigLocation, SavedAutoFlowConfig } from "../pipeline/auto-flow-config.js";
 import type { AutoFlowSelection } from "../pipeline/auto-flow-resolver.js";
-import type { AutoFlowPresetId, AutoFlowSlotId, AutoFlowValidationDiagnostic } from "../pipeline/auto-flow-types.js";
+import type { AutoFlowSlotId, AutoFlowValidationDiagnostic } from "../pipeline/auto-flow-types.js";
 
 export type AutoFlowEditorSource =
   | {
-      type: "preset";
-      preset: AutoFlowPresetId;
+      type: "base";
     }
   | {
       type: "project-config" | "user-config";
@@ -17,7 +16,6 @@ export type AutoFlowEditorSource =
 
 export type InteractiveAutoFlowDefinition = {
   selection: AutoFlowSelection;
-  basePreset: AutoFlowPresetId;
   config: SavedAutoFlowConfig;
   source: AutoFlowEditorSource;
   diagnostics?: AutoFlowValidationDiagnostic[];
@@ -30,6 +28,7 @@ export type InteractiveFlowDefinition = {
   description: string;
   source: "built-in" | "global" | "project-local";
   treePath: string[];
+  catalogRole?: "recipe" | "block" | "tool" | "integration" | "specialized";
   sourcePath?: string;
   autoFlow?: InteractiveAutoFlowDefinition;
   phases: Array<{
@@ -109,8 +108,10 @@ export type AutoFlowAvailableBlockViewModel = {
 export type AutoFlowConfigStatus = {
   valid: boolean;
   canSave: boolean;
+  canSaveAs: boolean;
   canReset: boolean;
   canRun: boolean;
+  mutable: boolean;
   saveTarget: AutoFlowConfigLocation;
   sourceLabel: string;
   lastMessage?: string;
@@ -118,7 +119,6 @@ export type AutoFlowConfigStatus = {
 
 export type AutoFlowEditorViewModel = {
   selection: AutoFlowSelection;
-  basePreset: AutoFlowPresetId;
   configName: string;
   source: AutoFlowEditorSource;
   slots: AutoFlowSlotViewModel[];
@@ -136,6 +136,7 @@ export type FlowTreeFolderNode = {
   kind: "folder";
   key: string;
   name: string;
+  label: string;
   pathSegments: string[];
   children: FlowTreeNode[];
 };
@@ -144,6 +145,7 @@ export type FlowTreeFlowNode = {
   kind: "flow";
   key: string;
   name: string;
+  label: string;
   pathSegments: string[];
   flow: InteractiveFlowDefinition;
 };
@@ -155,6 +157,7 @@ export type VisibleFlowTreeItem =
       kind: "folder";
       key: string;
       name: string;
+      label: string;
       depth: number;
       pathSegments: string[];
     }
@@ -162,6 +165,7 @@ export type VisibleFlowTreeItem =
       kind: "flow";
       key: string;
       name: string;
+      label: string;
       depth: number;
       pathSegments: string[];
       flow: InteractiveFlowDefinition;

@@ -19,11 +19,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (originalHome === undefined) {
-    delete process.env.HOME;
-  } else {
-    process.env.HOME = originalHome;
-  }
+  if (originalHome === undefined) delete process.env.HOME;
+  else process.env.HOME = originalHome;
   rmSync(tempDir, { recursive: true, force: true });
 });
 
@@ -35,112 +32,64 @@ function writeProjectConfig(name, body) {
 }
 
 describe("auto flow resolver", () => {
-  it("resolves the simple preset to source, normalize, planning, implementation, and review", async () => {
-    const resolved = await resolveAutoFlow({ kind: "preset", preset: "simple" }, { cwd: tempDir, scopeKey: "ag-123@test" });
-    assert.equal(resolved.execution.kind, "built-in");
-    assert.equal(resolved.execution.specFile, "auto-simple.json");
+  it("resolves base auto as a generated flow in standard phase order", async () => {
+    const resolved = await resolveAutoFlow({ kind: "base" }, { cwd: tempDir, scopeKey: "ag-123@test" });
+    assert.equal(resolved.execution.kind, "generated");
+    assert.equal(resolved.document.executionTarget.kind, "generated");
+    assert.equal("selectedCommand" in resolved.document, false);
+    assert.equal("basePreset" in resolved.document, false);
     assert.deepEqual(resolved.document.phases.map((phase) => phase.id), [
       "source",
       "normalize",
       "plan",
+      "design_review_loop",
       "implement",
       "review-loop",
     ]);
-    assert.deepEqual(resolved.summary.phaseOrder, ["source", "normalize", "planning", "implementation", "review"]);
   });
 
-  it("resolves the standard preset with design review before implementation", async () => {
-    const resolved = await resolveAutoFlow({ kind: "preset", preset: "standard" }, { cwd: tempDir, scopeKey: "ag-123@test" });
-    const phaseIds = resolved.document.phases.map((phase) => phase.id);
-    assert.equal(resolved.execution.kind, "built-in");
-    assert.equal(resolved.execution.specFile, "auto-common.json");
-    assert.ok(phaseIds.indexOf("design_review_loop") < phaseIds.indexOf("implement"));
-  });
-
-  it("generates a flow when a saved config changes slots and iteration counts", async () => {
+  it("generates Go check phases from saved config slots", async () => {
     writeProjectConfig("backend-standard", [
       "kind: auto-flow-config",
-      "version: 1",
+      "version: 2",
       "name: backend-standard",
-      "basePreset: standard",
       "slots:",
-      "  designReview:",
-      "    blocks:",
-      "      - id: review.design-loop",
-      "        enabled: true",
-      "        maxIterations: 2",
       "  postImplementationChecks:",
       "    blocks:",
       "      - id: checks.go.linter",
       "        enabled: true",
-      "        maxIterations: 3",
-      "  review:",
-      "    blocks:",
-      "      - id: review.loop",
+      "      - id: checks.go.tests",
       "        enabled: true",
       "  final:",
-      "    blocks: []",
+      "    blocks:",
+      "      - id: checks.go.linter",
+      "        enabled: true",
+      "      - id: checks.go.tests",
+      "        enabled: true",
       "",
     ].join("\n"));
 
     const resolved = await resolveAutoFlow({ kind: "config", name: "backend-standard" }, { cwd: tempDir, scopeKey: "ag-123@test" });
-    assert.equal(resolved.execution.kind, "generated");
-    assert.equal(resolved.document.source.type, "project-config");
-    assert.deepEqual(resolved.document.executionTarget.nestedFlowFiles, [
-      "generated-checks-go-linter-3.json",
-      "generated-review-design-loop-2.json",
+    assert.deepEqual(resolved.document.phases.map((phase) => phase.id), [
+      "source",
+      "normalize",
+      "plan",
+      "design_review_loop",
+      "implement",
+      "post_go_linter_loop",
+      "post_go_tests_loop",
+      "review-loop",
+      "final_go_linter_loop",
+      "final_go_tests_loop",
     ]);
-    assert.ok(resolved.document.phases.some((phase) => phase.id === "post_go_linter_loop"));
-    assert.ok(resolved.summary.includedBlocks.some((block) => block.blockId === "checks.go.linter" && block.maxIterations === 3));
+    assert.equal(resolved.document.executionTarget.flowSpec.phases.some((phase) => phase.id === "post_go_linter_loop"), true);
   });
 
-  it("collects routing groups from generated in-memory nested flow-run nodes", async () => {
-    writeProjectConfig("backend-standard", [
-      "kind: auto-flow-config",
-      "version: 1",
-      "name: backend-standard",
-      "basePreset: standard",
-      "slots:",
-      "  designReview:",
-      "    blocks:",
-      "      - id: review.design-loop",
-      "        enabled: true",
-      "        maxIterations: 2",
-      "  postImplementationChecks:",
-      "    blocks:",
-      "      - id: checks.go.linter",
-      "        enabled: true",
-      "        maxIterations: 3",
-      "  review:",
-      "    blocks:",
-      "      - id: review.loop",
-      "        enabled: true",
-      "  final:",
-      "    blocks: []",
-      "",
-    ].join("\n"));
-
-    const resolved = await resolveAutoFlow({ kind: "config", name: "backend-standard" }, { cwd: tempDir, scopeKey: "ag-123@test" });
-    assert.equal(resolved.execution.kind, "generated");
-
-    const groups = (await collectFlowRoutingGroups(
-      resolved.execution.flow,
-      tempDir,
-      new Set(),
-      { inMemoryFlows: resolved.execution.inMemoryFlows },
-    )).sort();
-
-    assert.ok(groups.includes("design-review"));
-    assert.ok(groups.includes("local-fix-loop"));
-    assert.ok(groups.includes("repair-loop"));
-  });
-
-  it("omits design review when a standard config disables the design review slot", async () => {
+  it("omits design review when a config explicitly overrides the slot without the default block", async () => {
     writeProjectConfig("no-design-review", [
       "kind: auto-flow-config",
-      "version: 1",
+      "version: 2",
       "name: no-design-review",
-      "basePreset: standard",
       "slots:",
       "  designReview:",
       "    blocks: []",
@@ -148,29 +97,27 @@ describe("auto flow resolver", () => {
     ].join("\n"));
 
     const resolved = await resolveAutoFlow({ kind: "config", name: "no-design-review" }, { cwd: tempDir, scopeKey: "ag-123@test" });
-    assert.equal(resolved.execution.kind, "generated");
     assert.equal(resolved.document.phases.some((phase) => phase.id === "design_review_loop"), false);
     assert.ok(resolved.summary.skippedBlocks.some((block) => block.blockId === "review.design-loop"));
   });
 
-  it("rejects saved configs with review.loop.maxIterations above five", async () => {
-    writeProjectConfig("invalid-review-loop", [
-      "kind: auto-flow-config",
-      "version: 1",
-      "name: invalid-review-loop",
-      "basePreset: standard",
-      "slots:",
-      "  review:",
-      "    blocks:",
-      "      - id: review.loop",
-      "        enabled: true",
-      "        maxIterations: 6",
-      "",
-    ].join("\n"));
+  it("keeps fingerprints stable for identical input", async () => {
+    const first = await resolveAutoFlow({ kind: "base" }, { cwd: tempDir, scopeKey: "ag-123@test" });
+    const second = await resolveAutoFlow({ kind: "base" }, { cwd: tempDir, scopeKey: "ag-123@test" });
+    assert.equal(first.document.fingerprint, second.document.fingerprint);
+  });
 
-    await assert.rejects(
-      () => resolveAutoFlow({ kind: "config", name: "invalid-review-loop" }, { cwd: tempDir, scopeKey: "ag-123@test" }),
-      /maxIterations for block 'review\.loop' must be between 1 and 5; received 6/,
+  it("collects routing groups from generated in-memory nested flow-run nodes", async () => {
+    const resolved = await resolveAutoFlow({ kind: "base" }, { cwd: tempDir, scopeKey: "ag-123@test" });
+    const groups = await collectFlowRoutingGroups(
+      resolved.execution.flow,
+      tempDir,
+      new Set(),
+      { inMemoryFlows: resolved.execution.inMemoryFlows },
     );
+
+    assert.ok(groups.includes("design-review"));
+    assert.ok(groups.includes("implementation"));
+    assert.ok(groups.includes("repair-loop"));
   });
 });

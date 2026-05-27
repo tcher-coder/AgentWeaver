@@ -23,7 +23,7 @@ describe("interactive web protocol", () => {
     const actions = [
       { type: "flow.select", index: 0 },
       { type: "flow.select", key: "flow:plan" },
-      { type: "folder.toggle", key: "folder:default" },
+      { type: "folder.toggle", key: "folder:built-in-blocks" },
       { type: "run.openConfirm", flowId: "plan" },
       { type: "confirm.select", action: "restart" },
       { type: "confirm.accept" },
@@ -40,16 +40,15 @@ describe("interactive web protocol", () => {
       { type: "log.clear" },
       { type: "artifactExplorer.open" },
       { type: "artifactExplorer.close", actionId: "artifact-close-1" },
-      { type: "autoFlow.selectPreset", preset: "standard" },
-      { type: "autoFlow.loadConfig", name: "backend-standard", flowId: "auto-common" },
-      { type: "autoFlow.save", flowId: "auto-common", name: "backend-standard", location: "project" },
-      { type: "autoFlow.reset", flowId: "auto-common" },
-      { type: "autoFlow.toggleBlock", flowId: "auto-common", blockId: "review.design-loop", enabled: false },
-      { type: "autoFlow.toggleBlock", flowId: "auto-common", slotId: "final", blockId: "checks.go.linter", enabled: false },
-      { type: "autoFlow.updateParam", flowId: "auto-common", blockId: "review.loop", paramName: "maxIterations", value: 5 },
-      { type: "autoFlow.updateParam", flowId: "auto-common", slotId: "final", blockId: "checks.go.tests", paramName: "maxIterations", value: 5 },
-      { type: "autoFlow.insertBlock", flowId: "auto-common", slotId: "designReview", blockId: "review.design-loop" },
-      { type: "autoFlow.removeBlock", flowId: "auto-common", slotId: "final", blockId: "checks.go.linter" },
+      { type: "autoFlow.loadConfig", name: "backend-standard", flowId: "auto" },
+      { type: "autoFlow.save", flowId: "auto", name: "backend-standard", location: "project" },
+      { type: "autoFlow.reset", flowId: "auto" },
+      { type: "autoFlow.toggleBlock", flowId: "auto", blockId: "review.design-loop", enabled: false },
+      { type: "autoFlow.toggleBlock", flowId: "auto", slotId: "final", blockId: "checks.go.linter", enabled: false },
+      { type: "autoFlow.updateParam", flowId: "auto", blockId: "review.loop", paramName: "maxIterations", value: 5 },
+      { type: "autoFlow.updateParam", flowId: "auto", slotId: "final", blockId: "checks.go.tests", paramName: "maxIterations", value: 5 },
+      { type: "autoFlow.insertBlock", flowId: "auto", slotId: "designReview", blockId: "review.design-loop" },
+      { type: "autoFlow.removeBlock", flowId: "auto", slotId: "final", blockId: "checks.go.linter" },
       { type: "git.refresh" },
       { type: "git.createBranch", branchName: "feature/ag-121" },
       { type: "git.checkout", branchName: "main" },
@@ -78,7 +77,7 @@ describe("interactive web protocol", () => {
     assert.throws(() => parseClientAction(JSON.stringify({ type: "artifactExplorer.toggle" })), /Unknown protocol action/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "artifactExplorer.open", actionId: "" })), /actionId must be a non-empty string/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "artifactExplorer.close", actionId: 123 })), /actionId must be a non-empty string/);
-    assert.throws(() => parseClientAction(JSON.stringify({ type: "autoFlow.selectPreset", preset: "advanced" })), /preset must be simple or standard/);
+    assert.throws(() => parseClientAction(JSON.stringify({ type: "autoFlow.selectPreset", preset: "advanced" })), /Unknown protocol action/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "autoFlow.loadConfig", name: "" })), /name must be a non-empty string/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "autoFlow.save", location: "remote" })), /location must be project or user/);
     assert.throws(() => parseClientAction(JSON.stringify({ type: "autoFlow.reset", flowId: "" })), /flowId must be a non-empty string/);

@@ -1,6 +1,6 @@
 import type { AutoFlowPreset, AutoFlowPresetId } from "./auto-flow-types.js";
 
-export const VIRTUAL_BUILT_IN_AUTO_FLOW_FILE_NAMES = ["auto-simple.json", "auto-common.json"] as const;
+export const VIRTUAL_BUILT_IN_AUTO_FLOW_FILE_NAMES = [] as const;
 
 export const BUILT_IN_AUTO_FLOW_PRESETS = [
   {
@@ -61,5 +61,5 @@ export function getBuiltInAutoFlowPresetByFileName(fileName: string): AutoFlowPr
 }
 
 export function isVirtualBuiltInAutoFlowFileName(fileName: string): boolean {
-  return VIRTUAL_BUILT_IN_AUTO_FLOW_FILE_NAMES.includes(fileName as (typeof VIRTUAL_BUILT_IN_AUTO_FLOW_FILE_NAMES)[number]);
+  return false;
 }
